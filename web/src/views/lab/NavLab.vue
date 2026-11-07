@@ -29,6 +29,8 @@ import type { SensorSource } from '@/sensors/source'
 import { WakeLockHolder } from '@/sensors/wakelock'
 import { WebSensorSource } from '@/sensors/web'
 import NavDebugMap from './NavDebugMap.vue'
+import Joystick from './Joystick.vue'
+import type { JoystickVector } from '@/sensors/joystick'
 
 type Mode = 'route' | 'replay' | 'real'
 const mode = ref<Mode>('route')
@@ -46,7 +48,10 @@ const wakeNote = ref('')
 const showDebug = ref(false)
 /** 模擬 GPS：位置由方向鍵／點地圖決定，朝向仍用真實羅盤（或手動滑桿） */
 const simGps = ref(false)
-const stepM = ref(5)
+/** 搖桿推到底時的速度（公尺／秒）；1.4 約等於步行 */
+const simSpeed = ref(1.4)
+/** 鍵盤方向鍵一次移動幾公尺 */
+const KEY_STEP_M = 5
 const simNote = ref('')
 const destinationPoint = ref<LatLon | null>(null)
 /** 由連續定位算出的行進方向（真北），用來和羅盤比對 */
@@ -356,12 +361,34 @@ const courseDiff = computed(() => {
   return Math.round(Math.min(d, 360 - d))
 })
 
-/** 模擬 GPS：以目前朝向為前方，移動 stepM 的倍數 */
+/** 模擬 GPS（鍵盤）：以目前朝向為前方，一次移動 KEY_STEP_M 公尺 */
 function simMove(forward: number, right: number) {
   if (!manual) return
   const h = view.value?.headingDeg ?? 0
-  manual.step(h, forward * stepM.value, right * stepM.value)
+  manual.step(h, forward * KEY_STEP_M, right * KEY_STEP_M)
 }
+
+// 搖桿：按住時每 100 ms 依推的程度移動，位置每 500 ms 送出一次（接近真實 GPS 的頻率）
+let joy: JoystickVector = { forward: 0, right: 0, knobX: 0, knobY: 0 }
+let lastJoyEmitAt = 0
+function onJoystick(v: JoystickVector) {
+  const wasMoving = joy.forward !== 0 || joy.right !== 0
+  joy = v
+  // 放開時立刻送出停下來的位置
+  if (wasMoving && v.forward === 0 && v.right === 0) manual?.emitNow()
+}
+const joyTimer = window.setInterval(() => {
+  if (!manual || (joy.forward === 0 && joy.right === 0)) return
+  const h = view.value?.headingDeg ?? 0
+  const m = simSpeed.value * 0.1
+  manual.step(h, joy.forward * m, joy.right * m, { emit: false })
+  const now = Date.now()
+  if (now - lastJoyEmitAt >= 500) {
+    lastJoyEmitAt = now
+    manual.emitNow()
+  }
+}, 100)
+onBeforeUnmount(() => window.clearInterval(joyTimer))
 
 function simPick(p: LatLon) {
   manual?.moveTo(p)
@@ -504,7 +531,7 @@ onBeforeUnmount(() => window.clearInterval(speedTimer))
       </div>
       <label v-if="mode !== 'replay'" class="flex items-center gap-2 rounded-lg bg-white/10 p-3">
         <input v-model="simGps" type="checkbox" />
-        <span>模擬 GPS（用方向鍵或點地圖移動，不用出門；朝向仍用手機羅盤）</span>
+        <span>模擬 GPS（拖曳搖桿或點地圖移動，不用出門；朝向仍用手機羅盤）</span>
       </label>
       <button class="h-16 w-full rounded-xl bg-white text-lg font-bold text-[#30383D]" @click="begin">開始走</button>
       <p v-if="permissionNote" class="text-amber-200">{{ permissionNote }}</p>
@@ -554,23 +581,16 @@ onBeforeUnmount(() => window.clearInterval(speedTimer))
         <div class="mt-2 min-h-16 text-3xl">{{ sentence }}</div>
       </div>
 
-      <!-- 模擬 GPS：方向鍵。前方 = 手機目前朝向；電腦可用鍵盤方向鍵，Q／E 轉向 -->
+      <!-- 模擬 GPS：圓形搖桿，拖曳移動，往上 = 手機目前朝向。電腦可用鍵盤方向鍵（每次 5 m），Q／E 轉向 -->
       <section v-if="simGps && mode !== 'replay'" class="space-y-2 px-4 pb-4">
         <div class="text-center text-sm opacity-80">{{ simNote }}</div>
-        <div class="mx-auto grid w-56 grid-cols-3 gap-2">
-          <span />
-          <button class="h-14 rounded-lg bg-white/25 text-2xl" aria-label="往前" @click="simMove(1, 0)">↑</button>
-          <span />
-          <button class="h-14 rounded-lg bg-white/25 text-2xl" aria-label="往左" @click="simMove(0, -1)">←</button>
-          <button class="h-14 rounded-lg bg-white/25 text-2xl" aria-label="往後" @click="simMove(-1, 0)">↓</button>
-          <button class="h-14 rounded-lg bg-white/25 text-2xl" aria-label="往右" @click="simMove(0, 1)">→</button>
-        </div>
-        <label class="flex items-center justify-center gap-2 text-sm">每步
-          <select v-model.number="stepM" class="rounded bg-white/20 px-2 py-1">
-            <option :value="2">2 m</option>
-            <option :value="5">5 m</option>
-            <option :value="10">10 m</option>
-            <option :value="20">20 m</option>
+        <Joystick @change="onJoystick" />
+        <label class="flex items-center justify-center gap-2 text-sm">推到底的速度
+          <select v-model.number="simSpeed" class="rounded bg-white/20 px-2 py-1">
+            <option :value="1.4">步行 1.4 m/s</option>
+            <option :value="3">3 m/s</option>
+            <option :value="6">6 m/s</option>
+            <option :value="12">12 m/s</option>
           </select>
           ・點地圖可以瞬移
         </label>

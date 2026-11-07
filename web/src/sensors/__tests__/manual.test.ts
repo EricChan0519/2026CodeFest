@@ -53,4 +53,14 @@ describe('ManualGpsSource（方向鍵模擬 GPS）', () => {
     src.step(0, 10, 0)
     expect(fixes).toHaveLength(1)
   })
+
+  it('a silent step moves without emitting until emitNow()', () => {
+    const { src, fixes } = setup()
+    src.step(0, 10, 0, { emit: false })
+    expect(fixes).toHaveLength(1)
+    expect(toLocalXY(ORIGIN, src.position)[1]).toBeCloseTo(10, 1)
+    src.emitNow()
+    expect(fixes).toHaveLength(2)
+    src.stop()
+  })
 })

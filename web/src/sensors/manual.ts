@@ -57,12 +57,20 @@ export class ManualGpsSource implements SensorSource {
     this.handlers = null
   }
 
-  /** 以 headingDeg（真北）為「前方」，往前 forwardM、往右 rightM 公尺 */
-  step(headingDeg: number, forwardM: number, rightM: number): void {
+  /**
+   * 以 headingDeg（真北）為「前方」，往前 forwardM、往右 rightM 公尺。
+   * 搖桿連續移動時傳 emit: false，再用 emitNow() 控制送出頻率（接近真實 GPS 的 1–2 Hz）。
+   */
+  step(headingDeg: number, forwardM: number, rightM: number, opts: { emit?: boolean } = {}): void {
     const h = rad(headingDeg)
     const east = Math.sin(h) * forwardM + Math.cos(h) * rightM
     const north = Math.cos(h) * forwardM - Math.sin(h) * rightM
     this.pos = fromLocalXY(this.pos, [east, north])
+    if (opts.emit !== false) this.emit()
+  }
+
+  /** 立刻送出目前位置 */
+  emitNow(): void {
     this.emit()
   }
 
