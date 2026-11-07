@@ -24,9 +24,8 @@
 
 | | API-A：服務與站位 | API-B：路徑與地理資料 |
 |---|---|---|
-| 負責的檔案 | `api/app/main.py`、`schemas.py`、`errors.py`、`stations.py`、`routes.py`、`route_rules.py`、`adapters/fake.py`；`scripts/build_stop_index.py`；`api/data/stop_index.json`；`web/src/mocks/` | `routing/`；`api/app/adapters/valhalla.py`、`adapters/osrm.py`（備案）、`metrics.py`；`scripts/build_crossings.py`、`build_lamp_grid.py`；`api/data/crossings.json`、`lamp_grid.json` |
+| 負責的檔案 | `api/app/main.py`、`schemas.py`、`errors.py`、`stations.py`、`routes_service.py`、`route_rules.py`、`adapters/fake.py`；`scripts/build_stop_index.py`；`api/data/stop_index.json`；`web/src/mocks/` | `routing/`；`api/app/adapters/valhalla.py`、`adapters/osrm.py`（備案）、`metrics.py`；`scripts/build_crossings.py`、`build_lamp_grid.py`；`api/data/crossings.json`、`lamp_grid.json` |
 | 階段 1 | **F4 mock（15:30）**、F2、D1、D2、R1 的 endpoint、R2 | **V3（16:30）**、R1 的 adapter |
-| [計畫](../superpowers/plans/2026-11-07-arrow-nav.md)的任務 | API1、API3、API4、API5 的 `routes.py` 與 `test_routes.py`、API8 的規則和組合 | API2、API5 的 `valhalla.py` 與 `test_valhalla.py`、API6、API7、API8 的 `metrics.py`、API9 |
 | 階段 2 | C1、C5；協助 PM 做 C6 | C2、C3、C4 |
 | 不用等對方 | 用 `FakeEngine` 回固定路線，endpoint 照樣開發和測試 | 用腳本直接呼叫 adapter 測試，不用等 FastAPI |
 
@@ -77,11 +76,6 @@ class RoutingEngine(Protocol):
 - 用環境變數 `ROUTING_ENGINE`（`valhalla`、`osrm`、`fake`）和 `ROUTING_URL` 切換引擎。
 - OSRM 不支援的權重直接忽略，`steps`、`climb_m` 回 `None`。
 - 階段 2 由 API-B 提供 `metrics.measure(route: EngineRoute) -> Metrics`，欄位和 03 的 `metrics` 相同。API-A 只用這些數字決定推薦和原因，不讀快照原始檔。
-
-**和計畫不同的地方（以本節為準）：**
-
-- API8 的 `costing_for()` 回傳 `PedestrianCosting`，不是 Valhalla 格式的 dict。轉成 `{"pedestrian": {...}}`、`walking_speed` 由 adapter 處理。
-- API8 的 `compute_metrics()` 改成 API-B 的 `metrics.measure()`，API-A 不直接讀 `crossings.json`、`lamp_grid.json`。
 
 ## 時程
 
