@@ -26,4 +26,9 @@ export interface SensorSource {
   requestPermission(): Promise<PermissionResult>
   start(handlers: SensorHandlers): void
   stop(): void
+  /**
+   * 重新接上感測器（拆掉再重新註冊監聽、重新要定位），用在回到前景後或感測器卡住時。
+   * 沒有 start 過就什麼都不做。
+   */
+  resync?(): void
 }

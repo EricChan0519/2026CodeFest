@@ -138,6 +138,15 @@ current += delta
 
 `current` 可以超過 360，不要歸零。
 
+### 朝向雜訊與重新定位
+
+實測發現箭頭會突然亂抖，換頁回來後指針卡住不準。處理分三層（程式在 `nav/headingFilter.ts`、`nav/courseCheck.ts`、`nav/machine.ts`、`sensors/web.ts`）：
+
+1. **濾波（headingFilter）**：平滑時間常數依「跟目前差多少」調整，穩定時用 `headingSlowTauMs`（壓抖動），正在轉用 `headingTauMs`（不拖尾）；單筆偏離超過 `headingSpikeDeg` 先當突波，連續 `headingSpikeConfirm` 筆一致才採用；輸出有 `headingDeadbandDeg` 死區；隔超過 `headingGapResetMs` 的第一筆直接採用。`alpha/beta/gamma` 轉朝向時，beta 在 50°–70° 之間用兩種算法混合，不再於 60° 硬切換。
+2. **感測器自癒**：機器的 `tick()` 偵測「`headingStaleS` 秒沒有朝向事件」或「`headingFrozenS` 秒原始值完全沒變」，觸發 `onResync`，外部呼叫 `SensorSource.resync()`（拆掉重掛 `deviceorientation` 監聽與定位 watch）。有 `resyncCooldownS` 冷卻。頁面回到前景（`visibilitychange`、`pageshow`）或每秒計時器被凍結超過 3 秒（WebView 進背景不一定有事件）時，也會做一次。
+3. **定期確認（courseCheck）**：用 GPS 走出去的方向對照這段時間的羅盤朝向。條件：精度好於 `courseMaxAccuracyM`、走超過 `max(courseMinMoveM, 1.5 × 精度)`、速度像走路、期間朝向沒大幅轉動。連續 `courseSamples` 次偏差一致且超過 `courseMismatchDeg`，`headingCheck` 變 `suspect`：自動重新接上感測器一次（`courseResyncCooldownS` 冷卻）並顯示「方向可能不準，請畫 8 字」；偏差都在 `courseOkDeg` 內變 `ok`。**假設使用者拿著手機朝前走**；模擬模式（位置是假的）關閉此檢查。
+4. **手動**：導航畫面的「重新定位」按鈕，忘掉舊朝向、重接感測器、重新取得螢幕常亮。
+
 ### 方向文字
 
 | 箭頭角度（左右對稱） | 指令 |
@@ -158,6 +167,16 @@ current += delta
 | `lookaheadM` | 20 | 路線上的前視距離 |
 | `turnPassM` | `max(8, 0.5 × accuracyM)` | 離轉彎點多近就算通過 |
 | `headingTauMs` | 80 | 朝向平滑時間常數；係數 = 1 − e^(−dt/τ)，不受事件頻率影響（60 Hz 時約 0.2） |
+| `headingSlowTauMs` | 350 | 朝向穩定時的時間常數（壓抖動） |
+| `headingSlowBandDeg` | 25 | 差距小於此角度時，時間常數從快過渡到慢 |
+| `headingSpikeDeg` / `headingSpikeConfirm` / `headingSpikeWindowMs` | 60 / 2 / 600 | 突波門檻、需連續確認幾筆、確認時間窗 |
+| `headingGapResetMs` | 1500 | 隔這麼久沒資料，下一筆直接採用 |
+| `headingDeadbandDeg` | 1.5 | 輸出死區 |
+| `headingStaleS` / `headingFrozenS` / `resyncCooldownS` | 2 / 6 / 5 | 沒朝向事件、數值卡住多久自動重接感測器；重接最短間隔 |
+| `courseMaxAccuracyM` / `courseMinMoveM` | 20 / 10 | 走向檢查的採樣條件（精度、移動距離） |
+| `courseMinSpeedMps` / `courseMaxSpeedMps` | 0.8 / 3.5 | 走向檢查的速度範圍 |
+| `courseSamples` / `courseMismatchDeg` / `courseOkDeg` / `courseSpreadDeg` | 3 / 45 / 25 / 30 | 走向檢查的判斷門檻 |
+| `courseResyncCooldownS` | 60 | 走向檢查觸發重新定位的最短間隔 |
 | `arrowTauMs` | 50 | 箭頭每一幀追目標角度的時間常數（取代 CSS transition） |
 | `declinationDeg` | −4.7 | 磁偏角（待實測） |
 | `arriveRadiusM` | `max(15, accuracyM)` | 抵達範圍 |
@@ -179,10 +198,13 @@ current += delta
 | 接近轉彎 | 前面路口向左轉 | `turn` |
 | 需要向後轉 | 請向後轉 | `warn` |
 | 走偏 | 走偏了，正在重新找路 | `warn` |
-| 抵達（公車站） | 到了，在這裡等 307 | `arrive` |
-| 抵達（地點） | 到了，這裡是 {name} | `arrive` |
+| 抵達（公車站） | （導航不出聲；由 `/arrived` 畫面念「到了。等 307 號，往板橋方向」） | `arrive` |
+| 抵達（一般地點） | （導航不出聲；實驗頁只顯示「到了」） | `arrive` |
 
 規則：
+
+- **抵達只震動、不出聲**：播報器的 `arrived` cue 是 `speak: false`。`/arrived` 畫面一打開就會念一次，導航再念會兩句疊在一起。
+- 導航要記住使用者選的那班車：`Destination` 帶站點 API 的 `station` 和使用者選的 `stationRoute`（`destinationFromStation()`）。到站時 `router.push(arrivalFromStation(station, stationRoute, lang, audience))`，網址只有站名、路線名、方向，不帶座標和 UID。
 
 - 句子來自語言檔，不用 LLM，也不用 Valhalla 的文字指令（它沒有 `zh-TW`）。
 - 重要提示用 `interrupt: true` 打斷目前的語音。

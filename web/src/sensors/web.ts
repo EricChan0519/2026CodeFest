@@ -23,6 +23,13 @@ export interface WebSensorOptions {
   onRaw?: (r: RawOrientation) => void
 }
 
+/** 三個角度都是有限數字才算朝向（有些裝置會送 NaN 或 null），否則回 null */
+function orientationHeading(a: number | null, b: number | null, g: number | null): number | null {
+  if (a === null || b === null || g === null) return null
+  if (!Number.isFinite(a) || !Number.isFinite(b) || !Number.isFinite(g)) return null
+  return headingFromOrientation(a, b, g)
+}
+
 type IOSOrientationCtor = {
   requestPermission?: () => Promise<'granted' | 'denied'>
 }
@@ -30,6 +37,7 @@ type IOSOrientationCtor = {
 export class WebSensorSource implements SensorSource {
   private watchId: number | null = null
   private cleanups: Array<() => void> = []
+  private handlers: SensorHandlers | null = null
   private readonly opts: WebSensorOptions
 
   constructor(opts: WebSensorOptions = {}) {
@@ -50,14 +58,37 @@ export class WebSensorSource implements SensorSource {
 
   start(handlers: SensorHandlers): void {
     this.stop() // 重複 start 不累積監聽
-    this.startHeading(handlers)
-    if (this.opts.position !== false) this.startPosition(handlers)
+    this.handlers = handlers
+    this.attach(handlers)
   }
 
   stop(): void {
+    this.detach()
+    this.handlers = null
+  }
+
+  /**
+   * 拆掉再重新註冊羅盤監聽與定位 watch。
+   * 部分 WebView 在頁面進背景、切回來後，deviceorientation 事件不再送或數值卡住，重新註冊就會恢復。
+   */
+  resync(): void {
+    const h = this.handlers
+    if (!h) return
+    this.detach()
+    this.attach(h)
+  }
+
+  private attach(h: SensorHandlers): void {
+    this.startHeading(h)
+    if (this.opts.position !== false) this.startPosition(h)
+  }
+
+  private detach(): void {
     this.cleanups.forEach((f) => f())
     this.cleanups = []
-    if (this.watchId !== null) navigator.geolocation.clearWatch(this.watchId)
+    if (this.watchId !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.clearWatch(this.watchId)
+    }
     this.watchId = null
   }
 
@@ -76,8 +107,8 @@ export class WebSensorSource implements SensorSource {
         absolute: ev.absolute,
         webkitCompassHeading: null,
       })
-      if (ev.alpha === null || ev.beta === null || ev.gamma === null) return
-      h.onHeading(headingFromOrientation(ev.alpha, ev.beta, ev.gamma))
+      const hd = orientationHeading(ev.alpha, ev.beta, ev.gamma)
+      if (hd !== null) h.onHeading(hd)
     }
     const onRel = (e: Event) => {
       const ev = e as DeviceOrientationEvent & { webkitCompassHeading?: number }
@@ -90,10 +121,11 @@ export class WebSensorSource implements SensorSource {
         absolute: ev.absolute,
         webkitCompassHeading: compass,
       })
-      if (compass !== null) {
+      if (compass !== null && Number.isFinite(compass)) {
         h.onHeading(compass) // iOS：已經是相對磁北的朝向
-      } else if (ev.absolute && ev.alpha !== null && ev.beta !== null && ev.gamma !== null) {
-        h.onHeading(headingFromOrientation(ev.alpha, ev.beta, ev.gamma))
+      } else if (ev.absolute) {
+        const hd = orientationHeading(ev.alpha, ev.beta, ev.gamma)
+        if (hd !== null) h.onHeading(hd)
       }
       // 其餘情況 alpha 是相對值，不可當羅盤用
     }

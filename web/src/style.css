@@ -45,6 +45,9 @@
   --color-orange-500: #fd853a;
   --color-orange-600: #e6692c;
 
+  /* 抵達專用，不要用在別處（01 導航畫面） */
+  --color-arrived: #27500a;
+
   --shadow-card: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
