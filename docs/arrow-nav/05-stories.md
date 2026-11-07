@@ -2,15 +2,20 @@
 
 階段 1 要在 **23:00 前**跑通，階段 2 在 **03:00 前**完成。
 
+> **17:10 改版：** 任意地點、DTM 坡度、監視器與派出所、箭頭依路徑轉彎。新增與修改的 Stories 見 [改版 Stories](#改版-stories)，依據見 [改版 spec](../superpowers/specs/2026-11-07-any-place-slope-safety-design.md)。
+
 ## 分工
 
 | 代號 | 負責 | 需要的環境 | 隊員 |
 |---|---|---|---|
 | APP | App、Handler、APK | Flutter、Android 實機 | 隊長 |
-| NAV | 前端 1：感測與導航 | Node | 待填 |
-| UI | 前端 2：畫面、對象、語言 | Node，Figma | 待填 |
-| API | 後端與資料：FastAPI、TDX 快照、Valhalla | Python，Valhalla 建置要 Docker | 待填 |
-| PM | 規劃與 Demo：Repo、README、實測、彩排 | 會跑通主流程即可 | 待填 |
+| NAV | 前端 1：感測與導航、**箭頭依路徑轉彎** | Node | Eric |
+| UI | 前端 2：畫面、對象、語言、**地點搜尋首頁** | Node，Figma | 待填 |
+| API-A | 後端：服務與資料。FastAPI、站位與**地點**快照、規則表與**目標挑選**、**派出所與監視器快照** | Python | Daniel |
+| API-B | 後端：路徑與地理。Valhalla、**內政部 DTM 高程**、量測（`metrics.py`） | Python，Valhalla 建置要 Docker | Max |
+| PM | 規劃與 Demo：Repo、README、實測、彩排、**天母 Demo 路線** | 會跑通主流程即可 | 待填 |
+
+API-A 和 API-B 的檔案分界、內部介面見 [API 分工](../superpowers/specs/2026-11-07-api-split-design.md)；改版後的新檔案歸屬見 [改版 Stories](#改版-stories)。
 
 - 只有 4 人時，由 NAV 或 API 兼任 PM，戶外實測全組輪流。
 - TDX 金鑰由隊長保管，只用來產生快照，不進 repo。
@@ -47,19 +52,26 @@ gantt
 | 15:30 | Repo、合約、mock 都就緒 | 先凍結合約，其他延後 |
 | **16:30** | V1、V2、V3 都有結論 | 見下方「技術驗證」 |
 | 17:10 前 | 錄一條真實走路軌跡（天黑前） | 改用路線合成的軌跡 |
-| 19:00 | 假資料走完整個導航流程 | 砍掉階段 2 |
+| **17:30** | 全員看過改版的 01–05；監視器地址轉座標**在背景開跑**（API-A） | 晚開跑就晚知道 V5 |
+| 18:30 | 改版 mock 就緒：`places-search.json`、新 `routes-many.json`、`routes-two-turns.json` | 前端先用舊 mock，只做畫面 |
+| 19:00 | 假資料走完整個導航流程；**L 形路線的箭頭轉彎測試通過** | 砍掉階段 2 |
+| **20:00** | V4、V5 有結論 | 見下方「技術驗證」 |
 | **23:00** | 階段 1 用真實資料在實機跑通 | 只修錯，不開始階段 2 |
 | 03:00 | 階段 2 完成 | 未完成的情境直接移除（[02](02-route-candidates.md#來不及時怎麼砍)） |
 | **07:30** | 功能凍結 | 只修錯、補 README、彩排 |
 | **08:30** | 作品上傳（截止 09:00） | |
 
-## 技術驗證：16:30 判斷
+## 技術驗證
+
+16:30 判斷 V1–V3，20:00 判斷 V4、V5。
 
 | ID | 負責 | 要驗證什麼 | 通過標準 | 沒通過 |
 |---|---|---|---|---|
 | V1 | NAV＋APP | 實體 Android 手機、TownPass WebView 內的 `deviceorientationabsolute` | 有事件；對照指南針 App 誤差不超過 15° | APP 做 `nav_sensors` 的朝向 |
 | V2 | NAV＋APP | 同環境的 `watchPosition` | 戶外持續更新；精度合理 | APP 做 `nav_sensors` 的位置 |
-| V3 | API | 用臺北裁切資料建 Valhalla，部署到 Cloud Run | 能回傳步行路線；記錄映像大小、記憶體、冷啟動 | 改 OSRM（`foot.lua`）；階段 2 只留可行的情境 |
+| V3 | API-B | 用臺北裁切資料建 Valhalla，部署到 Cloud Run | 能回傳步行路線；記錄映像大小、記憶體、冷啟動 | 改 OSRM（`foot.lua`）；階段 2 只留可行的情境 |
+| V4 | API-B | 內政部 20 公尺 DTM 轉成 `N24E121.hgt`、`N25E121.hgt`，routing 用它重建 | 臺北車站到南方站點（[verification.md](verification.md) 那條平地路線）爬升小於 5 公尺；天母找一條有坡的路，`use_hills` 0.0 會換路；映像大小有記錄 | routing 不重建；只用 `elevation_grid` 量測，在 `alternates` 裡挑最平的 |
+| V5 | API-A | 監視器地址轉座標（Nominatim，只收門牌層級） | 去重後地址的覆蓋率 ≥ 50%；隨機抽 10 筆對照街景，誤差 50 公尺以內 | 不用監視器；`cameras` 是 `null`，只留派出所和路燈 |
 
 - 把測試頁部署到 Hosting 預覽版，用測試服務開啟，不需要等完整畫面。
 - 模擬器沒有真實羅盤，V1 要用實體手機。
@@ -169,6 +181,73 @@ flowchart LR
 | C6 | PM | 作為評審，我要看到真實的路線差別 | 找到至少 2 組起終點，推薦路線和最快路線確實不同；到現場確認；內建成 Demo 路線 |
 | U10 | UI | 作為使用者，我想知道為什麼推薦這條路 | P5 依代碼和數字組句，8 種語言都有；「看其他路線」可切換；全站不出現「安全」「無障礙」 |
 | U11 | UI | 作為評審，我要知道現在是模擬晚上 | 設定頁或 Demo 模式有開關；畫面標示「模擬晚上」 |
+
+## 改版 Stories
+
+17:10 改版新增或修改的 Stories。和上面衝突時以這裡為準。
+
+### 調整的舊 Stories
+
+| ID | 改成 |
+|---|---|
+| U3 | 首頁改成搜尋框，附近公車站變成次要按鈕，見 U12 |
+| U4 | 只有選公車站時才進 P4 |
+| U7 | 地點和公車站的抵達文案不同 |
+| N4 | 重算一律呼叫 API，不用直線，見 N9 |
+| C1 | 規則表改成「目標」，見 C9 |
+| C4 | 坡度改用內政部 DTM，見 C7 |
+| T1 | 至少一條實測路線要轉兩次彎 |
+
+### 新增的 Stories
+
+| ID | 負責 | 階段 | 故事 | 驗收條件 |
+|---|---|---|---|---|
+| D3 | API-A | 1 | 作為系統，我要有地點快照 | `scripts/build_places.py` 用 Overpass 抓臺北範圍有 `name` 的地點，產生 `api/data/places.json`；分類對應 [03](03-contracts.md) 的 `category`；way 取中心點；印出筆數與有英文名稱的比例；執行時不呼叫 Overpass |
+| D4 | API-A | 1 | 作為使用者，我要搜尋任何地點 | `GET /api/places/search` 符合合約；地點和公車站混合；排序符合合約；同名公車站合成一筆；回應少於 1 秒；`q` 超過 50 字回 422 |
+| F5 | API-A | 1 | 作為前端，我要先用改版 mock | 18:30 前 [03](03-contracts.md#前端-mock) 標「改版」的 mock 都有，並通過 `api/tests` 的 mock 合約檢查 |
+| N8 | NAV | 1 | 作為走路的人，箭頭要先指第一段，到轉角後才指下一段 | 先重現「一直指終點」並寫下原因；[04](04-nav-logic.md#箭頭依路徑轉彎) 的 `turnPassM` 實作；[04 測試](04-nav-logic.md#測試) 的 L 形案例全部通過；用 `routes-two-turns.json` 回放時，提示順序是左、右 |
+| N9 | NAV | 1 | 作為走偏的人，我要被帶回真的路上 | 重算呼叫 `api.routes` 並帶 `candidate`；失敗進 `back_to_route`；正式流程不呼叫 `straightRoute()`（用 grep 檢查只出現在測試和實驗頁） |
+| N10 | NAV | 1 | 作為使用者，導航畫面要顯示我選的地方 | 目的地從 P3 帶入（名稱、座標、`kind`）；抵達文案依 `kind`；`nav/destination.ts` 的預設站只留給實驗頁 |
+| U12 | UI | 1 | 作為不會看地圖的人，我要用搜尋找到要去的地方 | P2 是大搜尋框；P3 結果有分類圖示和距離；`bus_stop` 進 P4、`place` 進 P5；有載入、空資料、錯誤畫面；375px 不破版 |
+| U13 | UI | 1 | 作為不擅長打字的人，我第二次不用再打字 | 「最近去過」最多 5 筆，存 localStorage，最新的在前，重複的只留一筆；`?reset=1` 會清掉 |
+| C7 | API-B | 2 | 作為長者，我要走坡度最低的路 | `scripts/build_elevation.py` 讀內政部 DTM，裁切臺北，產生 `elevation_grid.bin`＋`.json`；V4 通過時也產生 `.hgt` 並重建 routing；`climbM`、`maxGradePct` 依 [02](02-route-candidates.md#量測欄位) 計算；平地路線爬升小於 5 公尺；網格不存在時回 `null` |
+| C8 | API-A | 2 | 作為系統，我要有派出所和監視器的位置 | `scripts/build_safety_points.py` 產生 `api/data/safety_points.json`；派出所 112 筆至少 100 筆有座標；監視器依地址去重、只收門牌層級；遵守 Nominatim 規則並快取；印出覆蓋率；寫進 [verification.md](verification.md) 的 V5 |
+| C9 | API-A | 2 | 作為使用者，我要拿到適合我、又不會繞太遠的路 | `route_rules.py` 改成 [02](02-route-candidates.md#目標) 的目標；`watched` 目標的繞路上限是多 20% 且不超過 200 公尺，其他維持 300 公尺／1.5 倍；超過上限的不參加挑選；新原因代碼的門檻正確；重算只算一個目標；`schemas.py` 的 `CandidateId` 換成新 id |
+| C10 | API-B | 2 | 作為晚上走路的人，我想走監視器和派出所較多的路 | `metrics.measure()` 算出 `cameras`（30 公尺）、`policeNearby`（150 公尺）；快照不存在時是 `null`；有單元測試 |
+| U14 | UI | 2 | 作為使用者，我要看懂新的推薦原因 | `flatter`、`gentler_slope`、`more_cameras`、`near_police` 8 種語言都有；全站不出現「安全」；關於頁加上 DTM、派出所、監視器三個來源、更新時間與監視器覆蓋率 |
+| C11 | PM＋API | 2 | 作為評審，我要看到坡度和監視器真的有差 | 天母一帶找一組有坡、一組晚上的起終點（[02 Demo 要求](02-route-candidates.md#demo-要求)）；到現場走過；做成 Demo 路線 |
+
+### 新檔案歸屬
+
+| 角色 | 新增或主要修改的檔案 |
+|---|---|
+| API-A | `scripts/build_places.py`、`scripts/build_safety_points.py`、`api/app/places.py`、`api/app/route_rules.py`、`api/app/routes_service.py`、`api/app/schemas.py`、`api/app/main.py`、`api/data/places.json`、`api/data/safety_points.json`、`web/src/mocks/places-search.json`、`routes-many.json`、`routes-two-turns.json` |
+| API-B | `scripts/build_elevation.py`、`routing/Dockerfile`、`routing/elevation/`、`api/app/metrics.py`、`api/data/elevation_grid.bin`、`elevation_grid.json`、`docs/arrow-nav/verification.md` 的 V4 |
+| NAV | `web/src/nav/tracker.ts`、`config.ts`、`machine.ts`、`destination.ts`、`web/src/nav/__tests__/`、`web/src/views/lab/NavLab.vue` |
+| UI | `web/src/views/` 的 P2、P3、P7、關於頁，`web/src/i18n/` |
+
+- `metrics.Metrics` 加 `max_grade_pct`、`cameras`、`police_nearby` 三個欄位，由 **API-B 先改、API-A 再用**；改之前 API-A 用 stub。
+- `safety_points.json` 的格式由 API-A 定：`{ "updatedAt", "police": [[lat, lon, name]], "cameras": [[lat, lon]], "cameraCoverage" }`，API-B 只讀。
+
+### 改版後的依賴
+
+```mermaid
+flowchart LR
+  D3["D3 地點快照"] --> D4["D4 地點搜尋"]
+  F5["F5 改版 mock"] --> U12["U12 搜尋首頁"]
+  D4 --> U12
+  U12 --> U13["U13 最近去過"]
+  U12 --> N10["N10 目的地帶入"]
+  F5 --> N8["N8 箭頭轉彎"]
+  N8 --> N9["N9 重算不畫直線"]
+  V4["V4 DTM 進 routing"] --> C7["C7 坡度"]
+  V5["V5 監視器覆蓋率"] --> C8["C8 派出所與監視器"]
+  C8 --> C10["C10 量測"]
+  C7 --> C9["C9 目標挑選"]
+  C10 --> C9
+  C9 --> U14["U14 新原因文案"]
+  C9 --> C11["C11 Demo 路線"]
+```
 
 ## 交付
 

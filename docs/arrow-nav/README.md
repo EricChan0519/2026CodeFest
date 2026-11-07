@@ -1,6 +1,8 @@
 # 跟著箭頭走（暫名）：開發文件
 
-看不懂地圖的人，選好要搭的公車，跟著一支箭頭走到正確的站牌。
+看不懂地圖的人，搜尋要去的地方（公車站牌也可以），跟著一支依路線轉彎的箭頭走過去。
+
+> **2026-11-07 17:10 改版：** 任意地點、內政部 DTM 坡度、監視器與派出所、箭頭依路徑轉彎。設計見 [改版 spec](../superpowers/specs/2026-11-07-any-place-slope-safety-design.md)。01–05 已更新；實作計畫還沒依改版更新，**和 01–05 衝突時以 01–05 為準**。
 
 - **題目：** 數位平權 × 友善共融，第二項「看不懂」（理解限制）
 - **對象：** 長者、兒童、外籍人士
@@ -11,10 +13,12 @@
 
 | 階段 | 完成時間 | 內容 |
 |---|---|---|
-| 階段 1 | 11/7 **23:00** | 主流程、3 種對象、8 種語言、箭頭、語音、震動、模擬行走、關於頁。路線只有標準步行，但回應格式已支援多條候選 |
-| 階段 2 | 11/8 **03:00** | 依使用者和時間提供不同候選路線：長者少階梯少坡、晚上較亮、兒童少過無燈路口 |
+| 階段 1 | 11/7 **23:00** | 主流程（**搜尋任意地點**）、3 種對象、8 種語言、**依路徑轉彎的箭頭**、語音、震動、模擬行走、關於頁。路線只有標準步行，但回應格式已支援多條候選 |
+| 階段 2 | 11/8 **03:00** | 依使用者和時間挑路線：長者**坡度最低**（DTM）、晚上與兒童**監視器、派出所、路燈較多**、兒童少過無燈路口；繞路有上限 |
 
 **16:30 要判斷三件事：** 手機上羅盤、持續定位、Valhalla 能不能用。不行就換備案，見 [05](05-stories.md)。
+
+**20:00 再判斷兩件事：** V4 DTM 坡度能不能進 routing、V5 監視器地址轉座標的覆蓋率。見 [05](05-stories.md#技術驗證)。
 
 ## 先讀哪些
 
@@ -24,7 +28,8 @@
 | APP（隊長） | App、Handler、APK | [03 合約](03-contracts.md) 的 Bridge、[ADR-0003](architecture/decisions/0003-use-web-sensors-first.md) |
 | NAV（前端 1） | 感測與導航 | [04 導航邏輯](04-nav-logic.md)、[03 合約](03-contracts.md) |
 | UI（前端 2） | 畫面、對象、語言 | [01 產品規格](01-product-spec.md)、[03 合約](03-contracts.md) 的 REST |
-| API（後端與資料） | FastAPI、TDX 快照、Valhalla | [02 候選路線](02-route-candidates.md)、[03 合約](03-contracts.md) 的 REST |
+| API-A（後端：服務與資料） | FastAPI、地點與站位、規則表、派出所與監視器快照 | [02 候選路線](02-route-candidates.md)、[03 合約](03-contracts.md) 的 REST、[API 分工](../superpowers/specs/2026-11-07-api-split-design.md) |
+| API-B（後端：路徑與地理） | Valhalla、DTM 高程、量測 | [02 候選路線](02-route-candidates.md)、[API 分工](../superpowers/specs/2026-11-07-api-split-design.md) |
 | PM（規劃與 Demo） | Repo、README、實測、彩排 | [06 Demo 腳本](06-demo-script.md)、[07 加入新技術](07-adding-tech.md) |
 
 ## 文件清單
@@ -39,6 +44,7 @@
 | [06-demo-script.md](06-demo-script.md) | 初選與決選腳本、備援、問答預備 |
 | [07-adding-tech.md](07-adding-tech.md) | 隊友加技術前要檢查什麼、接在哪裡 |
 | [實作計畫](../superpowers/plans/2026-11-07-arrow-nav.md) | **每個角色要做的任務、測試、順序，開工先看自己的區段** |
+| [改版 spec](../superpowers/specs/2026-11-07-any-place-slope-safety-design.md) | 17:10 改版的決定與理由 |
 | [architecture/arc42.md](architecture/arc42.md) | C4 圖、部署、品質情境、風險 |
 | [architecture/review.md](architecture/review.md) | 架構審查結果，以及因此做的修改 |
 | [architecture/decisions/](architecture/decisions/README.md) | 7 份架構決策紀錄（MADR） |
@@ -59,7 +65,7 @@
 | 前端 | Vue 3 + Vite + TypeScript + Tailwind 4 + Pinia，部署到 Firebase Hosting。同一份網頁在 Android、iOS 的 WebView 都能跑 |
 | 後端 | FastAPI，部署到 Cloud Run（asia-east1） |
 | 路徑 | Valhalla + OpenStreetMap（待驗證；備案是 OSRM） |
-| 資料 | TDX 公車站位快照、OpenStreetMap、臺北市路燈位置 |
+| 資料 | TDX 公車站位快照、OpenStreetMap（路網、地點）、臺北市路燈位置、內政部 20 公尺 DTM、臺北市警察局派出所地址與監視器設置區位 |
 | Demo | Android 實體手機，Android Studio Running Devices 鏡像後接 HDMI |
 
 組員只寫網頁或後端，不需要 Flutter、Java、Android Studio。Valhalla 的 Docker 建置由有環境的人負責。
