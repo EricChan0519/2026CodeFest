@@ -34,9 +34,6 @@ export interface ArrowStrings {
   /** 「怎麼去」的選項名稱：走路、公車 */
   howWalk: string
   howBus: string
-  /** 「怎麼去」的選項名稱：捷運、公車＋捷運 */
-  howMetro: string
-  howMix: string
   /** {min} */
   aboutMin: string
   busLoading: string
@@ -134,8 +131,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     walkThere: '走路過去',
     howWalk: '走路',
     howBus: '公車',
-    howMetro: '捷運',
-    howMix: '公車＋捷運',
     aboutMin: '約 {min} 分鐘',
     busLoading: '正在找可以搭的公車…',
     busNotWorth: '搭公車不會比較快，走過去就好',
@@ -221,8 +216,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     walkThere: 'Walk there',
     howWalk: 'Walk',
     howBus: 'Bus',
-    howMetro: 'MRT',
-    howMix: 'Bus + MRT',
     aboutMin: 'About {min} min',
     busLoading: 'Looking for buses…',
     busNotWorth: 'A bus is not faster. Walking is best',
@@ -308,8 +301,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     walkThere: 'เดินไป',
     howWalk: 'เดิน',
     howBus: 'รถเมล์',
-    howMetro: 'MRT',
-    howMix: 'รถเมล์ + MRT',
     aboutMin: 'ประมาณ {min} นาที',
     busLoading: 'กำลังหารถเมล์…',
     busNotWorth: 'นั่งรถเมล์ไม่เร็วกว่า เดินไปดีกว่า',
@@ -395,8 +386,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     walkThere: 'Đi bộ',
     howWalk: 'Đi bộ',
     howBus: 'Xe buýt',
-    howMetro: 'MRT',
-    howMix: 'Xe buýt + MRT',
     aboutMin: 'Khoảng {min} phút',
     busLoading: 'Đang tìm xe buýt…',
     busNotWorth: 'Đi xe buýt không nhanh hơn. Nên đi bộ',
@@ -482,8 +471,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     walkThere: 'Jalan kaki',
     howWalk: 'Jalan kaki',
     howBus: 'Bus',
-    howMetro: 'MRT',
-    howMix: 'Bus + MRT',
     aboutMin: 'Sekitar {min} menit',
     busLoading: 'Mencari bus…',
     busNotWorth: 'Naik bus tidak lebih cepat. Jalan kaki saja',
@@ -569,8 +556,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     walkThere: 'ដើរទៅ',
     howWalk: 'ដើរ',
     howBus: 'ឡានក្រុង',
-    howMetro: 'MRT',
-    howMix: 'ឡានក្រុង + MRT',
     aboutMin: 'ប្រហែល {min} នាទី',
     busLoading: 'កំពុងរកឡានក្រុង…',
     busNotWorth: 'ជិះឡានក្រុងមិនលឿនជាងទេ ដើរទៅល្អជាង',
@@ -656,8 +641,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     walkThere: '歩いて行く',
     howWalk: '徒歩',
     howBus: 'バス',
-    howMetro: 'MRT',
-    howMix: 'バス＋MRT',
     aboutMin: '約 {min} 分',
     busLoading: 'バスを探しています…',
     busNotWorth: 'バスは速くなりません。歩くのがおすすめです',
@@ -743,8 +726,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     walkThere: '걸어서 가기',
     howWalk: '도보',
     howBus: '버스',
-    howMetro: 'MRT',
-    howMix: '버스 + MRT',
     aboutMin: '약 {min}분',
     busLoading: '탈 수 있는 버스를 찾는 중…',
     busNotWorth: '버스가 더 빠르지 않아요. 걸어가는 게 좋아요',
