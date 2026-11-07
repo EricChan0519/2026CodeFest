@@ -34,6 +34,7 @@ import type { StopGroup } from '@/lib/stopSearch'
 import { poiNameForTranslation, stopLabel } from '@/lib/foreignSearch'
 import { metroLineName } from '@/lib/metroLines'
 import { createLocator } from '@/lib/locator'
+import { isInTownPass, send } from '@/lib/townpass-bridge'
 import type { ModeRoute } from '@/lib/modeRoute'
 import { estimateBusMin } from '@/lib/transferBus'
 import { bestCandidates, busCandidates, comparable, listOptions, metroCandidates, pickByMode } from '@/lib/howOptions'
@@ -1044,7 +1045,10 @@ function cueText(c: Cue): string {
 }
 
 function onCue(c: Cue) {
-  if (c.haptic && 'vibrate' in navigator) {
+  // 城市通內交給 App 的 haptic Handler（iOS 沒有 navigator.vibrate）；一般瀏覽器用 Vibration API
+  if (c.haptic && isInTownPass()) {
+    send('haptic', { pattern: c.haptic })
+  } else if (c.haptic && 'vibrate' in navigator) {
     navigator.vibrate(c.haptic === 'arrive' ? [200, 80, 200, 80, 400] : c.haptic === 'turn' ? [150] : [100, 60, 100])
   }
   // 抵達那句不出聲：到站畫面會自己念，走到目的地由下面的 watch 念
@@ -1373,7 +1377,7 @@ watch(busy, flushLayout)
 watch([rows, howRows, routeNote, searchNote, lang, age, mode, search.searching], () => void nextTick(onResize))
 
 onMounted(() => {
-  document.title = '跟著箭頭走'
+  document.title = '一箭成行'
   measure()
   if (params.has('debug')) debugOpen.value = true
   window.addEventListener('resize', onResize)
