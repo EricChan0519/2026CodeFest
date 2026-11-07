@@ -45,11 +45,14 @@ export interface BusNetwork {
 
 /** 起點、終點最多走多遠（直線） */
 export const MAX_WALK_M = 800
-/** 某個分頁在 800 公尺內找不到路時，起點、終點的步行範圍依序放寬到這些距離（步行時間照算，仍要比全程走路快） */
-export const WIDER_WALK_M = [1500, 2500]
+/**
+ * 某個分頁在 800 公尺內找不到路時，起點、終點的步行範圍依序放寬；最後不設上限，
+ * 離捷運 3 公里又沒有公車時，也要走過去搭捷運，不能直接說沒有路（步行時間照算）
+ */
+export const WIDER_WALK_M = [1500, 2500, Infinity]
 export const MAX_RIDES = 3
-/** 每個分頁最多幾筆 */
-export const PLANS_PER_TAB = 3
+/** 每個分頁最多幾筆搭車方案（mixed 另外加上走路） */
+export const PLANS_PER_TAB = 5
 /** 比這個近就建議走路 */
 export const WALK_ONLY_M = 400
 /** 直線距離換算成步行距離 */
@@ -543,11 +546,16 @@ function walkPlan(from: LatLon, to: LatLon, mps: number): TransitPlan {
   return { rides: [], durationS: walkS, walkS, waitS: 0, rideS: 0, walkM: Math.round(walkM), service: 'ok' }
 }
 
+/** 搭得到的排前面，同樣搭得到（或都搭不到）再比時間 */
+function byUsable(a: TransitPlan, b: TransitPlan): number {
+  return Number(a.service !== 'ok') - Number(b.service !== 'ok') || a.durationS - b.durationS
+}
+
 function top(plans: TransitPlan[]): TransitPlan[] {
   const seen = new Set<string>()
   // 搭得到的排前面，同樣搭得到（或都搭不到）再比時間
   return [...plans]
-    .sort((a, b) => Number(a.service !== 'ok') - Number(b.service !== 'ok') || a.durationS - b.durationS)
+    .sort(byUsable)
     .filter((p) => {
       const sig = signature(p)
       if (seen.has(sig)) return false
@@ -568,13 +576,10 @@ export function planTransit(
   const clock = serviceClock(opts.now ?? new Date())
   const walk = walkPlan(from, to, mps)
   const g = graphFor(bus, metro)
-  // 搭車要比直接走過去快才列
-  const worth = (p: TransitPlan) => p.durationS < walk.durationS
-
   // 先找 800 公尺內的站；找不到再放寬，捷運站離比較遠時也有路可以選
   const find = (allow: (m: 'bus' | 'metro') => boolean) => {
     for (const r of [MAX_WALK_M, ...WIDER_WALK_M]) {
-      const plans = plansFor(g, from, to, mps, clock, allow, r).filter(worth)
+      const plans = plansFor(g, from, to, mps, clock, allow, r)
       if (plans.length) return plans
     }
     return []
@@ -583,10 +588,7 @@ export function planTransit(
   const metroPlans = metro ? find((m) => m === 'metro') : []
   const mixedPlans = find(() => true)
 
-  let mixed = top([...mixedPlans, ...busPlans, ...metroPlans])
-  const firstOk = mixed.find((p) => p.service === 'ok')
-  if (walk.walkM < WALK_ONLY_M || !firstOk || walk.durationS <= firstOk.durationS) {
-    mixed = [walk, ...mixed].slice(0, PLANS_PER_TAB)
-  }
+  // 比走路慢的方案也列出來讓使用者選，只是排在後面；走路一定是其中一個選項
+  const mixed = [walk, ...top([...mixedPlans, ...busPlans, ...metroPlans])].sort(byUsable)
   return { mixed, bus: top(busPlans), metro: top(metroPlans) }
 }

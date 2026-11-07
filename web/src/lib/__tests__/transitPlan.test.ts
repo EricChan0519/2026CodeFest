@@ -89,6 +89,14 @@ describe('planTransit metro', () => {
     expect(best.walkM).toBeGreaterThan(MAX_WALK_M)
   })
 
+  it('walks to the metro even when the nearest station is 3 km away and there is no bus', () => {
+    const farWest: LatLon = [25.0353, 121.468] // BL10 往西約 3.2 公里
+    const plans = planTransit(NO_BUS, metro, farWest, ZHONGSHAN, { audience: 'visitor' })
+    expect(plans.metro.length).toBeGreaterThan(0)
+    expect(plans.metro[0].rides[0].board.stationUid).toBe(metroUid('BL10'))
+    expect(plans.mixed.some((p) => p.rides.length > 0)).toBe(true)
+  })
+
   it('has no metro plans when the metro snapshot is missing', () => {
     const plans = planTransit(busLine(), null, XIMEN, SHUANGLIAN, { audience: 'visitor' })
     expect(plans.metro).toEqual([])
@@ -127,6 +135,18 @@ describe('planTransit bus and mixed', () => {
     const plans = planTransit(busLine(), metro, XIMEN, near, { audience: 'visitor' })
     expect(plans.mixed[0].rides).toEqual([])
     expect(plans.mixed[0].walkM).toBeLessThan(WALK_ONLY_M)
+  })
+
+  it('keeps plans slower than walking as choices, after the faster ones', () => {
+    // 西門和台北車站中間：走過去比進站等車快，但捷運仍列出來讓使用者選
+    const between: LatLon = [25.0447, 121.5135]
+    const plans = planTransit(NO_BUS, metro, XIMEN, between, { audience: 'visitor' })
+    const walk = plans.mixed.find((p) => p.rides.length === 0)!
+    expect(walk).toBeDefined()
+    expect(plans.metro.length).toBeGreaterThan(0)
+    expect(plans.metro[0].durationS).toBeGreaterThan(walk.durationS)
+    expect(plans.mixed[0]).toBe(walk)
+    expect(plans.mixed.some((p) => p.rides.length > 0)).toBe(true)
   })
 
   it('estimates longer trips for elders, who walk slower', () => {

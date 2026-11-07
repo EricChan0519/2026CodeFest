@@ -565,6 +565,8 @@ interface HowRow {
   /** 不能選（例如末班車已過），灰色顯示，note 說明原因 */
   disabled?: boolean
   note?: string
+  /** 預估秒數，公車＋捷運規劃時用來把走路和搭車排在一起 */
+  sortS?: number
 }
 /** 怎麼去的分頁：最快（混搭）、只搭公車、只搭捷運 */
 const planTab = ref<PlanTab>('mixed')
@@ -591,13 +593,16 @@ function transitRow(p: TransitPlan, t: { name: string; point: LatLon }): HowRow 
     // 照現在的時間搭不到：反灰、不能選，寫出原因（不然選了會變成只帶你走路）
     disabled: p.service !== 'ok',
     note: p.service === 'ended' ? S.value.lastGone : p.service === 'not_started' ? S.value.notStarted : undefined,
+    sortS: p.durationS,
   }
 }
-/** 第一個能選的搭車方案；都不能選時停在走路那列 */
+/**
+ * 箭頭要指的那一列。公車＋捷運規劃：列表已經依時間排好，指第一個能選的（最快的，可能是走路）。
+ * 只有舊的公車規劃時：走路列之後第一班車。
+ */
 function firstPickable(): number {
-  // 走路列之後第一個能搭的；全部都不能搭（例如末班車已過）就停在第一列走路
-  const walks = walkRows.value.length
-  const i = howRows.value.findIndex((r, idx) => idx >= walks && !r.disabled)
+  const skip = search.transit.value ? 0 : walkRows.value.length
+  const i = howRows.value.findIndex((r, idx) => idx >= skip && !r.disabled)
   return i > 0 ? i : 0
 }
 function selectTab(t: PlanTab) {
@@ -631,6 +636,7 @@ const walkRows = computed<HowRow[]>(() => {
         detail: walkPlan.loading.value ? r.planning : '',
         right: search.walkMin.value ? fill(s.aboutMin, { min: search.walkMin.value }) : '',
         choice: { kind: 'walk', name: t.name, point: t.point },
+        sortS: search.walkMin.value ? search.walkMin.value * 60 : undefined,
       },
     ]
   }
@@ -644,6 +650,7 @@ const walkRows = computed<HowRow[]>(() => {
       right: fill(s.aboutMin, { min: routeMin(route) }),
       // 選了最快的路：之後重新規劃也走最快的
       choice: { kind: 'walk', name: t.name, point: t.point, route, from: plan.from, mode: isMode ? plan.mode : 'fast' },
+      sortS: route.durationS,
     }
   })
 })
@@ -662,7 +669,10 @@ const routeNote = computed(() => {
 watch(
   () => walkRows.value.length,
   (n, old) => {
-    if (phase.value === 'how' && armRow >= old) armRow += n - old
+    if (phase.value !== 'how') return
+    // 公車＋捷運規劃時列表依時間排序，走路的路算好後位置會變：重新指最快的那個
+    if (search.transit.value) armRow = firstPickable()
+    else if (armRow >= old) armRow += n - old
   },
   { flush: 'sync' },
 )
@@ -672,8 +682,13 @@ const howRows = computed<HowRow[]>(() => {
   const s = S.value
   const plans = search.transit.value
   if (plans) {
-    // 走路列一直在最前面；「走路就到」的方案已經是走路列，不重複
-    return [...walkRows.value, ...plans[planTab.value].filter((p) => p.rides.length > 0).map((p) => transitRow(p, t))]
+    // 走路和搭車放在一起依時間排，最快的在最上面；比較慢的也留著讓使用者選。搭不到的（末班車已過）放最後。
+    // 規劃器的「走路」方案已經由走路列顯示，不重複
+    const rows = [...walkRows.value, ...plans[planTab.value].filter((p) => p.rides.length > 0).map((p) => transitRow(p, t))]
+    return rows
+      .map((r, i) => ({ r, i }))
+      .sort((a, b) => Number(!!a.r.disabled) - Number(!!b.r.disabled) || (a.r.sortS ?? Infinity) - (b.r.sortS ?? Infinity) || a.i - b.i)
+      .map(({ r }) => r)
   }
   const buses = search.busOptions.value.map<HowRow>((p) => {
     const first = p.rides[0]!
