@@ -80,3 +80,33 @@ def test_identical_patterns_from_sub_routes_are_merged():
     data = load("stop_of_route")[:1] * 2
     result = builder.build_index(data, load("stop"), load("route"), "x")
     assert len([p for p in result["patterns"] if p["direction"] == 0]) == 1
+
+
+def _day(weekday, weekend):
+    d = {k: int(weekday) for k in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")}
+    d.update({k: int(weekend) for k in ("Saturday", "Sunday")})
+    return d
+
+
+def test_service_windows_from_timetables_and_frequencies():
+    schedule = [
+        {"RouteName": {"Zh_tw": "307"}, "Direction": 0, "Timetables": [
+            {"ServiceDay": _day(True, False), "StopTimes": [{"StopSequence": 2, "DepartureTime": "05:40"}, {"StopSequence": 1, "DepartureTime": "05:30"}]},
+            {"ServiceDay": _day(True, True), "StopTimes": [{"StopSequence": 1, "DepartureTime": "22:45"}]},
+            {"ServiceDay": _day(False, True), "StopTimes": [{"StopSequence": 1, "ArrivalTime": "06:10"}]},
+        ]},
+        {"RouteName": {"Zh_tw": "307"}, "Direction": 1, "Frequencys": [
+            {"StartTime": "06:00", "EndTime": "00:30", "ServiceDay": _day(True, True)},
+        ]},
+    ]
+    w = builder.service_windows(schedule)
+    assert w[("307", 0)] == {"weekday": [5 * 3600 + 30 * 60, 22 * 3600 + 45 * 60], "weekend": [6 * 3600 + 10 * 60, 22 * 3600 + 45 * 60]}
+    assert w[("307", 1)] == {"weekday": [6 * 3600, 24 * 3600 + 30 * 60], "weekend": [6 * 3600, 24 * 3600 + 30 * 60]}
+
+
+def test_patterns_get_service_windows_when_schedule_is_given():
+    schedule = [{"RouteName": {"Zh_tw": load("stop_of_route")[0]["RouteName"]["Zh_tw"]}, "Direction": load("stop_of_route")[0]["Direction"],
+                 "Frequencys": [{"StartTime": "06:00", "EndTime": "22:00", "ServiceDay": _day(True, True)}]}]
+    result = builder._build(load("stop_of_route"), load("stop"), load("route"), "x", schedule)[0]
+    with_service = [p for p in result["patterns"] if "service" in p]
+    assert with_service and with_service[0]["service"]["weekday"] == [6 * 3600, 22 * 3600]

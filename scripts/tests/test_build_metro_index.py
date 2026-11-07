@@ -186,3 +186,27 @@ def test_circular_line_from_second_operator_is_kept_and_light_rail_dropped():
     # 名稱不同的轉乘站（新埔民生 ↔ 新埔）靠 EXTRA_TRANSFERS
     assert {"from": "Y15", "to": "BL08", "walkS": b.DEFAULT_TRANSFER_S} in data["transfers"]
     assert {"from": "BL08", "to": "Y15", "walkS": b.DEFAULT_TRANSFER_S} in data["transfers"]
+
+
+def test_first_and_last_trains_per_stop_follow_the_direction():
+    fl = [
+        # 往善導寺（BL13）方向的末班：西門 23:50、台北車站 23:52
+        {"LineID": "BL", "StationID": "BL11", "DestinationStaionID": "BL13", "FirstTrainTime": "06:02", "LastTrainTime": "23:50"},
+        {"LineID": "BL", "StationID": "BL12", "DestinationStaionID": "BL13", "FirstTrainTime": "06:04", "LastTrainTime": "23:52"},
+        # 反方向（往西門）的末班過午夜：記成 24:10
+        {"LineID": "BL", "StationID": "BL12", "DestinationStaionID": "BL11", "FirstTrainTime": "06:00", "LastTrainTime": "00:10"},
+        {"LineID": "BL", "StationID": "BL13", "DestinationStationID": "BL11", "FirstTrainTime": "05:58", "LastTrainTime": "00:08"},
+    ]
+    bl = by_line(build(first_last=fl), "BL")
+    east, west = bl[0], bl[1]
+    assert east["stops"] == ["BL11", "BL12", "BL13"]
+    assert east["firstS"] == [6 * 3600 + 120, 6 * 3600 + 240, None]
+    assert east["lastS"] == [23 * 3600 + 50 * 60, 23 * 3600 + 52 * 60, None]
+    assert west["stops"] == ["BL13", "BL12", "BL11"]
+    assert west["lastS"] == [24 * 3600 + 8 * 60, 24 * 3600 + 10 * 60, None]
+
+
+def test_without_first_last_data_times_are_omitted():
+    data = build()
+    assert all("lastS" not in p for p in data["patterns"])
+    assert "serviceHours" in data["defaults"]

@@ -2,6 +2,7 @@
 import argparse
 import asyncio
 import json
+import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -23,7 +24,55 @@ def clean(value):
     return None if value is None or value == "" else value
 
 
-def _build(stop_of_route, stops, routes, updated_at):
+WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
+WEEKEND = ("Saturday", "Sunday")
+# 營運日從清晨 4 點算起：末班 00:30 記成 24:30
+SERVICE_DAY_START_H = 4
+
+
+def _clock_s(text):
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})(?::\d{2})?", str(text or "").strip())
+    if not m:
+        return None
+    h, mi = int(m.group(1)), int(m.group(2))
+    return (h + 24 if h < SERVICE_DAY_START_H else h) * 3600 + mi * 60
+
+
+def service_windows(schedule) -> dict:
+    """TDX Bus Schedule → {(路線中文名, 方向): {"weekday": [首班, 末班], "weekend": [...]}}，秒數是起點站發車時間。
+
+    班表（Timetables）取每一班第一站的發車時間；班距（Frequencys）取 StartTime／EndTime。
+    同一路線方向有多筆（副路線）時取最早首班、最晚末班。沒有資料的日子是 None。
+    """
+    acc = {}
+    for entry in schedule or []:
+        name = clean((entry.get("RouteName") or {}).get("Zh_tw"))
+        direction = entry.get("Direction")
+        if not name or direction is None:
+            continue
+        spans = []
+        for t in entry.get("Timetables") or []:
+            times = sorted(t.get("StopTimes") or [], key=lambda x: x.get("StopSequence", 0))
+            if not times:
+                continue
+            at = _clock_s(times[0].get("DepartureTime") or times[0].get("ArrivalTime"))
+            if at is not None:
+                spans.append((t.get("ServiceDay") or {}, at, at))
+        for f in entry.get("Frequencys") or []:
+            start, end = _clock_s(f.get("StartTime")), _clock_s(f.get("EndTime"))
+            if start is not None and end is not None:
+                spans.append((f.get("ServiceDay") or {}, start, end))
+        slot = acc.setdefault((name, direction), {"weekday": None, "weekend": None})
+        for day, first, last in spans:
+            for key, names in (("weekday", WEEKDAYS), ("weekend", WEEKEND)):
+                if not any(day.get(n) for n in names):
+                    continue
+                cur = slot[key]
+                slot[key] = [min(cur[0], first), max(cur[1], last)] if cur else [first, last]
+    return acc
+
+
+def _build(stop_of_route, stops, routes, updated_at, schedule=None):
     stop_lookup = {s.get("StopUID"): s for s in stops}
     route_lookup = {r.get("RouteUID"): r for r in routes}
     groups = {}
@@ -77,7 +126,14 @@ def _build(stop_of_route, stops, routes, updated_at):
                          "lat": round(sum(p[0] for p in points) / len(points), 6),
                          "lon": round(sum(p[1] for p in points) / len(points), 6),
                          "routes": sorted(group["routes"].values(), key=lambda r: (r["routeName"]["zh"] or "", r["direction"], r["stopUid"] or ""))})
-    return {"updatedAt": updated_at, "stations": stations, "patterns": _patterns(sequences, {s["stationUid"] for s in stations})}, excluded, missing
+    patterns = _patterns(sequences, {s["stationUid"] for s in stations})
+    if schedule:
+        windows = service_windows(schedule)
+        for p in patterns:
+            w = windows.get((p["routeName"]["zh"], p["direction"]))
+            if w and (w["weekday"] or w["weekend"]):
+                p["service"] = w
+    return {"updatedAt": updated_at, "stations": stations, "patterns": patterns}, excluded, missing
 
 
 def _patterns(sequences, known):
@@ -139,20 +195,33 @@ async def fetch_all(path, retries=10):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default="api/data/stop_index.json")
+    parser.add_argument("--copy", default="web/public/lab/stop_index.json", help="再複製一份給前端；空字串表示不複製")
     args = parser.parse_args()
     async def fetch():
         # 依序抓，避免同時打 TDX 觸發 429
-        return [await fetch_all(f"/v2/Bus/{kind}/City/Taipei") for kind in ("StopOfRoute", "Stop", "Route")]
-    stop_of_route, stops, routes = asyncio.run(fetch())
+        got = [await fetch_all(f"/v2/Bus/{kind}/City/Taipei") for kind in ("StopOfRoute", "Stop", "Route")]
+        try:
+            # 首末班（選用）：抓不到時快照沒有 service，前端就不判斷末班車
+            got.append(await fetch_all("/v2/Bus/Schedule/City/Taipei"))
+        except httpx.HTTPError as exc:
+            print(f"Schedule 抓不到（{exc}），快照不含首末班")
+            got.append(None)
+        return got
+    stop_of_route, stops, routes, schedule = asyncio.run(fetch())
     updated_at = datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds")
-    data, excluded, missing = _build(stop_of_route, stops, routes, updated_at)
-    out = Path(args.out)
-    if not out.is_absolute():
-        out = ROOT / out
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    data, excluded, missing = _build(stop_of_route, stops, routes, updated_at, schedule)
+    text = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    for target in filter(None, [args.out, args.copy]):
+        out = Path(target)
+        if not out.is_absolute():
+            out = ROOT / out
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text, encoding="utf-8")
+        print(f"寫入 {out}")
     stations = data["stations"]
     english = sum(bool(s["name"]["en"]) for s in stations)
+    with_service = sum("service" in p for p in data["patterns"])
+    print(f"有首末班的路線方向：{with_service}／{len(data['patterns'])}")
     print(f"站位數：{len(stations)}；英文站名比例：{english / len(stations) * 100 if stations else 0:.1f}%；只能下車排除筆數：{excluded}；無 StationID 略過筆數：{missing}")
 
 

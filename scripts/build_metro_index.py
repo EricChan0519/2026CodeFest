@@ -41,6 +41,8 @@ DEFAULT_RUN_S = 120
 DEFAULT_HEADWAY_S = 360
 DEFAULT_TRANSFER_S = 240
 SAME_NAME_TRANSFER_M = 300
+# 營運日從清晨 4 點算起：末班 00:10 記成 24:10，和前一天的首班比較才不會錯
+SERVICE_DAY_START_H = 4
 
 # TDX Line 沒有 LineColor 時用的官方代表色
 OFFICIAL_COLORS = {
@@ -183,8 +185,28 @@ def _transfer_seconds(value) -> int | None:
     return int(value) if value > 30 else int(value * 60)
 
 
+def _clock_s(text) -> int | None:
+    """「HH:MM」→ 從當天 0 點起的秒數；凌晨 4 點前算前一天的營運（00:10 記成 24:10）。"""
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})(?::\d{2})?", str(text or "").strip())
+    if not m:
+        return None
+    h, mi = int(m.group(1)), int(m.group(2))
+    return (h + 24 if h < SERVICE_DAY_START_H else h) * 3600 + mi * 60
+
+
+def _first_last(rows) -> dict[tuple[str, str], list[tuple[str, int | None, int | None]]]:
+    """(路線, 車站) → [(終點站, 首班秒數, 末班秒數)]。TDX 欄位拼成 DestinationStaionID（少一個 t），兩種都收。"""
+    out: dict[tuple[str, str], list] = {}
+    for r in rows or []:
+        line, sid = _clean(r.get("LineID")), _clean(r.get("StationID"))
+        dest = _clean(r.get("DestinationStaionID")) or _clean(r.get("DestinationStationID"))
+        if line and sid and dest:
+            out.setdefault((str(line), str(sid)), []).append((str(dest), _clock_s(r.get("FirstTrainTime")), _clock_s(r.get("LastTrainTime"))))
+    return out
+
+
 def build_metro_index(*, stations, lines, station_of_line, station_of_route, s2s, transfers, exits, frequency,
-                      updated_at: str) -> dict:
+                      updated_at: str, first_last=None) -> dict:
     defaults: set[str] = set()
 
     sequences, used_line_fallback = _sequences(station_of_line, station_of_route)
@@ -232,6 +254,22 @@ def build_metro_index(*, stations, lines, station_of_line, station_of_route, s2s
         last = names[p["stops"][-1]]
         p["headsign"] = {"zh": "往" + last["zh"] if last["zh"] else None, "en": "To " + last["en"] if last["en"] else None}
     patterns = [{"lineId": p["lineId"], "headsign": p["headsign"], "stops": p["stops"], "runS": p["runS"]} for p in patterns]
+
+    # 首末班：每一站取「往這個方向（終點在後面）」的最早首班、最晚末班；最後一站不會上車，是 None
+    fl = _first_last(first_last)
+    if fl:
+        for p in patterns:
+            first_s, last_s = [], []
+            for i, sid in enumerate(p["stops"]):
+                ahead = set(p["stops"][i + 1:])
+                rows = [r for r in fl.get((p["lineId"], sid), []) if r[0] in ahead]
+                firsts = [r[1] for r in rows if r[1] is not None]
+                lasts = [r[2] for r in rows if r[2] is not None]
+                first_s.append(min(firsts) if firsts else None)
+                last_s.append(max(lasts) if lasts else None)
+            p["firstS"], p["lastS"] = first_s, last_s
+    else:
+        defaults.add("serviceHours")
 
     headways = _headways(frequency)
     line_rows = {str(l["LineID"]): l for l in lines or [] if _clean(l.get("LineID"))}
@@ -333,7 +371,8 @@ def main():
     args = parser.parse_args()
 
     kinds = (("Station", True), ("StationOfLine", True), ("Line", True), ("StationOfRoute", False),
-             ("S2STravelTime", False), ("LineTransfer", False), ("StationExit", False), ("Frequency", False))
+             ("S2STravelTime", False), ("LineTransfer", False), ("StationExit", False), ("Frequency", False),
+             ("FirstLastTimetable", False))
 
     async def fetch():
         """每個端點把各業者的資料串在一起；全部業者都抓不到就是 None（用預設值）。"""
@@ -352,7 +391,7 @@ def main():
     data = build_metro_index(stations=raw["Station"], lines=raw["Line"], station_of_line=raw["StationOfLine"],
                              station_of_route=raw["StationOfRoute"], s2s=raw["S2STravelTime"],
                              transfers=raw["LineTransfer"], exits=raw["StationExit"], frequency=raw["Frequency"],
-                             updated_at=updated_at)
+                             first_last=raw["FirstLastTimetable"], updated_at=updated_at)
     errors = check_metro_index(data)
     if errors:
         raise SystemExit("快照不符合合約：\n" + "\n".join(errors[:20]))
