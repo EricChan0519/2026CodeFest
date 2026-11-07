@@ -252,6 +252,8 @@ function play(frames: Frame[], duration: number, easing = 'linear'): Promise<voi
       el.style.transition = ''
       if (anims === mine) anims = []
       resolve()
+      // 不經過 busy 的過場（例如除錯面板）結束時也要補對準；經過 busy 的由 watch(busy) 處理
+      flushLayout()
     }
     outer.oncancel = () => resolve()
   })
@@ -1167,11 +1169,21 @@ watch(debugOpen, async () => {
 
 // ── 版面變動（轉向、鍵盤、清單捲動、結果出來） ─────────
 let resizeRaf = 0
+/**
+ * 過場中版面變了、還沒重新對準。過場的終點是開始時量的；手機收鍵盤時視窗變高，
+ * 箭頭方塊（--hero，跟視窗高度有關）會在過場中變大，終點的位置和縮放就過期了：
+ * 箭頭偏右下、蓋到第一列（電腦沒有鍵盤，所以看不到）。過場結束後要補對準一次。
+ */
+let layoutDirty = false
 function onResize() {
   cancelAnimationFrame(resizeRaf)
   resizeRaf = requestAnimationFrame(() => {
     const resized = measure()
-    if (anims.length) return // 過場中不打斷；過場結束時的位置是量出來的
+    if (anims.length) {
+      layoutDirty = true // 過場中不打斷；過場結束後由 flushLayout 補對準
+      return
+    }
+    layoutDirty = false
     // 方塊大小變了（--hero 立刻生效）：位置也要同一格到位，不能用 .settled 的過渡慢慢滑，不然箭頭會抽一下
     if (resized) {
       hero.value!.style.transition = 'none'
@@ -1187,6 +1199,11 @@ function onResize() {
     }
   })
 }
+/** 過場中錯過的版面變動：等過場全部結束（箭頭指著哪一列已經更新）再對準 */
+function flushLayout() {
+  if (layoutDirty && !busy.value && !anims.length) onResize()
+}
+watch(busy, flushLayout)
 // 清單內容變了（結果、公車、語言、搜尋中的轉圈），版面跟著變 → 箭頭重新對準
 // （搜尋步驟整組垂直置中：轉圈出現時搜尋欄會往上移，沒跟著重算箭頭就會掉在搜尋欄下面）
 watch([rows, howRows, routeNote, searchNote, lang, age, mode, search.searching], () => void nextTick(onResize))
