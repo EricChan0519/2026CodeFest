@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { arrivalLocation, askCard, buildArrival, tripFromQuery, type ArrivalTrip } from '../arrival'
+import { arrivalFromStation, arrivalLocation, askCard, buildArrival, tripFromQuery, type ArrivalTrip } from '../arrival'
+import type { Station } from '@/lib/contract'
 
 const trip: ArrivalTrip = {
   station: { zh: '臺北車站(鄭州)', en: 'Taipei Main Sta. (Zhengzhou)' },
@@ -141,5 +142,47 @@ describe('query round trip', () => {
 
   it('carries no coordinates', () => {
     expect(Object.keys(arrivalLocation(trip, 'en', 'elder').query).join()).not.toMatch(/lat|lon/)
+  })
+})
+
+describe('arrivalFromStation', () => {
+  const station: Station = {
+    stationUid: 'TPE123',
+    name: { zh: '臺北車站(鄭州)', en: 'Taipei Main Sta. (Zhengzhou)' },
+    bearing: 'W',
+    lat: 25.0478,
+    lon: 121.517,
+    routes: [],
+  }
+  const stationRoute = {
+    routeName: { zh: '紅3', en: 'R3' },
+    direction: 0,
+    headsign: { zh: '往板橋', en: 'To Banqiao' },
+    stopUid: 'TPE9',
+  }
+
+  it('maps API station and route fields to the arrival query', () => {
+    const loc = arrivalFromStation(station, stationRoute, 'th', 'elder')
+    expect(loc.path).toBe('/arrived')
+    expect(loc.query).toEqual({
+      lang: 'th',
+      audience: 'elder',
+      stationZh: '臺北車站(鄭州)',
+      stationEn: 'Taipei Main Sta. (Zhengzhou)',
+      routeZh: '紅3',
+      routeEn: 'R3',
+      headsignZh: '往板橋',
+      headsignEn: 'To Banqiao',
+    })
+  })
+
+  it('round-trips through the query into the arrival screen text', () => {
+    const { trip: back, lang, audience } = tripFromQuery(arrivalFromStation(station, stationRoute, 'zh-TW', 'visitor').query)
+    expect(buildArrival(back, lang, audience).spoken).toBe('到了。等 紅3，往板橋方向')
+  })
+
+  it('leaves out the station coordinates', () => {
+    const query = arrivalFromStation(station, stationRoute, 'en', 'visitor').query
+    expect(JSON.stringify(query)).not.toMatch(/25\.04|121\.51|TPE/)
   })
 })

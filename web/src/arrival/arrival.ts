@@ -2,7 +2,7 @@
  * 抵達確認與「給別人看」卡片的文字組合（純函式）。
  * 只用站位資料裡有的路線和方向，不暗示車快來了：到站時間不在目前範圍內。
  */
-import type { Audience, Lang } from '@/lib/contract'
+import type { Audience, Lang, Station, StationRoute } from '@/lib/contract'
 import { ARRIVAL_STRINGS } from '@/i18n/arrival'
 
 export interface Name {
@@ -123,6 +123,24 @@ export function arrivalLocation(trip: ArrivalTrip, lang: Lang, audience: Audienc
     if (value) query[key] = value
   }
   return { path: '/arrived', query }
+}
+
+/**
+ * NAV 到站時用：直接丟站點 API 的 Station 和使用者選的那筆 StationRoute。
+ *   router.push(arrivalFromStation(station, stationRoute, lang, audience))
+ * 只取站名、路線名、方向；座標和 UID 不進網址。
+ */
+export function arrivalFromStation(
+  station: Pick<Station, 'name'>,
+  stationRoute: Pick<StationRoute, 'routeName' | 'headsign'>,
+  lang: Lang,
+  audience: Audience,
+) {
+  return arrivalLocation(
+    { station: station.name, route: stationRoute.routeName, headsign: stationRoute.headsign },
+    lang,
+    audience,
+  )
 }
 
 export function tripFromQuery(query: Record<string, unknown>) {
