@@ -8,7 +8,7 @@
  * - 地點與地址：查 OpenStreetMap（Nominatim）；到了只在這個畫面顯示「到了」。
  * 文字是實驗用的中文；正式文案走 i18n（UI 負責）。
  */
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { arrivalFromStation, tripFromQuery } from '@/arrival/arrival'
 import type { LatLon, Station, StationRoute } from '@/lib/contract'
@@ -149,11 +149,38 @@ const busLoading = ref(false)
 const busNote = ref('')
 const pickedBus = shallowRef<DirectBusOption | null>(null)
 const busTargetName = ref('')
+const busTargetPoint = shallowRef<LatLon | null>(null)
 let busSeq = 0
+/** 選了地點 A 之後，搜尋結果收起來，「搭公車去」放在搜尋框正下方 */
+const showBusPanel = computed(() => busLoading.value || !!busOptions.value || !!busNote.value)
+const busPanel = ref<HTMLElement | null>(null)
+
+/** 手機上點的地點常在畫面下半部：把「搭公車去」捲到畫面最上面，不然看起來像沒反應 */
+function revealBusPanel() {
+  // 搜尋結果收起來後頁面會變短，平滑捲動會跑過頭；等畫面更新完再直接跳到標題
+  void nextTick(() => {
+    const el = busPanel.value
+    if (el) window.scrollTo({ top: Math.max(0, el.getBoundingClientRect().top + window.scrollY - 16) })
+  })
+}
+
+/** 不搭車：目的地改回地點 A，走路過去 */
+function walkInstead() {
+  if (!busTargetPoint.value) return
+  pickedBus.value = null
+  destination.value = destinationFromPlace({ name: busTargetName.value, point: busTargetPoint.value })
+}
+
+/** 回到搜尋結果，重選目的地 */
+function reselectDestination() {
+  clearBusPlan()
+  destination.value = DEFAULT_DESTINATION
+}
 
 async function planBusTo(target: LatLon, name: string) {
   const seq = ++busSeq
   busTargetName.value = name
+  busTargetPoint.value = target
   busOptions.value = null
   pickedBus.value = null
   busNote.value = ''
@@ -174,7 +201,11 @@ async function planBusTo(target: LatLon, name: string) {
   } catch (e) {
     if (seq === busSeq) busNote.value = `公車資料載入失敗（${(e as Error).message}），可以直接走過去。`
   } finally {
-    if (seq === busSeq) busLoading.value = false
+    if (seq === busSeq) {
+      busLoading.value = false
+      // 結果出來後這一區變高，瀏覽器的捲動錨點會把畫面往下推；再對齊一次標題
+      revealBusPanel()
+    }
   }
 }
 
@@ -202,6 +233,7 @@ function busLabel(o: DirectBusOption): string {
 function pickPoi(p: PoiHit) {
   destination.value = destinationFromPlace({ name: p.name, point: p.point })
   void planBusTo(p.point, p.name)
+  revealBusPanel()
 }
 
 function isPoiPicked(p: PoiHit): boolean {
@@ -212,6 +244,7 @@ function isPoiPicked(p: PoiHit): boolean {
 function pickPlace(p: Place) {
   destination.value = destinationFromPlace(p)
   void planBusTo(p.point, p.name)
+  revealBusPanel()
 }
 
 /** 選站牌時一定要同時選一班車，到站才知道要念哪一線 */
@@ -781,87 +814,15 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
 
       <p v-if="searchError" class="text-amber-200" role="alert">{{ searchError }}</p>
 
-      <!-- 公車站牌（TDX 快照）：一個站位一張卡，點路線就是選那班車 -->
-      <section v-if="stopResults && stopResults.length" class="space-y-2" aria-label="公車站牌">
-        <h2 class="text-lg font-bold">公車站牌</h2>
-        <div v-for="st in stopResults" :key="st.stationUid" class="rounded-lg bg-white/10 p-3">
-          <div class="text-lg font-bold">
-            {{ st.name.zh }}
-            <span v-if="st.bearing" class="text-sm font-normal text-white/70">（站位朝{{ BEARING_TEXT[st.bearing] ?? st.bearing }}）</span>
-          </div>
-          <div class="mb-2 text-sm text-white/70">點下要搭的那一班車：</div>
-          <div class="flex flex-wrap gap-2">
-            <button
-              v-for="r in st.routes"
-              :key="r.stopUid"
-              type="button"
-              class="rounded-full px-3 py-2 text-base"
-              :class="isRoutePicked(st, r) ? 'bg-white font-bold text-[#30383D]' : 'bg-white/20'"
-              :aria-pressed="isRoutePicked(st, r)"
-              @click="pickStopRoute(st, r)"
-            >
-              {{ routeLabel(r) }}
-            </button>
-          </div>
+      <!-- 搭公車去：選了地址或店家 A 之後，搜尋結果收起來，這一區放在搜尋框正下方。用 TDX 停靠順序在裝置上算直達車 -->
+      <section v-if="showBusPanel" ref="busPanel" class="scroll-mt-4 space-y-2" aria-label="搭公車去">
+        <div class="flex items-start justify-between gap-3">
+          <h2 class="text-xl font-bold">
+            去「{{ busTargetName }}」可以搭
+            <span class="block text-sm font-normal text-white/70">只列直達車，不含轉乘</span>
+          </h2>
+          <button type="button" class="shrink-0 rounded-lg bg-white/20 px-3 py-2 text-base" @click="reselectDestination">重新選擇</button>
         </div>
-      </section>
-
-      <!-- 連鎖店（Overture Maps 快照）：由近到遠 -->
-      <section v-if="poiResults && poiResults.length" class="space-y-2" aria-label="連鎖店">
-        <h2 class="text-lg font-bold">
-          連鎖店
-          <span class="text-sm font-normal text-white/70">
-            （{{ poiResults.length >= POI_LIMIT ? `最近的 ${POI_LIMIT} 家` : `共 ${poiResults.length} 家` }}，離{{ poiNearUser ? '你' : '臺北車站' }}由近到遠）
-          </span>
-        </h2>
-        <button
-          v-for="p in poiVisible"
-          :key="`${p.brand.key}-${p.point[0]}-${p.point[1]}`"
-          type="button"
-          class="block w-full rounded-lg bg-white/10 p-3 text-left"
-          :class="{ 'ring-2 ring-white': isPoiPicked(p) }"
-          :aria-pressed="isPoiPicked(p)"
-          @click="pickPoi(p)"
-        >
-          <div class="flex items-baseline justify-between gap-2">
-            <span class="text-lg font-bold">{{ p.name }}</span>
-            <span class="shrink-0 text-sm text-white/80">{{ formatDistance(p.distanceM) }}</span>
-          </div>
-          <div class="text-sm text-white/70">{{ p.brand.zh }}<template v-if="p.address">・{{ p.address }}</template></div>
-        </button>
-        <button
-          v-if="poiShown < poiResults.length"
-          type="button"
-          class="h-12 w-full rounded-lg bg-white/20 font-bold"
-          @click="poiShown += POI_PAGE"
-        >
-          再多看一些（還有 {{ poiResults.length - poiShown }} 家）
-        </button>
-      </section>
-
-      <!-- 地點與地址（OpenStreetMap） -->
-      <section v-if="placeResults && placeResults.length" class="space-y-2" aria-label="地點與地址">
-        <h2 class="text-lg font-bold">地點與地址</h2>
-        <button
-          v-for="(p, i) in placeResults"
-          :key="`${p.name}-${i}`"
-          type="button"
-          class="block w-full rounded-lg bg-white/10 p-3 text-left"
-          :class="{ 'ring-2 ring-white': isPlacePicked(p) }"
-          :aria-pressed="isPlacePicked(p)"
-          @click="pickPlace(p)"
-        >
-          <div class="text-lg font-bold">{{ p.name }}</div>
-          <div v-if="p.detail" class="text-sm text-white/70">{{ p.detail }}</div>
-        </button>
-      </section>
-
-      <!-- 搭公車去：選了地址或店家 A 之後，用 TDX 停靠順序在裝置上算直達車 -->
-      <section v-if="busLoading || busOptions || busNote" class="space-y-2" aria-label="搭公車去">
-        <h2 class="text-lg font-bold">
-          搭公車去{{ busTargetName }}
-          <span class="text-sm font-normal text-white/70">（只列直達車，不含轉乘；不選就走路過去）</span>
-        </h2>
         <p v-if="busLoading" class="text-white/80">正在算可以搭的車…</p>
         <p v-if="busNote" class="text-amber-200">{{ busNote }}</p>
         <button
@@ -879,7 +840,99 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
             在「{{ o.alight.name.zh }}」下車，再走 {{ formatDistance(o.walkFromAlightM) }}
           </div>
         </button>
+        <button
+          v-if="!busLoading"
+          type="button"
+          class="block w-full rounded-lg bg-white/10 p-3 text-left"
+          :class="{ 'ring-2 ring-white': !pickedBus }"
+          :aria-pressed="!pickedBus"
+          @click="walkInstead"
+        >
+          <div class="text-lg font-bold">不搭車，直接走過去</div>
+        </button>
       </section>
+
+      <!-- 搜尋結果：地點、連鎖店在前（輸入目的地 A 就幫你找車），公車站牌在後（已經知道要搭哪班車） -->
+      <template v-else>
+        <!-- 地點與地址（OpenStreetMap） -->
+        <section v-if="placeResults && placeResults.length" class="space-y-2" aria-label="地點與地址">
+          <h2 class="text-lg font-bold">地點與地址</h2>
+          <button
+            v-for="(p, i) in placeResults"
+            :key="`${p.name}-${i}`"
+            type="button"
+            class="block w-full rounded-lg bg-white/10 p-3 text-left"
+            :class="{ 'ring-2 ring-white': isPlacePicked(p) }"
+            :aria-pressed="isPlacePicked(p)"
+            @click="pickPlace(p)"
+          >
+            <div class="text-lg font-bold">{{ p.name }}</div>
+            <div v-if="p.detail" class="text-sm text-white/70">{{ p.detail }}</div>
+          </button>
+        </section>
+
+        <!-- 連鎖店（Overture Maps 快照）：由近到遠 -->
+        <section v-if="poiResults && poiResults.length" class="space-y-2" aria-label="連鎖店">
+          <h2 class="text-lg font-bold">
+            連鎖店
+            <span class="text-sm font-normal text-white/70">
+              （{{ poiResults.length >= POI_LIMIT ? `最近的 ${POI_LIMIT} 家` : `共 ${poiResults.length} 家` }}，離{{ poiNearUser ? '你' : '臺北車站' }}由近到遠）
+            </span>
+          </h2>
+          <button
+            v-for="p in poiVisible"
+            :key="`${p.brand.key}-${p.point[0]}-${p.point[1]}`"
+            type="button"
+            class="block w-full rounded-lg bg-white/10 p-3 text-left"
+            :class="{ 'ring-2 ring-white': isPoiPicked(p) }"
+            :aria-pressed="isPoiPicked(p)"
+            @click="pickPoi(p)"
+          >
+            <div class="flex items-baseline justify-between gap-2">
+              <span class="text-lg font-bold">{{ p.name }}</span>
+              <span class="shrink-0 text-sm text-white/80">{{ formatDistance(p.distanceM) }}</span>
+            </div>
+            <div class="text-sm text-white/70">{{ p.brand.zh }}<template v-if="p.address">・{{ p.address }}</template></div>
+          </button>
+          <button
+            v-if="poiShown < poiResults.length"
+            type="button"
+            class="h-12 w-full rounded-lg bg-white/20 font-bold"
+            @click="poiShown += POI_PAGE"
+          >
+            再多看一些（還有 {{ poiResults.length - poiShown }} 家）
+          </button>
+        </section>
+
+        <!-- 公車站牌（TDX 快照）：一個站位一張卡，點路線就是選那班車 -->
+        <section v-if="stopResults && stopResults.length" class="space-y-2" aria-label="公車站牌">
+          <h2 class="text-lg font-bold">
+            公車站牌
+            <span class="text-sm font-normal text-white/70">（已經知道要搭哪一班車時用）</span>
+          </h2>
+          <div v-for="st in stopResults" :key="st.stationUid" class="rounded-lg bg-white/10 p-3">
+            <div class="text-lg font-bold">
+              {{ st.name.zh }}
+              <span v-if="st.bearing" class="text-sm font-normal text-white/70">（站位朝{{ BEARING_TEXT[st.bearing] ?? st.bearing }}）</span>
+            </div>
+            <div class="mb-2 text-sm text-white/70">點下要搭的那一班車：</div>
+            <div class="flex flex-wrap gap-2">
+              <button
+                v-for="r in st.routes"
+                :key="r.stopUid"
+                type="button"
+                class="rounded-full px-3 py-2 text-base"
+                :class="isRoutePicked(st, r) ? 'bg-white font-bold text-[#30383D]' : 'bg-white/20'"
+                :aria-pressed="isRoutePicked(st, r)"
+                @click="pickStopRoute(st, r)"
+              >
+                {{ routeLabel(r) }}
+              </button>
+            </div>
+          </div>
+        </section>
+
+      </template>
 
       <p v-if="stopResults || placeResults || poiResults" class="text-xs text-white/60">
         資料：公車站牌為 TDX 公車站位資料<template v-if="stopsUpdatedAt">（{{ stopsUpdatedAt.slice(0, 16).replace('T', ' ') }} 版）</template>；
