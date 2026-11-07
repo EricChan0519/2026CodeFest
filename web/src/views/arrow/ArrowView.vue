@@ -236,9 +236,16 @@ function play(frames: Frame[], duration: number, easing = 'linear'): Promise<voi
   return new Promise((resolve) => {
     outer.onfinish = () => {
       const last = frames[frames.length - 1]!
+      const el = hero.value!
+      // 把終點寫回 inline style 時先關掉 CSS transition，並強制算一次樣式再打開：
+      // Safari 會拿「動畫開始前的 inline transform」當起點，配上 .settled 的 0.35s 過渡，
+      // 箭頭到位後會再抽一下（Chrome 用動畫當下的值，所以電腦上看不出來）
+      el.style.transition = 'none'
       setHero(last.p)
-      hero.value!.style.opacity = String(last.opacity ?? 1)
+      el.style.opacity = String(last.opacity ?? 1)
       mine.forEach((a) => a.cancel())
+      void getComputedStyle(el).transform
+      el.style.transition = ''
       if (anims === mine) anims = []
       resolve()
     }
@@ -1147,8 +1154,9 @@ function onResize() {
     }
   })
 }
-// 清單內容變了（結果、公車、語言），版面跟著變 → 箭頭重新對準
-watch([rows, howRows, howNote, routeNote, searchNote, lang, age, mode], () => void nextTick(onResize))
+// 清單內容變了（結果、公車、語言、搜尋中的轉圈），版面跟著變 → 箭頭重新對準
+// （搜尋步驟整組垂直置中：轉圈出現時搜尋欄會往上移，沒跟著重算箭頭就會掉在搜尋欄下面）
+watch([rows, howRows, howNote, routeNote, searchNote, lang, age, mode, search.searching], () => void nextTick(onResize))
 
 onMounted(() => {
   document.title = '跟著箭頭走'
@@ -1272,7 +1280,6 @@ onBeforeUnmount(() => {
             </form>
             <div v-if="search.searching.value" class="search-spinner" role="status" :aria-label="S.searching"></div>
             <p v-if="searchNote" class="note warn" role="status">{{ searchNote }}</p>
-            <p v-if="hasResults && !search.searching.value" class="note">{{ search.nearUser.value ? S.sortedNear : S.sortedStation }}</p>
             <ul v-if="hasResults && !search.searching.value" class="list results" @scroll.passive="onResize">
               <template v-for="(r, i) in rows" :key="r.key">
                 <li v-if="r.type === 'hit' && r.head" class="group-h" aria-hidden="true">{{ r.head }}</li>
