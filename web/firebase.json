@@ -2,6 +2,9 @@
   "hosting": {
     "public": "dist",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "redirects": [
+      { "source": "/probe.html", "destination": "/", "type": 302 }
+    ],
     "rewrites": [
       { "source": "/api/**", "run": { "serviceId": "api", "region": "asia-east1" } },
       { "source": "**", "destination": "/index.html" }
