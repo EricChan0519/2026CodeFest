@@ -263,6 +263,8 @@ function play(frames: Frame[], duration: number, easing = 'linear'): Promise<voi
       el.style.transition = ''
       if (anims === mine) anims = []
       resolve()
+      // 不經過 busy 的過場（例如除錯面板）結束時也要補對準；經過 busy 的由 watch(busy) 處理
+      flushLayout()
     }
     outer.oncancel = () => resolve()
   })
@@ -1291,11 +1293,21 @@ watch(debugOpen, async () => {
 
 // ── 版面變動（轉向、鍵盤、清單捲動、結果出來） ─────────
 let resizeRaf = 0
+/**
+ * 過場中版面變了、還沒重新對準。過場的終點是開始時量的；手機收鍵盤時視窗變高，
+ * 箭頭方塊（--hero，跟視窗高度有關）會在過場中變大，終點的位置和縮放就過期了：
+ * 箭頭偏右下、蓋到第一列（電腦沒有鍵盤，所以看不到）。過場結束後要補對準一次。
+ */
+let layoutDirty = false
 function onResize() {
   cancelAnimationFrame(resizeRaf)
   resizeRaf = requestAnimationFrame(() => {
     const resized = measure()
-    if (anims.length) return // 過場中不打斷；過場結束時的位置是量出來的
+    if (anims.length) {
+      layoutDirty = true // 過場中不打斷；過場結束後由 flushLayout 補對準
+      return
+    }
+    layoutDirty = false
     // 方塊大小變了（--hero 立刻生效）：位置也要同一格到位，不能用 .settled 的過渡慢慢滑，不然箭頭會抽一下
     if (resized) {
       hero.value!.style.transition = 'none'
@@ -1310,6 +1322,11 @@ function onResize() {
     }
   })
 }
+/** 過場中錯過的版面變動：等過場全部結束（箭頭指著哪一列已經更新）再對準 */
+function flushLayout() {
+  if (layoutDirty && !busy.value && !anims.length) onResize()
+}
+watch(busy, flushLayout)
 // 清單內容變了（結果、公車、語言、搜尋中的轉圈），版面跟著變 → 箭頭重新對準
 // （搜尋步驟整組垂直置中：轉圈出現時搜尋欄會往上移，沒跟著重算箭頭就會掉在搜尋欄下面）
 watch([rows, howRows, routeNote, searchNote, lang, age, mode, search.searching], () => void nextTick(onResize))
@@ -1405,7 +1422,7 @@ onBeforeUnmount(() => {
         <!-- 搜尋＋結果 -->
         <section class="step" :class="`st-${steps.search}`" data-step="search" :inert="steps.search !== 'in'" aria-labelledby="h-search">
           <div class="step-body" :class="{ grow: hasResults || searchNote }">
-            <div class="step-top">
+            <div class="step-top has-pill">
               <h2 id="h-search" class="step-h">{{ S.searchTitle }}</h2>
               <button type="button" class="pill" :aria-label="S.change" @click="changeSettings">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.6 2.6 2.6 15.4 0 18M12 3c-2.6 2.6-2.6 15.4 0 18" /></svg>
@@ -1529,8 +1546,6 @@ onBeforeUnmount(() => {
         </section>
       </div>
     </div>
-
-    <RouterLink v-if="phase === 'search'" to="/about" class="about-link">{{ S.about }}</RouterLink>
 
     <!-- 導航：上方目的地與提示、中央箭頭（共用箭頭疊在 nav-slot 上）、下方距離與結束 -->
     <section class="nav" :inert="phase !== 'nav' || !!trip.card.value" :aria-label="S.end">
@@ -1888,6 +1903,14 @@ onBeforeUnmount(() => {
   min-width: 0;
   margin: 0;
 }
+/* 標題＋設定膠囊：膠囊放不下就換到下一行（靠右），不要把「English · General · Fastest」截成「Fas…」 */
+.step-top.has-pill {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+.step-top.has-pill .step-h {
+  flex: 1 0 auto;
+}
 .step-h {
   display: flex;
   flex-wrap: wrap;
@@ -1921,7 +1944,13 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  max-width: 55%;
+}
+/* 寬度照內容；換行後還是太寬（極窄的螢幕）才截斷 */
+.pill {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
 }
 .pill span {
   overflow: hidden;
@@ -2464,20 +2493,6 @@ onBeforeUnmount(() => {
   stroke: currentColor;
   stroke-width: 2.4;
   stroke-linecap: round;
-}
-
-.about-link {
-  position: absolute;
-  left: 50%;
-  bottom: calc(14px + env(safe-area-inset-bottom));
-  z-index: 5;
-  transform: translateX(-50%);
-  padding: 8px 12px;
-  font-size: 13px;
-  color: var(--ink-2);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  white-space: nowrap;
 }
 
 /* ── 導航 ─────────────────────────── */
