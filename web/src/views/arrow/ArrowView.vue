@@ -57,6 +57,8 @@ const K_POINT = 0.72
 const POINT_GAP = 8
 const EASE_LIST = 'cubic-bezier(0.2, 0.9, 0.1, 1)' // 和 CSS 的 --ease-out 一樣
 const EASE_MOVE = 'cubic-bezier(0.3, 0.7, 0.2, 1)'
+/** logo 靜止後第一次飛去清單：從靜止慢慢起步（EASE_LIST 起步太陡，60Hz 手機第一格就跳 20 多 px） */
+const EASE_LIFT = 'cubic-bezier(0.4, 0, 0.2, 1)'
 const EASE_UNLOCK = 'cubic-bezier(0.55, 0, 0.25, 1)' // 推過去、在邊界輕輕停住
 const T_INTRO = 1900
 const T_LIST = 620
@@ -160,7 +162,18 @@ let fullH = 0 // 沒有鍵盤時的視窗高度（判斷鍵盤是否開著）
 
 const dur = (ms: number): number => (reducedMotion() ? 0 : ms)
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
-const logoPose = (r: number): Pose => poseAt(logoSlot.value!, size, r, K_LOGO)
+/**
+ * 箭頭頭部的兩撇都在尖端那側，筆畫重心在中心往尖端 11.1 單位（viewBox 76）。
+ * logo 斜 45° 時只對齊外框中心會看起來偏右上；完全對齊重心又偏左下 → 取中間，往反方向挪 6 單位。
+ */
+const LOGO_CENTROID = 6
+function centroidShift(p: Pose): Pose {
+  const off = (LOGO_CENTROID / 76) * size * p.s * p.k
+  const a = (p.r * Math.PI) / 180
+  return { ...p, x: p.x - off * Math.sin(a), y: p.y + off * Math.cos(a) }
+}
+const logoBase = (r: number): Pose => poseAt(logoSlot.value!, size, r, K_LOGO)
+const logoPose = (r: number): Pose => centroidShift(logoBase(r))
 const navPoseNow = (): Pose => poseAt(navSlot.value!, size, rot, K_NAV)
 /** 最接近 r、指向右的角度（不多轉） */
 const pointAngle = (r: number): number => Math.round((r - POINT_DEG) / 360) * 360 + POINT_DEG
@@ -212,10 +225,12 @@ function play(frames: Frame[], duration: number, easing = 'linear'): Promise<voi
   })
 }
 
-function measure() {
+function measure(): boolean {
+  const prev = size
   size = heroSize()
   root.value!.style.setProperty('--hero', `${size}px`)
   fullH = Math.max(fullH, window.innerHeight)
+  return prev !== size
 }
 
 // ── 步驟（清單、搜尋欄）的位置 ───────────────────────
@@ -247,7 +262,7 @@ function pointPose(s: StepName, i: number, r = pointAngle(cur.r)): Pose {
 }
 
 /** 步驟由左滑入，箭頭同時滑到第一列外側（搜尋步驟是搜尋欄） */
-async function enterStep(s: StepName, from: Pose = cur) {
+async function enterStep(s: StepName, from: Pose = cur, easing = EASE_LIST) {
   const my = ++seq
   busy.value = true
   picked.value = -1
@@ -256,9 +271,13 @@ async function enterStep(s: StepName, from: Pose = cur) {
   phase.value = s
   steps[s] = 'in'
   await nextTick()
+  // 等瀏覽器把新步驟排版、畫出第一格再量位置、開始動：手機第一次渲染清單比較久，
+  // 同一格裡開始動畫會掉前幾格，看起來像箭頭先跳一下
+  await new Promise<void>((r) => requestAnimationFrame(() => r()))
+  if (my !== seq) return
   // 搜尋：指著搜尋欄；怎麼去：公車已經算好就直接指著建議的第一班車（還在算的話，算好時由 watch 滑過去）
   armRow = s === 'search' ? -1 : s === 'how' && !search.busLoading.value && search.busOptions.value.length ? 1 : 0
-  await play([{ p: from }, { p: pointPose(s, armRow, pointAngle(from.r)) }], dur(T_LIST), EASE_LIST)
+  await play([{ p: from }, { p: pointPose(s, armRow, pointAngle(from.r)) }], dur(T_LIST), easing)
   if (my !== seq) return
   busy.value = false
 }
@@ -942,18 +961,18 @@ function introFrames(end: Pose): Frame[] {
     const t = i / N
     const k = t <= PEAK ? 0.9 + (1 + LIFT - 0.9) * easeOutCubic(t / PEAK) : 1 + LIFT * spring(((t - PEAK) * T_INTRO) / 1000)
     const r = r0 + (r1 - r0) * easeInOutCubic(Math.min(1, t / ROT_END))
-    frames.push({ p: { ...end, s: end.s * k, r }, opacity: Math.min(1, t / 0.1), offset: t })
+    frames.push({ p: centroidShift({ ...end, s: end.s * k, r }), opacity: Math.min(1, t / 0.1), offset: t })
   }
-  frames[N] = { p: end, offset: 1 }
+  frames[N] = { p: centroidShift(end), offset: 1 }
   return frames
 }
 
 async function intro() {
   const my = ++seq
   await nextTick()
-  const end = logoPose(360 + LOGO_DEG)
+  const end = logoBase(360 + LOGO_DEG)
   if (reducedMotion()) {
-    setHero(end)
+    setHero(centroidShift(end))
     hero.value!.style.opacity = '1'
     phase.value = 'brand'
     return
@@ -969,10 +988,11 @@ async function startSetup() {
   clearInterval(typeTimer)
   clearTimeout(flowTimer)
   typed.value = BRAND.length
-  locator.start()
   phase.value = needSetup ? 'lang' : 'search'
   updateLift()
-  await enterStep(needSetup ? 'lang' : 'search')
+  await enterStep(needSetup ? 'lang' : 'search', cur, EASE_LIFT)
+  // 箭頭落定後才開始定位：權限視窗、GPS 啟動不會卡在箭頭飛過去的途中
+  locator.start()
 }
 
 /** 點一下畫面：跳過開場；標語還在打就直接打完、進下一步 */
@@ -1016,8 +1036,13 @@ let resizeRaf = 0
 function onResize() {
   cancelAnimationFrame(resizeRaf)
   resizeRaf = requestAnimationFrame(() => {
-    measure()
+    const resized = measure()
     if (anims.length) return // 過場中不打斷；過場結束時的位置是量出來的
+    // 方塊大小變了（--hero 立刻生效）：位置也要同一格到位，不能用 .settled 的過渡慢慢滑，不然箭頭會抽一下
+    if (resized) {
+      hero.value!.style.transition = 'none'
+      requestAnimationFrame(() => hero.value && (hero.value.style.transition = ''))
+    }
     const p = phase.value
     if (p !== 'intro' && p !== 'brand') updateLift()
     if (p === 'brand') setHero(logoPose(cur.r))
@@ -1137,10 +1162,10 @@ onBeforeUnmount(() => {
                 </svg>
               </button>
             </form>
-            <p v-if="search.searching.value" class="note" role="status">{{ S.searching }}</p>
-            <p v-else-if="searchNote" class="note warn" role="status">{{ searchNote }}</p>
+            <div v-if="search.searching.value" class="search-spinner" role="status" :aria-label="S.searching"></div>
+            <p v-if="searchNote" class="note warn" role="status">{{ searchNote }}</p>
             <p v-if="hasResults && !search.searching.value" class="note">{{ search.nearUser.value ? S.sortedNear : S.sortedStation }}</p>
-            <ul v-if="hasResults" class="list results" :aria-busy="search.searching.value" @scroll.passive="onResize">
+            <ul v-if="hasResults && !search.searching.value" class="list results" @scroll.passive="onResize">
               <template v-for="(r, i) in rows" :key="r.key">
                 <li v-if="r.type === 'hit' && r.head" class="group-h" aria-hidden="true">{{ r.head }}</li>
                 <li>
@@ -1340,6 +1365,10 @@ onBeforeUnmount(() => {
   --glass: rgb(255 255 255 / 0.08);
   --glass-edge: rgb(255 255 255 / 0.14);
   --glass-rim: rgb(255 255 255 / 0.3);
+  /* 前面的步驟（清單、搜尋欄、右上膠囊）：城市通 TPColors 實色，不用玻璃 */
+  --surface: #22474e; /* primary800 */
+  --surface-press: #356c77; /* primary700 */
+  --surface-picked: #468d9b; /* primary600 */
   --idle: #30383d;
   /* 城市通 TPColors：primary600／primary700（白字對比 ≥ 3:1，primary500 太亮） */
   --go: #468d9b;
@@ -1393,8 +1422,8 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 .logo-slot {
-  width: 132px;
-  height: 132px;
+  width: 160px;
+  height: 160px;
 }
 .brand-text {
   font-size: 28px;
@@ -1405,6 +1434,8 @@ onBeforeUnmount(() => {
 .title {
   position: relative;
   margin-top: 20px;
+  /* letter-spacing 在最後一個字後面也留了空：吃掉它，文字的視覺中線才會對準箭頭 */
+  margin-right: -0.08em;
   color: var(--ink);
   transform: translate3d(0, 0, 0);
   transition:
@@ -1557,9 +1588,8 @@ onBeforeUnmount(() => {
   min-height: 36px;
   padding: 0 12px;
   border-radius: 999px;
-  background: var(--glass);
-  border: 1px solid var(--glass-edge);
-  border-top-color: var(--glass-rim);
+  background: var(--surface);
+  border: 1px solid transparent;
   color: var(--ink-2);
   font-size: 13px;
   font-weight: 600;
@@ -1596,7 +1626,7 @@ onBeforeUnmount(() => {
 }
 .pill:active,
 .back:active {
-  background: rgb(255 255 255 / 0.13);
+  background: var(--surface-press);
 }
 .pill:focus-visible,
 .back:focus-visible {
@@ -1654,9 +1684,8 @@ onBeforeUnmount(() => {
   padding: 0 18px;
   overflow: hidden;
   border-radius: 16px;
-  background: var(--glass);
-  border: 1px solid var(--glass-edge);
-  border-top-color: var(--glass-rim);
+  background: var(--surface);
+  border: 1px solid transparent;
   color: var(--ink);
   font-size: calc(18px * var(--fs));
   font-weight: 600;
@@ -1750,12 +1779,12 @@ onBeforeUnmount(() => {
   font-weight: 800;
 }
 .row:active {
-  background: rgb(255 255 255 / 0.13);
+  background: var(--surface-press);
 }
 /* 被點的那列：亮起來（箭頭戳下去的同時） */
 .row.picked {
-  background: rgb(147 212 223 / 0.24);
-  border-color: rgb(147 212 223 / 0.75);
+  background: var(--surface-picked);
+  border-color: var(--arc);
 }
 .row:focus-visible {
   outline: 3px solid var(--arc);
@@ -1773,13 +1802,23 @@ onBeforeUnmount(() => {
   padding: 0 4px 0 16px;
   overflow: hidden;
   border-radius: 14px;
-  background: var(--glass);
-  border: 1px solid var(--glass-edge);
-  border-top-color: var(--glass-rim);
+  background: var(--surface);
+  border: 1px solid transparent;
 }
 .search:focus-within {
-  background: rgb(255 255 255 / 0.12);
-  border-color: rgb(147 212 223 / 0.7);
+  border-color: var(--arc);
+}
+.search-spinner {
+  width: 24px;
+  height: 24px;
+  margin: 20px auto;
+  border: 3px solid rgb(255 255 255 / 0.25);
+  border-top-color: var(--ink);
+  border-radius: 50%;
+  animation: search-spin 0.8s linear infinite;
+}
+@keyframes search-spin {
+  to { transform: rotate(360deg); }
 }
 /* 選好走法時亮色跟著箭頭從左填到右（滑動解鎖） */
 .sweep {
