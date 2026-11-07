@@ -1,0 +1,133 @@
+import { describe, expect, it } from 'vitest'
+import type { LatLon, Station } from '@/lib/contract'
+import type { RoutePattern } from '@/lib/directBus'
+import type { MetroIndex } from '@/lib/metroIndex'
+import { planTransit, metroUid, WALK_ONLY_M } from '@/lib/transitPlan'
+import mini from '../__fixtures__/metro_index.mini.json'
+
+const metro = mini as MetroIndex
+
+// 小快照的車站座標（見 metro_index.mini.json）
+const XIMEN: LatLon = [25.0421, 121.5081]
+const ZHONGSHAN: LatLon = [25.0527, 121.5203]
+const SHUANGLIAN: LatLon = [25.0577, 121.5205]
+
+function stop(uid: string, zh: string, lat: number, lon: number, route: string, direction = 0): Station {
+  return {
+    stationUid: uid,
+    name: { zh, en: null },
+    bearing: null,
+    lat,
+    lon,
+    routes: [{ routeName: { zh: route, en: route }, direction, headsign: { zh: '往終點', en: null }, stopUid: uid + '-s' }],
+  }
+}
+
+/** 公車 9 從西門附近往北開到雙連附近，沿途 8 站 */
+function busLine(): { stations: Station[]; patterns: RoutePattern[] } {
+  const stations: Station[] = []
+  for (let i = 0; i <= 8; i++) {
+    const lat = 25.0421 + (25.0577 - 25.0421) * (i / 8)
+    const lon = 121.5085 + (121.5209 - 121.5085) * (i / 8)
+    stations.push(stop(`TPE${i}`, `公車站${i}`, lat, lon, '9'))
+  }
+  return {
+    stations,
+    patterns: [
+      {
+        routeName: { zh: '9', en: '9' },
+        direction: 0,
+        headsign: { zh: '往終點', en: null },
+        stops: stations.map((s) => s.stationUid),
+        noBoard: [],
+        noAlight: [],
+      },
+    ],
+  }
+}
+
+const NO_BUS = { stations: [], patterns: [] }
+
+describe('planTransit metro', () => {
+  it('rides Bannan then changes to Tamsui-Xinyi at Taipei Main Station', () => {
+    const plans = planTransit(NO_BUS, metro, XIMEN, ZHONGSHAN, { audience: 'visitor' })
+    const best = plans.metro[0]
+    expect(best.rides.map((r) => [r.mode, r.board.stationUid, r.alight.stationUid])).toEqual([
+      ['metro', metroUid('BL11'), metroUid('BL12')],
+      ['metro', metroUid('R10'), metroUid('R11')],
+    ])
+    expect(best.rides[0].route.headsign.zh).toBe('往南港展覽館')
+    expect(best.rides[1].route.headsign.zh).toBe('往淡水')
+    expect(best.rides[1].route.routeName.zh).toBe('淡水信義線')
+    expect(best.rides[0].lineColor).toBe('#0070BD')
+  })
+
+  it('gives cumulative stop times and exits for metro rides', () => {
+    const best = planTransit(NO_BUS, metro, XIMEN, SHUANGLIAN, { audience: 'visitor' }).metro[0]
+    const r = best.rides[1]
+    expect(r.stops.map((s) => s.stationUid)).toEqual([metroUid('R10'), metroUid('R11'), metroUid('R12')])
+    expect(r.stopTimesS).toEqual([0, 110, 200])
+    expect(best.rides[0].boardExit).toBe('6')
+    expect(best.rides[0].boardPoint).toEqual([25.0424, 121.507])
+  })
+
+  it('adds the wait, ride and in-station transfer into durationS', () => {
+    const best = planTransit(NO_BUS, metro, XIMEN, ZHONGSHAN, { audience: 'visitor' }).metro[0]
+    // 兩次候車各 150 秒、行車 120 + 110 秒；站內換線 240 秒算在步行
+    expect(best.waitS).toBe(300)
+    expect(best.rideS).toBe(230)
+    expect(best.walkS).toBeGreaterThanOrEqual(240)
+    expect(best.durationS).toBe(best.walkS + best.waitS + best.rideS)
+  })
+
+  it('has no metro plans when the metro snapshot is missing', () => {
+    const plans = planTransit(busLine(), null, XIMEN, SHUANGLIAN, { audience: 'visitor' })
+    expect(plans.metro).toEqual([])
+    expect(plans.mixed.every((p) => p.rides.every((r) => r.mode === 'bus'))).toBe(true)
+  })
+})
+
+describe('planTransit bus and mixed', () => {
+  it('finds the direct bus in the bus tab', () => {
+    const plans = planTransit(busLine(), metro, XIMEN, SHUANGLIAN, { audience: 'visitor' })
+    const best = plans.bus[0]
+    expect(best.rides).toHaveLength(1)
+    expect(best.rides[0].mode).toBe('bus')
+    expect(best.rides[0].route.routeName.zh).toBe('9')
+    expect(best.rides[0].board.stationUid).toBe('TPE0')
+    expect(best.rides[0].alight.stationUid).toBe('TPE8')
+  })
+
+  it('mixed lists the fastest of every mode, sorted by duration', () => {
+    const plans = planTransit(busLine(), metro, XIMEN, SHUANGLIAN, { audience: 'visitor' })
+    const all = [...plans.bus, ...plans.metro].map((p) => p.durationS)
+    expect(plans.mixed[0].durationS).toBe(Math.min(...all))
+    const d = plans.mixed.map((p) => p.durationS)
+    expect(d).toEqual([...d].sort((a, b) => a - b))
+    expect(plans.mixed.length).toBeLessThanOrEqual(3)
+  })
+
+  it('does not list a bus route that is not allowed to board there', () => {
+    const net = busLine()
+    net.patterns[0].noBoard = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    expect(planTransit(net, null, XIMEN, SHUANGLIAN, { audience: 'visitor' }).bus).toEqual([])
+  })
+
+  it('suggests walking when the destination is close', () => {
+    const near: LatLon = [XIMEN[0] + 0.002, XIMEN[1]]
+    const plans = planTransit(busLine(), metro, XIMEN, near, { audience: 'visitor' })
+    expect(plans.mixed[0].rides).toEqual([])
+    expect(plans.mixed[0].walkM).toBeLessThan(WALK_ONLY_M)
+  })
+
+  it('estimates longer trips for elders, who walk slower', () => {
+    const visitor = planTransit(NO_BUS, metro, XIMEN, ZHONGSHAN, { audience: 'visitor' }).metro[0]
+    const elder = planTransit(NO_BUS, metro, XIMEN, ZHONGSHAN, { audience: 'elder' }).metro[0]
+    expect(elder.walkS).toBeGreaterThan(visitor.walkS)
+  })
+
+  it('never uses more than three rides', () => {
+    const plans = planTransit(busLine(), metro, XIMEN, SHUANGLIAN, { audience: 'visitor' })
+    for (const tab of [plans.mixed, plans.bus, plans.metro]) for (const p of tab) expect(p.rides.length).toBeLessThanOrEqual(3)
+  })
+})

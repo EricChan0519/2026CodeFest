@@ -9,13 +9,31 @@ import type { LatLon, Station, StationRoute } from '@/lib/contract'
 import { distanceM } from './geo'
 import { destinationFromPlace, destinationFromStation, type Destination } from './destination'
 
-/** 一段公車：直達車規劃（DirectBusOption）就符合這個形狀 */
+export type RideMode = 'bus' | 'metro'
+
+/**
+ * 一段車：公車或捷運。捷運站轉成同樣的 Station 形狀（stationUid 是 metro:BL12），到站卡、坐車卡共用。
+ * 格式見 docs/arrow-nav/03-contracts.md「公車＋捷運規劃」。
+ */
 export interface Ride {
+  mode: RideMode
   board: Station
   route: StationRoute
   alight: Station
   /** 上車站到下車站沿途每一站（含頭尾） */
   stops: Station[]
+  /** 捷運才有：路線代表色 #RRGGBB */
+  lineColor?: string
+  /** 捷運才有：從上車站起算到 stops[i] 的累計秒數，stopTimesS[0] = 0 */
+  stopTimesS?: number[]
+  /** 走路段的目標（捷運是出口座標）；沒有時用 board 的座標 */
+  boardPoint?: LatLon
+  /** 捷運進站出口名稱，例如 "M3" */
+  boardExit?: string
+  /** 下車後步行的起點（捷運是出口座標）；沒有時用 alight 的座標 */
+  alightPoint?: LatLon
+  /** 捷運出站出口名稱 */
+  alightExit?: string
 }
 
 export type JourneyPhase = 'walk_to_stop' | 'at_stop' | 'ride' | 'walk_to_dest' | 'arrived'
