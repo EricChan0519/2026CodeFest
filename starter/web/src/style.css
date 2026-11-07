@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+/* TownPass App 色票（reference/TownPass/lib/util/tp_colors.dart） */
+@theme {
+  --font-sans: 'PingFang TC', 'Noto Sans TC', 'Microsoft JhengHei', Roboto, system-ui, sans-serif;
+
+  --color-primary-50: #edf8fa;
+  --color-primary-100: #dbf1f5;
+  --color-primary-200: #b4e2ea;
+  --color-primary-300: #93d4df;
+  --color-primary-400: #71c5d5;
+  --color-primary-500: #5ab4c5;
+  --color-primary-600: #468d9b;
+  --color-primary-700: #356c77;
+  --color-primary-800: #22474e;
+  --color-primary-900: #112629;
+
+  --color-secondary-50: #fdf8ed;
+  --color-secondary-100: #fcf2df;
+  --color-secondary-200: #f8e3bc;
+  --color-secondary-300: #f4d69e;
+  --color-secondary-400: #f0c87c;
+  --color-secondary-500: #f5ba4b;
+  --color-secondary-600: #e7a43c;
+  --color-secondary-700: #ad7b2b;
+  --color-secondary-800: #74521b;
+
+  --color-gray-50: #f1f3f4;
+  --color-gray-100: #e3e7e9;
+  --color-gray-200: #cad1d5;
+  --color-gray-300: #adb8be;
+  --color-gray-400: #91a0a8;
+  --color-gray-500: #738995;
+  --color-gray-600: #5e6d76;
+  --color-gray-700: #475259;
+  --color-gray-800: #30383d;
+  --color-gray-900: #171b1d;
+
+  --color-red-50: #faeeee;
+  --color-red-100: #f5dcdd;
+  --color-red-500: #d45251;
+  --color-red-600: #c2332f;
+
+  --color-orange-50: #fdf3ec;
+  --color-orange-500: #fd853a;
+  --color-orange-600: #e6692c;
+
+  --shadow-card: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  @apply bg-white text-gray-900 antialiased;
+  -webkit-tap-highlight-color: transparent;
+}

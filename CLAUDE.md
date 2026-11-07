@@ -54,6 +54,7 @@
 ```
 黑克松/
 ├─ CLAUDE.md                 ← 你正在讀
+├─ starter/                  ← 題目無關的骨架：web（Vue 3 + Tailwind 4 + Leaflet + bridge）、api（FastAPI + Dockerfile），開工時複製
 ├─ docs/                     ← 知識庫（規則、App、溝通、部署、AI、資料、往屆、架構）
 │  └─ templates/             ← 可直接複製的樣板（bridge、測試頁、Handler、FastAPI、Dockerfile、firebase.json、LICENSE、README）
 └─ reference/                ← 唯讀參考原始碼（git clone --depth 1，2026/11/3 取得）
