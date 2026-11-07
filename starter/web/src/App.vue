@@ -146,6 +146,8 @@ function meters(m: number | null | undefined) { return m == null ? '' : formatDi
 const navText = computed<{ distance: string; instruction: string }>(() => {
   const v = navView.value
   if (!v) return { distance: '', instruction: '正在找路' }
+  // 還沒有任何定位：一律說在找位置（問號），不要說「抓不到方向」或「定位不太準」
+  if (!v.hasPosition && v.state !== 'arrived' && v.state !== 'failed') return { distance: '', instruction: '正在找你的位置' }
   switch (v.state) {
     case 'locating': return { distance: '', instruction: '正在找你的位置' }
     case 'routing': return { distance: '', instruction: '正在找路' }
@@ -169,15 +171,13 @@ function speakCue(c: Cue) {
   if (c.speak && text) announce(text)
   else if (c.haptic && prefs.value.vibration && 'vibrate' in navigator) navigator.vibrate(c.haptic === 'turn' ? 150 : [100, 60, 100])
 }
-function stopNav() { clearInterval(watchdog); watchdog = undefined; navGen++; session?.stop(); session = null; if ('speechSynthesis' in window) window.speechSynthesis.cancel() }
-/** 真實模式的感測器檢查：羅盤幾秒內沒資料（筆電）或 GPS 一直沒定位（室內），改用模擬，免得整段沒有箭頭 */
-const NO_COMPASS_MS = 3500
-const NO_FIX_MS = 8000
-let watchdog: ReturnType<typeof setInterval> | undefined
+function stopNav() { navGen++; session?.stop(); session = null; if ('speechSynthesis' in window) window.speechSynthesis.cancel() }
+/** 模擬行走只在網址加 ?demo=1 時開（桌機、投影 Demo；產品規格 01）。平常一律用真實定位，沒有位置就顯示問號 */
+const demoMode = new URLSearchParams(location.search).get('demo') === '1'
 function startNav() {
   if (!planned.value?.route || !selected.value) return
   go('nav')
-  void launchNav(origin.value.name !== '目前位置')
+  void launchNav(demoMode)
 }
 async function launchNav(simulate: boolean) {
   const route = planned.value?.route
@@ -187,7 +187,6 @@ async function launchNav(simulate: boolean) {
   const gen = navGen
   navView.value = null
   simulating.value = simulate
-  const startedAt = Date.now()
   const s = await startNavSession({
     route,
     simulate,
@@ -199,17 +198,7 @@ async function launchNav(simulate: boolean) {
     },
     onCue: c => { if (gen === navGen) speakCue(c) },
   })
-  if (gen !== navGen) { s.stop(); return }
-  session = s
-  if (!simulate) {
-    watchdog = setInterval(() => {
-      const v = navView.value
-      if (gen !== navGen || !v) return
-      const elapsed = Date.now() - startedAt
-      if (v.arrowDeg !== null) { clearInterval(watchdog); watchdog = undefined; return } // 感測器正常
-      if ((elapsed >= NO_COMPASS_MS && v.headingLost) || (elapsed >= NO_FIX_MS && !v.hasPosition)) void launchNav(true)
-    }, 500)
-  }
+  if (gen !== navGen) s.stop(); else session = s
 }
 function exitNav() { stopNav(); confirmExit.value = false; go('home') }
 onUnmounted(stopNav)
@@ -238,7 +227,7 @@ async function fitText() {
   }
   el.style.setProperty('--fs', String(lo))
 }
-watch(() => [page.value, welcomeStep.value, navText.value.instruction, listPage.value, results.value.length, listState.value, nearbyState.value, routeState.value, query.value, prefs.value.audience, prefs.value.language, origin.value.name, selected.value?.id], fitText, { flush: 'post' })
+watch(() => [page.value, welcomeStep.value, listPage.value, results.value.length, listState.value, nearbyState.value, routeState.value, query.value, prefs.value.audience, prefs.value.language, origin.value.name, selected.value?.id], fitText, { flush: 'post' })
 // 進到首頁或搜尋頁時才定位、抓附近站牌（歡迎頁先不跳定位權限）
 watch(page, value => { if ((value === 'home' || value === 'search') && nearbyState.value === 'idle') loadNearby() }, { immediate: true })
 onMounted(() => {
@@ -373,7 +362,7 @@ onUnmounted(() => window.removeEventListener('resize', fitText))
         <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(navProgress * 100)"><span :style="{ width: `${navProgress * 100}%` }"></span></div>
       </div>
       <div class="big-arrow"><CompassArrow :rotation="navView?.arrowDeg != null ? navView.cssRotation : null" :hollow="navView?.hollowArrow ?? false" /></div>
-      <div class="nav-instruction" aria-live="polite"><strong v-if="navText.distance">{{ formatValue(navText.distance) }}</strong><p><span v-for="(line, i) in lines(t(navText.instruction))" :key="i" class="line">{{ line }}</span></p></div>
+      <div class="nav-instruction" aria-live="polite"><strong>{{ navText.distance ? formatValue(navText.distance) : ' ' }}</strong><p><span v-for="(line, i) in lines(t(navText.instruction))" :key="i" class="line">{{ line }}</span></p></div>
       <button class="secondary" @click="confirmExit = true"><AppIcon name="x" :size="22" />{{ t('結束導航') }}</button>
     </section>
 
