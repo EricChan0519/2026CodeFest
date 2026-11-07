@@ -228,6 +228,30 @@ export interface SensorSource {
 - 沒有結果時回 `places: []`，不是 404。
 - 地點快照讀不到時回 503 `DATA_UNAVAILABLE`。
 
+### `POST /api/landmarks/search`
+
+**11/7 晚上新增，`/lab/nav` 的「地點與地址」用。** 地標、餐廳、學校…（Overture Maps Places 快照，不含連鎖店；連鎖店在前端 `poi_index.json`）。
+和上面規劃中的 `GET /api/places/search` 不同：這個要依**使用者現在的位置**回傳最近的結果，所以座標放 POST body（ADR-0005），不記錄。
+之後做 `GET /api/places/search` 時可以直接用同一個 `PlaceIndex`（`api/app/places.py`）。
+
+```json
+{ "q": "台北市立大學天母體育館", "lat": 25.1135, "lon": 121.5375, "limit": 20 }
+```
+
+`lat`、`lon` 可省略（省略時依資料信心排序、`distanceM` 是 `null`）；`q` 1–60 字；`limit` 1–50，預設 20。
+
+```json
+{
+  "places": [
+    { "name": "天母體育館", "lat": 25.115164, "lon": 121.534019, "address": null, "category": "運動場館", "distanceM": 396 }
+  ],
+  "source": { "name": "Overture Maps Places", "release": "2026-10-21.0", "license": "CDLA-Permissive-2.0 / Apache-2.0 / CC0-1.0", "updatedAt": "2026-11-07T21:21:33+08:00" }
+}
+```
+
+- 比對規則與排序見 [08-poi-data.md](08-poi-data.md#地標餐廳學校後端地點索引)：依距離由近到遠；搜尋字串 4 字以上時名稱完全一樣的排最前面。
+- 沒有結果回 `places: []`；快照讀不到回 503 `DATA_UNAVAILABLE`；`q` 正規化後是空的回 422。
+
 ### `POST /api/around`
 
 某一點附近有沒有路燈、監視器、派出所。座標放 body、不記錄（ADR-0005），所以用 POST，不是 GET。

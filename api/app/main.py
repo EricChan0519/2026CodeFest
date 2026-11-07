@@ -22,7 +22,8 @@ from app.geo import in_area
 from app.route_rules import TPE
 from app import elevation, routes_service
 from app.routes_service import plan_routes
-from app.schemas import AroundRequest, NearbyRequest, RoutesRequest
+from app.places import PlaceIndex
+from app.schemas import AroundRequest, NearbyRequest, PlaceSearchRequest, RoutesRequest
 from app.stations import StationIndex
 
 app = FastAPI(title="Arrow Nav API")
@@ -48,6 +49,12 @@ VERSION = os.environ.get("APP_VERSION") or os.environ.get("K_REVISION") or "loca
 def get_station_index():
     default = Path(__file__).resolve().parents[1] / "data" / "stop_index.json"
     return StationIndex.load(Path(os.environ.get("STOP_INDEX_PATH") or default))
+
+
+@lru_cache
+def get_place_index():
+    default = Path(__file__).resolve().parents[1] / "data" / "place_index.json.gz"
+    return PlaceIndex.load(Path(os.environ.get("PLACE_INDEX_PATH") or default))
 
 
 @lru_cache
@@ -87,6 +94,13 @@ def stations_nearby(req: NearbyRequest, index: StationIndex = Depends(get_statio
 @app.get("/api/stations/search")
 def stations_search(q: str = Query(max_length=50), index: StationIndex = Depends(get_station_index)):
     return {"stations": index.search(q), "source": index.source}
+
+
+@app.post("/api/landmarks/search")
+def landmarks_search(req: PlaceSearchRequest, index: PlaceIndex = Depends(get_place_index)):
+    """地標、餐廳、學校…（不含連鎖店，連鎖店在前端的 poi_index.json）。座標只放 body、不記錄（ADR-0005）"""
+    near = (req.lat, req.lon) if req.lat is not None and req.lon is not None else None
+    return {"places": index.search(req.q, near, req.limit), "source": index.source}
 
 
 @app.post("/api/around")
