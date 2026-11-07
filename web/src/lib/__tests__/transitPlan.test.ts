@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { LatLon, Station } from '@/lib/contract'
 import type { RoutePattern } from '@/lib/directBus'
 import type { MetroIndex } from '@/lib/metroIndex'
-import { planTransit, metroUid, WALK_ONLY_M } from '@/lib/transitPlan'
+import { planTransit, metroUid, MAX_WALK_M, WALK_ONLY_M } from '@/lib/transitPlan'
 import mini from '../__fixtures__/metro_index.mini.json'
 
 const metro = mini as MetroIndex
@@ -78,6 +78,15 @@ describe('planTransit metro', () => {
     expect(best.rideS).toBe(230)
     expect(best.walkS).toBeGreaterThanOrEqual(240)
     expect(best.durationS).toBe(best.walkS + best.waitS + best.rideS)
+  })
+
+  it('walks further to a station when none is within 800 m', () => {
+    // 小快照最西邊的 BL10 再往西約 1.3 公里，800 公尺內沒有任何車站
+    const west: LatLon = [25.0353, 121.487]
+    const best = planTransit(NO_BUS, metro, west, ZHONGSHAN, { audience: 'visitor' }).metro[0]
+    expect(best).toBeDefined()
+    expect(best.rides[0].board.stationUid).toBe(metroUid('BL10'))
+    expect(best.walkM).toBeGreaterThan(MAX_WALK_M)
   })
 
   it('has no metro plans when the metro snapshot is missing', () => {

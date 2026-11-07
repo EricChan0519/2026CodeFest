@@ -45,6 +45,8 @@ export interface BusNetwork {
 
 /** 起點、終點最多走多遠（直線） */
 export const MAX_WALK_M = 800
+/** 某個分頁在 800 公尺內找不到路時，起點、終點的步行範圍依序放寬到這些距離（步行時間照算，仍要比全程走路快） */
+export const WIDER_WALK_M = [1500, 2500]
 export const MAX_RIDES = 3
 /** 每個分頁最多幾筆 */
 export const PLANS_PER_TAB = 3
@@ -303,7 +305,7 @@ interface Search {
   kind: Uint8Array
 }
 
-function search(g: Graph, from: LatLon, mps: number, allow: (mode: 'bus' | 'metro') => boolean): Search {
+function search(g: Graph, from: LatLon, mps: number, allow: (mode: 'bus' | 'metro') => boolean, maxWalkM: number): Search {
   const K = MAX_RIDES + 1
   const P = g.platforms.length
   const n = (P + g.onboard) * K
@@ -316,7 +318,7 @@ function search(g: Graph, from: LatLon, mps: number, allow: (mode: 'bus' | 'metr
   g.platforms.forEach((pl, i) => {
     if (!allow(pl.kind)) return
     const { m } = nearestAccess(pl, from)
-    if (m > MAX_WALK_M) return
+    if (m > maxWalkM) return
     const st = i * K
     dist[st] = walk(m)
     kind[st] = SRC
@@ -504,14 +506,16 @@ function signature(p: TransitPlan): string {
   return p.rides.map((r) => `${r.mode}:${r.route.routeName.zh}:${r.route.headsign.zh ?? ''}`).join('>')
 }
 
-function plansFor(g: Graph, from: LatLon, to: LatLon, mps: number, clock: Clock, allow: (m: 'bus' | 'metro') => boolean): TransitPlan[] {
+function plansFor(
+  g: Graph, from: LatLon, to: LatLon, mps: number, clock: Clock, allow: (m: 'bus' | 'metro') => boolean, maxWalkM: number,
+): TransitPlan[] {
   const K = MAX_RIDES + 1
-  const s = search(g, from, mps, allow)
+  const s = search(g, from, mps, allow, maxWalkM)
   const ends: { st: number; cost: number; finalM: number }[] = []
   g.platforms.forEach((pl, i) => {
     if (!allow(pl.kind)) return
     const { m } = nearestAccess(pl, to)
-    if (m > MAX_WALK_M) return
+    if (m > maxWalkM) return
     for (let k = 1; k <= MAX_RIDES; k++) {
       const st = i * K + k
       if (s.kind[st] !== ALIGHT || !Number.isFinite(s.dist[st])) continue
@@ -567,9 +571,17 @@ export function planTransit(
   // 搭車要比直接走過去快才列
   const worth = (p: TransitPlan) => p.durationS < walk.durationS
 
-  const busPlans = plansFor(g, from, to, mps, clock, (m) => m === 'bus').filter(worth)
-  const metroPlans = metro ? plansFor(g, from, to, mps, clock, (m) => m === 'metro').filter(worth) : []
-  const mixedPlans = plansFor(g, from, to, mps, clock, () => true).filter(worth)
+  // 先找 800 公尺內的站；找不到再放寬，捷運站離比較遠時也有路可以選
+  const find = (allow: (m: 'bus' | 'metro') => boolean) => {
+    for (const r of [MAX_WALK_M, ...WIDER_WALK_M]) {
+      const plans = plansFor(g, from, to, mps, clock, allow, r).filter(worth)
+      if (plans.length) return plans
+    }
+    return []
+  }
+  const busPlans = find((m) => m === 'bus')
+  const metroPlans = metro ? find((m) => m === 'metro') : []
+  const mixedPlans = find(() => true)
 
   let mixed = top([...mixedPlans, ...busPlans, ...metroPlans])
   const firstOk = mixed.find((p) => p.service === 'ok')

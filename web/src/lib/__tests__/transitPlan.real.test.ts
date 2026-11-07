@@ -53,4 +53,15 @@ describe.skipIf(!stopRaw || !metro)('planTransit on the real snapshots', () => {
     expect(night.metro.every((p) => p.service !== 'ok')).toBe(true)
     expect(night.bus.every((p) => p.service !== 'ok')).toBe(true)
   })
+  it('still finds a metro plan when the nearest station is more than 800 m away (Tianmu SOGO → Taipei 101)', () => {
+    const t0 = performance.now()
+    const plans = planTransit(bus, metro!, TIANMU_SOGO, TAIPEI_101, { audience: 'visitor', now: new Date(2026, 10, 9, 12, 0) })
+    const ms = performance.now() - t0
+    console.log(`far metro plan ${ms.toFixed(0)} ms`)
+    expect(ms).toBeLessThan(2000)
+    const show = (tab: 'mixed' | 'bus' | 'metro') => plans[tab].map((p) => `${Math.round(p.durationS / 60)}min ` + p.rides.map((r) => `${r.route.routeName.zh}(${r.board.name.zh}→${r.alight.name.zh})`).join(' > '))
+    console.log('far metro', { mixed: show('mixed'), bus: show('bus'), metro: show('metro') })
+    expect(plans.metro.length).toBeGreaterThan(0)
+    expect(plans.mixed.some((p) => p.rides.length > 0)).toBe(true)
+  })
 })
