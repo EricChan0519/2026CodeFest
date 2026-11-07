@@ -12,7 +12,13 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { useRoute } from 'vue-router'
-import { tripFromQuery, type ArrivalTrip } from '@/arrival/arrival'
+
+import { SPEECH_LANGS, tripFromQuery, type ArrivalTrip } from '@/arrival/arrival'
+import { speakText } from '@/arrival/speech'
+import LanguagePicker from '@/components/LanguagePicker.vue'
+import { loadStoredLang, resolveLang, saveLang } from '@/i18n/lang'
+import { NAV_STRINGS, type NavStrings } from '@/i18n/nav'
+import { bigText as navBigText, busPlanText, cueText, fill, placeDistance, routeName, sentence as navSentence, stopName } from '@/nav/navText'
 import ArrivalCard from '@/arrival/ArrivalCard.vue'
 import RideCard from '@/arrival/RideCard.vue'
 import { ARRIVAL_STRINGS } from '@/i18n/arrival'
@@ -28,7 +34,7 @@ import {
   type Ride,
   type RideStatus,
 } from '@/nav/journey'
-import type { LatLon, Station, StationRoute } from '@/lib/contract'
+import type { Lang, LatLon, Station, StationRoute } from '@/lib/contract'
 import { createAnnouncer } from '@/nav/announcer'
 import { easeRotation } from '@/nav/arrow'
 import { NAV_CONFIG } from '@/nav/config'
@@ -46,14 +52,16 @@ import type { Destination, DestinationLock } from '@/nav/destination'
 import { searchPlaces } from '@/lib/geocode'
 import type { Place } from '@/lib/geocode'
 import { createLocator } from '@/lib/locator'
-import { fromOsm, mergePlaces, searchLandmarks } from '@/lib/placeSearch'
+import { fromOsm, mergePlaces, osmMatches, searchLandmarks } from '@/lib/placeSearch'
 import type { PlaceHit } from '@/lib/placeSearch'
-import { formatDistance, loadPoiIndex, searchPois } from '@/lib/poiSearch'
+import { loadPoiIndex, searchPois } from '@/lib/poiSearch'
 import type { PoiHit, PoiIndex } from '@/lib/poiSearch'
-import { WALK_M_PER_MIN, planBus, type BusPlan } from '@/lib/transferBus'
+import { planBus, type BusPlan } from '@/lib/transferBus'
 import { loadStopIndex, searchStops } from '@/lib/stopSearch'
+import { emptyLabels, isForeignQuery, localizeResults, poiNameForTranslation, stopLabel, translateForSearch } from '@/lib/foreignSearch'
+import type { NameLabel, QueryTranslation, ResultLabels } from '@/lib/foreignSearch'
+import type { ForeignLang } from '@/lib/contract'
 import type { StopIndex } from '@/lib/stopSearch'
-import type { ManeuverKind } from '@/lib/contract'
 import { fetchWalkRoute } from '@/lib/walkRoute'
 import type { WalkRoute } from '@/lib/walkRoute'
 import { bearingDeg, distanceM } from '@/nav/geo'
@@ -68,16 +76,77 @@ import NavDebugMap from './NavDebugMap.vue'
 import Joystick from './Joystick.vue'
 import type { JoystickVector } from '@/sensors/joystick'
 
+/**
+ * 語言：一開始先選（記在這支手機上），網址 ?lang= 優先。之後整頁都用這個語言；
+ * 問問卡一律中文，給旁人看。除錯面板與模擬 GPS 控制是開發用，維持中文。
+ */
+const currentRoute = useRoute()
+const chosenLang = ref<Lang | null>(resolveLang(currentRoute.query.lang, loadStoredLang()))
+const pickingLang = ref(false)
+const showLangPicker = computed(() => !chosenLang.value || pickingLang.value)
+const L = computed<Lang>(() => chosenLang.value ?? 'zh-TW')
+const t = computed(() => NAV_STRINGS[L.value])
+function pickLang(l: Lang) {
+  chosenLang.value = l
+  saveLang(l)
+  pickingLang.value = false
+}
+
 // 目的地：預設是示範站牌；搜尋後選一個結果就換成那個地點
 const destination = shallowRef<Destination>(DEFAULT_DESTINATION)
 const addressInput = ref('')
 const searching = ref(false)
-const searchError = ref('')
+/** 搜尋的錯誤，存文字鍵，換語言時跟著換 */
+const searchError = ref<keyof NavStrings | ''>('')
 const stopResults = ref<Station[] | null>(null)
 const placeResults = ref<PlaceHit[] | null>(null)
 const poiResults = ref<PoiHit[] | null>(null)
 const stopsUpdatedAt = ref('')
 const poiRelease = ref('')
+/** 外語搜尋：搜尋字串換成的中文（畫面上顯示「대만박물관 → 臺灣博物館」） */
+const translation = ref<QueryTranslation | null>(null)
+/** 中文介面時，從外語搜尋字串猜出來的語言（例如介面選中文、卻打韓文） */
+const queryLang = ref<ForeignLang | null>(null)
+/** 結果名稱要翻成的語言：選語言畫面選的語言；選中文時用搜尋字串的語言；都沒有是 null（只顯示中文） */
+const displayLang = computed<ForeignLang | null>(() => (L.value === 'zh-TW' ? queryLang.value : (L.value as ForeignLang)))
+/** 搜尋結果的名稱、地址、類別在使用者語言的寫法 */
+const labels = shallowRef<ResultLabels>(emptyLabels())
+
+interface NameLines {
+  main: string
+  /** 中文原名（招牌、站牌上看到的）；中文介面是 null */
+  sub: string | null
+  /** 名稱有一部分是用讀音寫的 */
+  approx: boolean
+}
+
+/** 結果名稱的兩行：上面是使用者的語言，下面是中文原名 */
+function linesOf(zh: string, l: NameLabel | null | undefined): NameLines {
+  if (!l) return { main: zh, sub: null, approx: false }
+  return { main: l.text, sub: zh, approx: l.approx }
+}
+function nameLines(zh: string): NameLines {
+  return linesOf(zh, displayLang.value ? labels.value.names.get(zh) : null)
+}
+/** 連鎖店：品牌換成英文名後再翻（見 poiNameForTranslation），第二行留原本的中文店名 */
+function poiLines(p: PoiHit): NameLines {
+  const l = displayLang.value ? labels.value.names.get(poiNameForTranslation(p.name, p.brand)) : null
+  return l ? { main: l.text, sub: p.name, approx: l.approx } : { main: p.name, sub: null, approx: false }
+}
+function stopLines(st: Station): NameLines {
+  const lang = displayLang.value
+  return linesOf(st.name.zh, lang ? stopLabel(st, lang, labels.value.names) : null)
+}
+/** 類別＋地址：使用者的語言（有翻的話），下面再附中文地址給路人、司機看 */
+function detailLines(category: string | null, address: string | null, fallback: string): { main: string; sub: string | null } {
+  if (!displayLang.value) return { main: fallback, sub: null }
+  const cat = category ? labels.value.categories.get(category) ?? category : null
+  const addr = address ? labels.value.addresses.get(address) ?? null : null
+  const main = [cat, addr].filter(Boolean).join(' · ')
+  if (!main) return { main: fallback, sub: null }
+  return { main, sub: address && addr && addr !== address ? address : null }
+}
+
 /** 結果依距離排序用的參考點是不是使用者位置；拿不到位置就用臺北車站 */
 const nearUser = ref(false)
 const TAIPEI_STATION: LatLon = [25.0478, 121.517]
@@ -98,7 +167,14 @@ function positionWithin(ms: number): Promise<LatLon | null> {
 
 let searchSeq = 0
 /** 最近一次搜尋：位置變了（位置晚到、導航結束回來）時用來重排，不用再查一次 OpenStreetMap */
-let lastSearch: { q: string; osm: Place[]; stops: StopIndex | null; pois: PoiIndex | null } | null = null
+let lastSearch: {
+  q: string
+  /** 外語搜尋時使用者打的原文（英文也比對 TDX 英文站名、連鎖店英文品牌）；中文搜尋是 null */
+  original: string | null
+  osm: Place[]
+  stops: StopIndex | null
+  pois: PoiIndex | null
+} | null = null
 
 const BEARING_TEXT: Record<string, string> = {
   N: '北', NE: '東北', E: '東', SE: '東南', S: '南', SW: '西南', W: '西', NW: '西北',
@@ -119,13 +195,58 @@ async function rankResults(seq: number, near: LatLon, isUser: boolean): Promise<
     landError = (e as Error).message
   }
   if (seq !== searchSeq) return null
-  stopResults.value = last.stops ? searchStops(last.stops, last.q, 20, near) : []
-  poiResults.value = last.pois ? searchPois(last.pois, last.q, { near, limit: POI_LIMIT }) : []
-  placeResults.value = mergePlaces(last.q, [landmarks, last.osm.map(fromOsm)], near)
+  const qs = [last.q, ...(last.original ? [last.original] : [])]
+  const stops = last.stops
+  const pois = last.pois
+  stopResults.value = stops ? uniqueBy(qs.flatMap((q) => searchStops(stops, q, 20, near)), (s) => s.stationUid).slice(0, 20) : []
+  poiResults.value = pois
+    ? uniqueBy(qs.flatMap((q) => searchPois(pois, q, { near, limit: POI_LIMIT })), (p) => `${p.name}|${p.point[0]}|${p.point[1]}`)
+        .sort((a, b) => (a.distanceM ?? 0) - (b.distanceM ?? 0))
+        .slice(0, POI_LIMIT)
+    : []
+  placeResults.value = mergePlaces(last.q, [landmarks, last.osm.filter((p) => osmMatches(last.q, p)).map(fromOsm)], near)
   nearUser.value = isUser
   poiShown.value = POI_PAGE
   placeShown.value = PLACE_PAGE
+  void refreshLabels(seq)
   return landError
+}
+
+function uniqueBy<T>(items: T[], key: (t: T) => string): T[] {
+  const seen = new Set<string>()
+  return items.filter((t) => {
+    const k = key(t)
+    if (seen.has(k)) return false
+    seen.add(k)
+    return true
+  })
+}
+
+/** 把結果的名稱、地址、類別翻成使用者的語言；後端失敗就只顯示中文 */
+async function refreshLabels(seq: number) {
+  const lang = displayLang.value
+  if (!lang) {
+    labels.value = emptyLabels()
+    return
+  }
+  const places = placeResults.value ?? []
+  const pois = poiResults.value ?? []
+  const result = await localizeResults(lang, {
+    names: [
+      ...places.map((p) => p.name),
+      ...pois.map((p) => poiNameForTranslation(p.name, p.brand)),
+      ...(stopResults.value ?? []).map((s) => s.name.zh),
+    ],
+    addresses: [...places.map((p) => p.address ?? ''), ...pois.map((p) => p.address)],
+    categories: places.map((p) => p.category ?? ''),
+  })
+  if (seq === searchSeq) labels.value = result
+}
+
+/** 點「也可能是…」：用那個中文重新搜尋 */
+function searchFor(text: string) {
+  addressInput.value = text
+  void search()
 }
 
 /** 用現在的位置重排目前的搜尋結果（導航結束回到搜尋畫面時） */
@@ -142,11 +263,30 @@ function hasAnyResult(): boolean {
 
 /** 同時查站牌（TDX 快照）、連鎖店（Overture 快照）、地標（後端 Overture 快照）和地址（OSM）；任何一邊失敗不影響其他 */
 async function search() {
-  const q = addressInput.value.trim()
-  if (!q || searching.value) return
+  const raw = addressInput.value.trim()
+  if (!raw || searching.value) return
   searching.value = true
   const seq = ++searchSeq
   searchError.value = ''
+  translation.value = null
+  // 外語：先換成中文再搜尋（後端規則翻譯，不用 AI）；後端沒開或翻不出來就照原字串搜尋
+  let q = raw
+  let original: string | null = null
+  if (isForeignQuery(raw)) {
+    try {
+      const tr = await translateForSearch(raw)
+      translation.value = tr
+      queryLang.value = tr.lang
+      if (tr.to) {
+        q = tr.to
+        original = raw
+      }
+    } catch {
+      // 照原字串搜尋
+    }
+  } else {
+    queryLang.value = null
+  }
   clearBusPlan()
   stopResults.value = null
   placeResults.value = null
@@ -159,6 +299,7 @@ async function search() {
   if (pois.status === 'fulfilled') poiRelease.value = pois.value.release
   lastSearch = {
     q,
+    original,
     osm: places.status === 'fulfilled' ? places.value : [],
     stops: stops.status === 'fulfilled' ? stops.value : null,
     pois: pois.status === 'fulfilled' ? pois.value : null,
@@ -169,9 +310,11 @@ async function search() {
   if (pois.status === 'rejected') errors.push(`連鎖店資料載入失敗（${(pois.reason as Error).message}）`)
   if (places.status === 'rejected') errors.push(`地址搜尋失敗（${(places.reason as Error).message}）`)
   if (landError) errors.push(`地標搜尋失敗（${landError}）`)
-  if (errors.length) searchError.value = errors.join('；')
-  else if (!hasAnyResult()) {
-    searchError.value = '找不到這個地點，試試站名、路名、地標、店名（例如「天母體育館」「全家」），或「緯度, 經度」'
+  if (errors.length) {
+    log(`搜尋：${errors.join('；')}`)
+    searchError.value = 'someFailed'
+  } else if (!hasAnyResult()) {
+    searchError.value = 'notFound'
   }
   searching.value = false
 
@@ -200,7 +343,7 @@ const poiVisible = computed(() => (poiResults.value ?? []).slice(0, poiShown.val
  */
 const busOptions = ref<BusPlan[] | null>(null)
 const busLoading = ref(false)
-const busNote = ref('')
+const busNote = ref<keyof NavStrings | ''>('')
 const pickedBus = shallowRef<BusPlan | null>(null)
 const busTargetName = ref('')
 const busTargetPoint = shallowRef<LatLon | null>(null)
@@ -244,20 +387,20 @@ async function planBusTo(target: LatLon, name: string) {
     const [idx, user] = await Promise.all([loadStopIndex(), locator.current()])
     if (seq !== busSeq) return
     if (!user) {
-      busNote.value = '拿不到你的位置，無法列出搭公車的方法；可以直接走過去。'
+      busNote.value = 'busNoLocation'
       return
     }
     if (idx.patterns.length === 0) {
-      busNote.value = '站牌資料沒有路線停靠順序（舊快照），無法列出搭公車的方法。'
+      busNote.value = 'busOldData'
       return
     }
     busOptions.value = planBus(idx.stations, idx.patterns, user, target)
-    if (busOptions.value.length === 0) {
-      const walkMin = Math.max(1, Math.round(distanceM(user, target) / WALK_M_PER_MIN))
-      busNote.value = `走過去約 ${walkMin} 分鐘；搭公車（直達或轉一次車）不會比較快或省不到多少路，建議走過去。`
-    }
+    if (busOptions.value.length === 0) busNote.value = 'busNone'
   } catch (e) {
-    if (seq === busSeq) busNote.value = `公車資料載入失敗（${(e as Error).message}），可以直接走過去。`
+    if (seq === busSeq) {
+      log(`公車資料載入失敗：${(e as Error).message}`)
+      busNote.value = 'busFailed'
+    }
   } finally {
     if (seq === busSeq) {
       busLoading.value = false
@@ -285,11 +428,11 @@ function isBusPicked(o: BusPlan): boolean {
 }
 
 function rideLabel(r: BusPlan['rides'][number]): string {
-  return `${r.route.routeName.zh}${r.route.headsign.zh ? ` ${r.route.headsign.zh}` : ''}`
+  return routeLabel(r.route)
 }
 
 function busLabel(o: BusPlan): string {
-  return o.rides.map(rideLabel).join(' → 轉 ')
+  return o.rides.map(rideLabel).join(' → ')
 }
 
 function busKey(o: BusPlan): string {
@@ -330,8 +473,10 @@ function isRoutePicked(station: Station, route: StationRoute): boolean {
   return destination.value.station?.stationUid === station.stationUid && destination.value.stationRoute?.stopUid === route.stopUid
 }
 
+/** 路線＋方向；非中文介面用英文路線名和方向（TDX 有英文） */
 function routeLabel(r: StationRoute): string {
-  return `${r.routeName.zh}${r.headsign.zh ? ` ${r.headsign.zh}` : ''}`
+  const head = L.value === 'zh-TW' ? r.headsign.zh : r.headsign.en || r.headsign.zh
+  return `${routeName(r.routeName, L.value)}${head ? ` ${head}` : ''}`
 }
 
 function useDemoStation() {
@@ -389,7 +534,13 @@ let destLock: DestinationLock = createDestinationLock(DEFAULT_DESTINATION)
 /** 給畫面用的：這一趟的目的地名稱、是不是站牌（站牌才會說「在這裡等公車」） */
 const activeName = ref('')
 const activeIsStation = ref(false)
-const activeRoute = ref('')
+const activeRide = shallowRef<{ route: StationRoute; alight: Station | null } | null>(null)
+const activeRoute = computed(() => {
+  const r = activeRide.value
+  if (!r) return ''
+  const bus = fill(t.value.takeBus, { bus: routeLabel(r.route) })
+  return r.alight ? `${bus}・${fill(ARRIVAL_STRINGS[L.value].getOffAt, { stop: stopName(r.alight.name, L.value) })}` : bus
+})
 let lastTickAt = 0
 /** 每秒的計時器隔超過這麼久才回來，代表頁面被凍結過 */
 const RESUME_GAP_MS = 3000
@@ -414,100 +565,8 @@ const BG: Record<NavState, string> = {
   failed: '#30383D',
 }
 
-const DIR_TEXT = {
-  straight: '往這走',
-  bear_left: '稍微向左',
-  bear_right: '稍微向右',
-  left: '向左轉',
-  right: '向右轉',
-  turn_around: '請向後轉',
-} as const
-
-const TURN_TEXT: Record<string, string> = {
-  left: '左轉',
-  right: '右轉',
-  slight_left: '稍微向左',
-  slight_right: '稍微向右',
-  uturn: '迴轉',
-  stairs: '有階梯',
-}
-
-/** 「前面路口右轉」；過馬路是「過完馬路再右轉」或「前面過馬路」（先過馬路才轉彎，2026-11-07 回報） */
-function turnPhrase(kind: ManeuverKind | undefined, then?: ManeuverKind | null): string {
-  if (kind === 'cross') return then ? `過完馬路再${TURN_TEXT[then] ?? '轉彎'}` : '前面過馬路，注意來車'
-  return `前面路口${TURN_TEXT[kind ?? ''] ?? '轉彎'}`
-}
-
-function cueText(c: Cue): string {
-  switch (c.key) {
-    case 'start':
-      return '請注意來車和紅綠燈'
-    case 'turn_ahead':
-      return turnPhrase(c.turn, c.then)
-    case 'turn_around':
-      return '請向後轉'
-    case 'off_route':
-      return '走偏了，正在重新找路'
-    case 'weak_signal':
-      return '定位不太準，請到空曠一點的地方'
-    case 'arrived':
-      return '到了'
-  }
-}
-
-const bigText = computed(() => {
-  const v = view.value
-  if (!v) return ''
-  switch (v.state) {
-    case 'locating':
-      return '正在找你的位置'
-    case 'routing':
-      return '正在找路'
-    case 'weak_signal':
-      return '定位不太準'
-    case 'rerouting':
-      return '走偏了'
-    case 'arrived':
-      return '到了'
-    case 'failed':
-      return v.failReason === 'location_denied' ? '沒有定位權限' : v.failReason === 'route_failed' ? '找不到路' : '定位失敗'
-    default:
-      if (v.headingLost) return '抓不到方向'
-      return distanceText(v.distanceM)
-  }
-})
-
-const sentence = computed(() => {
-  const v = view.value
-  if (!v) return ''
-  if (v.headingLost && (v.state === 'navigating' || v.state === 'back_to_route')) return '請拿著手機畫 8 字'
-  switch (v.state) {
-    case 'weak_signal':
-      return '請到空曠一點的地方'
-    case 'rerouting':
-      return '正在重新找路'
-    case 'back_to_route':
-      return '請回到剛才的路'
-    case 'arrived':
-      return activeIsStation.value ? '在這裡等公車' : '到達目的地了'
-    case 'failed':
-      return '請回上一頁再試一次'
-    case 'navigating': {
-      const t = v.nextTurn
-      if (t && t.kind !== 'arrive' && (t.startM ?? t.distanceM) <= 30) return turnPhrase(t.kind, t.then)
-      return v.direction ? DIR_TEXT[v.direction] : ''
-    }
-    default:
-      return ''
-  }
-})
-
-function distanceText(m: number | null): string {
-  if (m === null) return '—'
-  if (m < 10) return '快到了'
-  const r = m >= 100 ? Math.round(m / 10) * 10 : Math.round(m / 5) * 5
-  return `${r} 公尺`
-}
+const bigText = computed(() => (view.value ? navBigText(view.value, L.value) : ''))
+const sentence = computed(() => (view.value ? navSentence(view.value, L.value, activeIsStation.value) : ''))
 
 const showArrow = computed(() => {
   const v = view.value
@@ -518,10 +577,11 @@ function log(line: string) {
   cues.value = [`${new Date().toLocaleTimeString()} ${line}`, ...cues.value].slice(0, 12)
 }
 
-const currentRoute = useRoute()
 let arrivedHandled = false
-/** 語言與對象用 /lab/nav?lang=en&audience=elder 指定，沒給就是 zh-TW、visitor（正式流程由設定頁提供） */
-const langAudience = computed(() => tripFromQuery(currentRoute.query))
+/** 對象用 /lab/nav?audience=elder 指定，沒給就是 visitor；語言是使用者一開始選的 */
+const langAudience = computed(() => ({ lang: L.value, audience: tripFromQuery(currentRoute.query).audience }))
+/** 問問卡「我迷路了」要的最終目的地 */
+const finalPlace = computed(() => (journey.value ? { zh: journey.value.final.name, en: null } : null))
 const doneLabel = computed(() => ARRIVAL_STRINGS[langAudience.value.lang].done)
 const boardedLabel = computed(() => ARRIVAL_STRINGS[langAudience.value.lang].boarded)
 
@@ -629,8 +689,9 @@ function finishTrip() {
 }
 
 function speakOrBuzz(cue: Cue) {
-  log(`${cueText(cue)}${cue.haptic ? `  [震動 ${cue.haptic}]` : ''}${cue.speak ? '' : '  [不出聲]'}`)
-  // 實驗頁只用網頁能力；speak／haptic Handler 在步驟 6 與 APP 對接
+  log(`${cueText(cue, 'zh-TW')}${cue.haptic ? `  [震動 ${cue.haptic}]` : ''}${cue.speak ? '' : '  [不出聲]'}`)
+  // 用使用者選的語言念出來；城市通裡走 App 的 speak Handler，瀏覽器用 Web Speech
+  if (cue.speak) speakText(cueText(cue, L.value), SPEECH_LANGS[L.value], langAudience.value.audience === 'elder' ? 'slow' : 'normal')
   if (cue.haptic && 'vibrate' in navigator) {
     navigator.vibrate(cue.haptic === 'arrive' ? [200, 80, 200, 80, 400] : cue.haptic === 'turn' ? [150] : [100, 60, 100])
   }
@@ -647,9 +708,7 @@ async function begin(simStart?: LatLon) {
   active = destination.value
   activeName.value = active.name
   activeIsStation.value = !!active.station
-  activeRoute.value = active.stationRoute
-    ? `搭 ${routeLabel(active.stationRoute)}${active.alight ? `，在 ${active.alight.name.zh} 下車` : ''}`
-    : ''
+  activeRide.value = active.stationRoute ? { route: active.stationRoute, alight: active.alight ?? null } : null
   destinationPoint.value = null
   destLock = createDestinationLock(active)
   gpsCourse.value = null
@@ -966,6 +1025,11 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
     class="flex min-h-dvh flex-col text-white"
     :style="{ background: running && view ? BG[view.state] : '#30383D' }"
   >
+    <!-- 選語言：第一次打開，或按右上角 🌐 -->
+    <div v-if="showLangPicker" class="fixed inset-0 z-40 overflow-y-auto">
+      <LanguagePicker :current="chosenLang" @pick="pickLang" />
+    </div>
+
     <!-- 行程中的到站、坐車、抵達畫面：蓋在整頁上，不跳頁 -->
     <div v-if="journey?.phase === 'at_stop' && atStopTrip" class="fixed inset-0 z-20 overflow-y-auto">
       <ArrivalCard
@@ -973,6 +1037,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
         :lang="langAudience.lang"
         :audience="langAudience.audience"
         :primary-label="boardedLabel"
+        :place="finalPlace"
         @primary="onBoarded"
       />
     </div>
@@ -983,6 +1048,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
         :audience="langAudience.audience"
         :status="rideNow"
         :simulate="simGps"
+        :place="finalPlace"
         @got-off="onGotOff"
         @sim-next="simNextStop"
       />
@@ -1007,12 +1073,17 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
     </div>
 
     <!-- 設定區：還沒開始時顯示 -->
-    <section v-if="!running" class="space-y-4 p-4">
-      <h1 class="text-xl font-bold">導航實驗</h1>
+    <section v-if="!running" class="space-y-4 p-4" :lang="L">
+      <div class="flex items-center justify-between gap-3">
+        <span class="text-sm text-white/50" lang="zh-TW">導航實驗</span>
+        <button type="button" class="flex min-h-12 items-center gap-2 rounded-full bg-white/20 px-4 text-base font-bold" @click="pickingLang = true">
+          <span aria-hidden="true">🌐</span>{{ t.language }}
+        </button>
+      </div>
 
       <!-- 目的地：輸入地址、路名、地標，或「緯度, 經度」 -->
       <form class="space-y-2" @submit.prevent="search">
-        <label class="block text-lg font-bold" for="dest-input">要去哪裡？</label>
+        <label class="block text-2xl font-bold" for="dest-input">{{ t.whereTo }}</label>
         <div class="flex gap-2">
           <input
             id="dest-input"
@@ -1020,7 +1091,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
             type="search"
             enterkeyhint="search"
             autocomplete="off"
-            placeholder="輸入站名、店名（全家、麥當勞）、地址或地標"
+            :placeholder="t.placeholder"
             class="h-14 min-w-0 flex-1 rounded-xl bg-white px-4 text-lg text-[#30383D]"
           />
           <button
@@ -1028,27 +1099,47 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
             class="h-14 shrink-0 rounded-xl bg-white/20 px-5 text-lg font-bold disabled:opacity-50"
             :disabled="searching || !addressInput.trim()"
           >
-            {{ searching ? '搜尋中…' : '搜尋' }}
+            {{ searching ? t.searching : t.search }}
           </button>
         </div>
-        <p class="text-sm text-white/70">
-          站名查 TDX 站牌資料，連鎖店（7-11、全家、麥當勞、海底撈…）和地標、餐廳、學校查本站的開放資料快照，不會把輸入送到第三方；地址另外會送到公開的 OpenStreetMap 搜尋服務。結果用你現在的位置由近到遠排；不給位置也行，改以臺北車站為準。
-        </p>
+        <p class="text-sm text-white/70">{{ t.searchHint }}</p>
       </form>
 
-      <p v-if="searchError" class="text-amber-200" role="alert">{{ searchError }}</p>
+      <p v-if="searchError" class="text-amber-200" role="alert">{{ t[searchError] }}</p>
+
+      <!-- 外語搜尋：顯示換成的中文，使用者看得出來是用什麼搜的；有其他可能就給按鈕 -->
+      <div v-if="translation" class="rounded-lg bg-white/10 p-3" aria-live="polite">
+        <div class="text-lg">
+          {{ translation.from }} →
+          <span v-if="translation.to" class="font-bold" lang="zh-Hant">{{ translation.to }}</span>
+          <span v-else class="text-amber-200">?</span>
+        </div>
+        <div v-if="translation.skipped.length" class="text-sm text-amber-200">? {{ translation.skipped.join(' ') }}</div>
+        <div v-if="translation.alternatives.length" class="mt-2 flex flex-wrap gap-2">
+          <button
+            v-for="alt in translation.alternatives"
+            :key="alt"
+            type="button"
+            class="rounded-full bg-white/20 px-3 py-1 text-base"
+            lang="zh-Hant"
+            @click="searchFor(alt)"
+          >
+            {{ alt }}
+          </button>
+        </div>
+      </div>
 
       <!-- 搭公車去：選了地址或店家 A 之後，搜尋結果收起來，這一區放在搜尋框正下方。用 TDX 停靠順序在裝置上算直達車 -->
       <section v-if="showBusPanel" ref="busPanel" class="scroll-mt-4 space-y-2" aria-label="搭公車去">
         <div class="flex items-start justify-between gap-3">
           <h2 class="text-xl font-bold">
-            去「{{ busTargetName }}」{{ busOptions?.length ? '可以搭' : '' }}
-            <span v-if="busLoading || busOptions?.length" class="block text-sm font-normal text-white/70">{{ busIsTransfer ? '沒有直達車，以下要轉一次車' : '先列直達車；沒有直達才列轉一次車' }}</span>
+            {{ fill(t.busTitle, { place: busTargetName }) }}
+            <span v-if="busLoading || busOptions?.length" class="block text-sm font-normal text-white/70">{{ busIsTransfer ? t.busTransferOnly : t.busDirectFirst }}</span>
           </h2>
-          <button type="button" class="shrink-0 rounded-lg bg-white/20 px-3 py-2 text-base" @click="reselectDestination">重新選擇</button>
+          <button type="button" class="shrink-0 rounded-lg bg-white/20 px-3 py-2 text-base" @click="reselectDestination">{{ t.reselect }}</button>
         </div>
-        <p v-if="busLoading" class="text-white/80">正在算可以搭的車…</p>
-        <p v-if="busNote" class="text-amber-200">{{ busNote }}</p>
+        <p v-if="busLoading" class="text-white/80">{{ t.busLoading }}</p>
+        <p v-if="busNote" class="text-amber-200">{{ t[busNote] }}</p>
         <button
           v-for="o in busOptions ?? []"
           :key="busKey(o)"
@@ -1059,15 +1150,9 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
           @click="pickBus(o)"
         >
           <div class="text-lg font-bold">{{ busLabel(o) }}</div>
-          <div class="text-sm text-white/80">
-            走 {{ formatDistance(o.walkToBoardM) }}到「{{ o.rides[0].board.name.zh }}」上車
-            <template v-for="(r, i) in o.rides" :key="i">
-              <template v-if="i > 0">
-                → 走 {{ formatDistance(o.transferWalkM) }}到「{{ r.board.name.zh }}」轉 {{ r.route.routeName.zh }}
-              </template>
-              → 坐 {{ r.stops.length - 1 }} 站 → 在「{{ r.alight.name.zh }}」下車</template
-            >，再走 {{ formatDistance(o.walkFromAlightM) }}
-          </div>
+          <ol class="mt-1 space-y-0.5 text-sm text-white/80">
+            <li v-for="(line, li) in busPlanText(o, L)" :key="li">{{ line }}</li>
+          </ol>
         </button>
         <button
           v-if="!busLoading"
@@ -1077,7 +1162,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
           :aria-pressed="!pickedBus"
           @click="walkInstead"
         >
-          <div class="text-lg font-bold">不搭車，直接走過去</div>
+          <div class="text-lg font-bold">{{ t.walkInstead }}</div>
         </button>
       </section>
 
@@ -1086,8 +1171,8 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
         <!-- 地點與地址（後端 Overture 地標快照＋OpenStreetMap）：由近到遠 -->
         <section v-if="placeResults && placeResults.length" class="space-y-2" aria-label="地點與地址">
           <h2 class="text-lg font-bold">
-            地點與地址
-            <span class="text-sm font-normal text-white/70">（離{{ nearUser ? '你' : '臺北車站' }}由近到遠）</span>
+            {{ t.places }}
+            <span class="text-sm font-normal text-white/70">· {{ nearUser ? t.nearYou : t.nearStation }}</span>
           </h2>
           <button
             v-for="(p, i) in placeVisible"
@@ -1099,10 +1184,12 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
             @click="pickPlace(p)"
           >
             <div class="flex items-baseline justify-between gap-2">
-              <span class="text-lg font-bold">{{ p.name }}</span>
-              <span class="shrink-0 text-sm text-white/80">{{ formatDistance(p.distanceM) }}</span>
+              <span class="text-lg font-bold">{{ nameLines(p.name).main }}</span>
+              <span class="shrink-0 text-sm text-white/80">{{ p.distanceM === null ? '' : placeDistance(p.distanceM, L) }}</span>
             </div>
-            <div v-if="p.detail" class="text-sm text-white/70">{{ p.detail }}</div>
+            <div v-if="nameLines(p.name).sub" class="text-base text-white/90" lang="zh-Hant">{{ nameLines(p.name).sub }}</div>
+            <div v-if="p.detail || p.category" class="text-sm text-white/70">{{ detailLines(p.category, p.address, p.detail).main }}</div>
+            <div v-if="detailLines(p.category, p.address, p.detail).sub" class="text-xs text-white/50" lang="zh-Hant">{{ detailLines(p.category, p.address, p.detail).sub }}</div>
           </button>
           <button
             v-if="placeShown < placeResults.length"
@@ -1110,17 +1197,15 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
             class="h-12 w-full rounded-lg bg-white/20 font-bold"
             @click="placeShown += PLACE_PAGE"
           >
-            再多看一些（還有 {{ placeResults.length - placeShown }} 個）
+            {{ fill(t.showMore, { n: placeResults.length - placeShown }) }}
           </button>
         </section>
 
         <!-- 連鎖店（Overture Maps 快照）：由近到遠 -->
         <section v-if="poiResults && poiResults.length" class="space-y-2" aria-label="連鎖店">
           <h2 class="text-lg font-bold">
-            連鎖店
-            <span class="text-sm font-normal text-white/70">
-              （{{ poiResults.length >= POI_LIMIT ? `最近的 ${POI_LIMIT} 家` : `共 ${poiResults.length} 家` }}，離{{ nearUser ? '你' : '臺北車站' }}由近到遠）
-            </span>
+            {{ t.chains }}
+            <span class="text-sm font-normal text-white/70">· {{ nearUser ? t.nearYou : t.nearStation }}</span>
           </h2>
           <button
             v-for="p in poiVisible"
@@ -1132,10 +1217,14 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
             @click="pickPoi(p)"
           >
             <div class="flex items-baseline justify-between gap-2">
-              <span class="text-lg font-bold">{{ p.name }}</span>
-              <span class="shrink-0 text-sm text-white/80">{{ formatDistance(p.distanceM) }}</span>
+              <span class="text-lg font-bold">{{ poiLines(p).main }}</span>
+              <span class="shrink-0 text-sm text-white/80">{{ p.distanceM === null ? '' : placeDistance(p.distanceM, L) }}</span>
             </div>
-            <div class="text-sm text-white/70">{{ p.brand.zh }}<template v-if="p.address">・{{ p.address }}</template></div>
+            <div v-if="poiLines(p).sub" class="text-base text-white/90" lang="zh-Hant">{{ poiLines(p).sub }}</div>
+            <div class="text-sm text-white/70">
+              {{ displayLang && p.brand.en ? p.brand.en : p.brand.zh }}<template v-if="p.address"> · {{ (displayLang && labels.addresses.get(p.address)) || p.address }}</template>
+            </div>
+            <div v-if="displayLang && p.address && labels.addresses.get(p.address) && labels.addresses.get(p.address) !== p.address" class="text-xs text-white/50" lang="zh-Hant">{{ p.address }}</div>
           </button>
           <button
             v-if="poiShown < poiResults.length"
@@ -1143,22 +1232,23 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
             class="h-12 w-full rounded-lg bg-white/20 font-bold"
             @click="poiShown += POI_PAGE"
           >
-            再多看一些（還有 {{ poiResults.length - poiShown }} 家）
+            {{ fill(t.showMore, { n: poiResults.length - poiShown }) }}
           </button>
         </section>
 
         <!-- 公車站牌（TDX 快照）：一個站位一張卡，點路線就是選那班車 -->
         <section v-if="stopResults && stopResults.length" class="space-y-2" aria-label="公車站牌">
           <h2 class="text-lg font-bold">
-            公車站牌
-            <span class="text-sm font-normal text-white/70">（已經知道要搭哪一班車時用；一樣符合的，離{{ nearUser ? '你' : '臺北車站' }}近的在前）</span>
+            {{ t.stops }}
+            <span class="text-sm font-normal text-white/70">· {{ t.stopsHint }}</span>
           </h2>
           <div v-for="st in stopResults" :key="st.stationUid" class="rounded-lg bg-white/10 p-3">
             <div class="text-lg font-bold">
-              {{ st.name.zh }}
-              <span v-if="st.bearing" class="text-sm font-normal text-white/70">（站位朝{{ BEARING_TEXT[st.bearing] ?? st.bearing }}）</span>
+              {{ stopLines(st).main }}
+              <span v-if="st.bearing && L === 'zh-TW'" class="text-sm font-normal text-white/70">（站位朝{{ BEARING_TEXT[st.bearing] ?? st.bearing }}）</span>
             </div>
-            <div class="mb-2 text-sm text-white/70">點下要搭的那一班車：</div>
+            <div v-if="stopLines(st).sub" class="text-base text-white/90" lang="zh-Hant">{{ stopLines(st).sub }}</div>
+            <div class="mb-2 text-sm text-white/70">{{ t.pickRoute }}</div>
             <div class="flex flex-wrap gap-2">
               <button
                 v-for="r in st.routes"
@@ -1185,38 +1275,37 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
       </p>
 
       <div class="rounded-lg bg-white/10 p-3">
-        <div class="text-sm text-white/70">目前的目的地</div>
+        <div class="text-sm text-white/70">{{ t.currentDest }}</div>
         <div class="text-xl font-bold">{{ destination.name }}</div>
-        <div v-if="destination.stationRoute" class="text-lg">搭 {{ routeLabel(destination.stationRoute) }}</div>
-        <div v-if="destination.alight" class="text-lg">在 {{ destination.alight.name.zh }} 下車</div>
-        <button v-if="destination.stationRoute?.stopUid !== DEFAULT_DESTINATION.stationRoute?.stopUid" type="button" class="mt-1 text-sm underline" @click="useDemoStation">
+        <div v-if="destination.stationRoute" class="text-lg">{{ fill(t.takeBus, { bus: routeLabel(destination.stationRoute) }) }}</div>
+        <div v-if="destination.alight" class="text-lg">{{ fill(ARRIVAL_STRINGS[L].getOffAt, { stop: stopName(destination.alight.name, L) }) }}</div>
+        <button v-if="L === 'zh-TW' && destination.stationRoute?.stopUid !== DEFAULT_DESTINATION.stationRoute?.stopUid" type="button" class="mt-1 text-sm underline" @click="useDemoStation">
           改回預設站牌「{{ DEFAULT_DESTINATION.name }}」{{ DEFAULT_DESTINATION.stationRoute ? routeLabel(DEFAULT_DESTINATION.stationRoute) : '' }}
         </button>
-        <div v-if="destination.station" class="text-sm text-white/70">公車站牌：走到會跳到 /arrived，念「等 {{ destination.stationRoute?.routeName.zh }} 號」</div>
+        <div v-if="L !== 'zh-TW'" />
+        <div v-else-if="destination.station" class="text-sm text-white/70">公車站牌：走到會跳到 /arrived，念「等 {{ destination.stationRoute?.routeName.zh }} 號」</div>
         <div v-else class="text-sm text-white/70">一般地點：走到只顯示「到了」</div>
       </div>
 
-      <label class="flex items-center gap-2 rounded-lg bg-white/10 p-3">
+      <label class="flex items-center gap-2 rounded-lg bg-white/10 p-3" lang="zh-TW">
         <input v-model="simGps" type="checkbox" />
         <span>模擬 GPS（拖曳搖桿或點地圖移動，不用出門；朝向仍用手機羅盤）</span>
       </label>
 
-      <p class="text-sm text-white/70">
-        用真實定位，走到戶外；路線避開階梯、陡坡與小巷，會把你的座標送到公開的路徑服務。
-      </p>
-      <button class="h-16 w-full rounded-xl bg-white text-lg font-bold text-[#30383D]" @click="startTrip">開始走</button>
+      <p class="text-sm text-white/70">{{ t.realGpsHint }}</p>
+      <button class="h-16 w-full rounded-xl bg-white text-lg font-bold text-[#30383D]" @click="startTrip">{{ t.start }}</button>
       <p v-if="permissionNote" class="text-amber-200">{{ permissionNote }}</p>
-      <router-link class="block text-center underline" to="/lab/sensors">← 感測實驗</router-link>
+      <router-link class="block text-center underline" to="/lab/sensors" lang="zh-TW">← 感測實驗</router-link>
     </section>
 
     <!-- 導航畫面 -->
     <template v-else-if="view">
-      <div class="px-4 pt-10 text-center">
+      <div class="px-4 pt-10 text-center" :lang="L">
         <div class="text-2xl font-bold">{{ activeName }}</div>
         <div v-if="activeRoute" class="text-xl">{{ activeRoute }}</div>
         <div class="text-lg">
-          <template v-if="routeInfo">全程 {{ routeInfo.distanceM }} 公尺，約 {{ Math.round(routeInfo.durationS / 60) }} 分鐘</template>
-          <template v-else>正在規劃路線…</template>
+          <template v-if="routeInfo">{{ fill(t.totalRoute, { m: placeDistance(routeInfo.distanceM, L), min: Math.max(1, Math.round(routeInfo.durationS / 60)) }) }}</template>
+          <template v-else>{{ t.planning }}</template>
         </div>
       </div>
 
@@ -1238,10 +1327,10 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
         <svg v-else-if="view.state === 'arrived'" class="w-[40vw] max-w-56" viewBox="0 0 100 100">
           <path d="M20 54 L42 76 L82 28" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
-        <div v-else-if="view.state === 'locating' || view.state === 'routing'" class="text-lg">請稍候…</div>
+        <div v-else-if="view.state === 'locating' || view.state === 'routing'" class="text-lg" :lang="L">{{ t.pleaseWait }}</div>
       </div>
 
-      <div class="px-4 pb-4 text-center">
+      <div class="px-4 pb-4 text-center" :lang="L">
         <div class="text-6xl font-bold tabular-nums">{{ bigText }}</div>
         <div class="mt-2 min-h-16 text-3xl">{{ sentence }}</div>
       </div>
@@ -1289,17 +1378,17 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
         class="mx-4 mb-3 rounded-lg bg-amber-200 px-3 py-2 text-center text-lg font-bold text-[#30383D]"
         role="status"
       >
-        方向可能不準，請拿著手機畫 8 字，再按「重新定位」
+        {{ t.headingSuspect }}
       </div>
 
       <div class="flex items-center justify-between px-6 pb-4">
-        <button class="h-16 w-16 rounded-full bg-white text-2xl text-[#30383D]" aria-label="結束" @click="end">✕</button>
+        <button class="h-16 w-16 rounded-full bg-white text-2xl text-[#30383D]" :aria-label="t.endTrip" @click="end">✕</button>
         <button
           class="h-16 rounded-full bg-white px-6 text-lg font-bold text-[#30383D]"
-          aria-label="重新定位"
+          :aria-label="t.recalibrate"
           @click="recalibrate('manual')"
         >
-          重新定位
+          {{ t.recalibrate }}
         </button>
         <button
           class="h-16 w-16 rounded-full bg-white text-sm text-[#30383D]"

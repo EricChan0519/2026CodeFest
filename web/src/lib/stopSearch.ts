@@ -9,6 +9,10 @@
 import type { LatLon, Station } from '@/lib/contract'
 import type { RoutePattern } from '@/lib/directBus'
 import { distanceM } from '@/nav/geo'
+import { fuzzyScore, normalizeQuery, parseQuery } from '@/lib/fuzzy'
+import type { ParsedQuery } from '@/lib/fuzzy'
+
+export { normalizeQuery }
 
 export const STOP_INDEX_URL = '/lab/stop_index.json'
 
@@ -19,11 +23,6 @@ export interface StopIndex {
   patterns: RoutePattern[]
   /** 預先算好的小寫、臺／台統一的搜尋字串，和 stations 同一個順序 */
   keys: string[]
-}
-
-/** 臺／台統一、去空白、小寫 */
-export function normalizeQuery(s: string): string {
-  return s.replace(/台/g, '臺').replace(/\s+/g, '').toLowerCase()
 }
 
 /** 使用者常會多打「公車站」「站牌」「公車」，這些字不在站名裡，要拿掉再比對 */
@@ -49,15 +48,16 @@ export function buildStopIndex(data: { updatedAt: string; stations: Station[]; p
   }
 }
 
-/** 站名完全相同 > 站名開頭相同 > 站名包含 */
-function score(key: string, zh: string, needles: string[]): number {
+/** 站名完全相同 3 > 站名開頭相同 2 > 站名包含 1 > 模糊（0–1） */
+function score(key: string, zh: string, needles: string[], parsed: ParsedQuery): number {
   let best = 0
   for (const n of needles) {
     if (zh === n) return 3
     if (zh.startsWith(n)) best = Math.max(best, 2)
     else if (key.includes(n)) best = Math.max(best, 1)
   }
-  return best
+  // 對不到時用模糊比對（0–1，見 fuzzy.ts）：「芝山捷運站」也找得到「捷運芝山站」
+  return best > 0 ? best : fuzzyScore(parsed, key)
 }
 
 /**
@@ -67,9 +67,10 @@ function score(key: string, zh: string, needles: string[]): number {
 export function searchStops(index: StopIndex, q: string, limit = 20, near: LatLon | null = null): Station[] {
   const needles = queryVariants(q)
   if (needles.length === 0) return []
+  const parsed = parseQuery(q)
   const hits: { s: Station; score: number; d: number; i: number }[] = []
   index.stations.forEach((s, i) => {
-    const sc = score(index.keys[i]!, normalizeQuery(s.name.zh), needles)
+    const sc = score(index.keys[i]!, normalizeQuery(s.name.zh), needles, parsed)
     if (sc > 0) hits.push({ s, score: sc, d: near ? distanceM(near, [s.lat, s.lon]) : 0, i })
   })
   hits.sort((a, b) => b.score - a.score || a.d - b.d || a.i - b.i)

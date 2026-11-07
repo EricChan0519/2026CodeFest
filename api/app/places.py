@@ -48,6 +48,28 @@ ALIASES = {
     "故宮": "故宮博物院",
 }
 
+_MRT_SUFFIX = re.compile(r"(.+?)(?:捷運站|捷運|mrt站|mrt)")
+_MRT_PREFIX = re.compile(r"(?:捷運|mrt)(.+?)站?")
+# 模糊比對前拿掉的種類字：剩下的（芝山）一定要出現在名稱裡，不然「中山捷運站」會因為「捷運站」三個字一樣而對上
+_KIND_WORDS = re.compile(r"捷運|車站|站|mrt")
+
+# 排序用：把交通系統、出口、括號這些包裝拿掉，剩下的就是「這個地點本身」（台北捷運士林站 → 士林）
+_WRAPPER = re.compile(
+    r"\(.*?\)|（.*?）|[-－–—].*$|"
+    r"臺北捷運|台北捷運|捷運|臺鐵|台鐵|高鐵|公車|客運|mrt|tra|station|"
+    r"(?:淡水信義|松山新店|中和新蘆|文湖|板南|環狀|機場)線|"
+    r"[0-9一二三四五六七八九十]*號?出口\d*|車站|站"
+)
+_STATION_WORDS = re.compile(r"站|捷運|mrt")
+_TRANSPORT_CATEGORIES = {"車站", "捷運站", "公車站", "交通"}
+# 「搜尋字串占名稱一半以上」算是主要在講這個地點
+MAIN_SHARE = 0.5
+
+
+def core_of(name_key: str) -> str:
+    return _WRAPPER.sub("", name_key)
+
+
 MIN_SUBSTRING_LEN = 2
 MIN_ADDRESS_LEN = 3
 MIN_CONTAINED_NAME_LEN = 3
@@ -133,6 +155,12 @@ class PlaceIndex:
         for short, full in ALIASES.items():
             if short in qn and full not in qn:
                 out.append(qn.replace(short, full))
+        # 捷運站的各種說法：「芝山捷運站」「捷運芝山」也查「捷運芝山站」（2026-11-07 回報：查到中山、龍山寺捷運站）
+        m = _MRT_SUFFIX.fullmatch(qn) or _MRT_PREFIX.fullmatch(qn)
+        if m and len(m.group(1)) >= 1:
+            for v in (f"捷運{m.group(1)}站", f"{m.group(1)}站"):
+                if v not in out:
+                    out.append(v)
         return out
 
     def _matches(self, qn: str) -> list[int]:
@@ -169,7 +197,12 @@ class PlaceIndex:
             chars = set(v)
             if len(grams) < 2:
                 continue
+            core = _KIND_WORDS.sub("", v)
+            if len(core) < 2 or core == v:
+                core = ""
             for i, k in enumerate(self.name_keys):
+                if core and core not in k:
+                    continue
                 g = sum(x in k for x in grams)
                 if g < 2:
                     continue
@@ -189,13 +222,30 @@ class PlaceIndex:
             raise ApiError("VALIDATION_ERROR", 422)
         hits = self._matches(qn)
         limit = max(1, min(MAX_LIMIT, limit))
-        variants = {v for v in self._variants(qn) if len(v) >= EXACT_FIRST_MIN_LEN}
+        variants = self._variants(qn)
+        # 夠具體的搜尋（4 個字以上，或是像「士林站」這種站名）才依相關程度分層；
+        # 「公園」「體育館」這種通稱一律依距離，不然遠處剛好叫「體育館」的地點會排到最前面
+        specific = len(qn) >= EXACT_FIRST_MIN_LEN or bool(_STATION_WORDS.search(qn))
+        query_cores = {core_of(v) for v in variants} - {""}
+
+        def tier(i: int) -> int:
+            if not specific:
+                return 0
+            k = self.name_keys[i]
+            # 名稱完全一樣、或拿掉包裝後一樣：都是「地點本身」，同一層依距離（資料裡偶爾有座標放錯的同名點，不讓它硬排第一）
+            if k in variants or (query_cores and core_of(k) in query_cores):
+                return 1  # 士林站、捷運士林站、公車士林站、台北捷運士林站
+            contains = any(v in k for v in variants)
+            if contains and _STATION_WORDS.search(qn) and self.categories[self.category_of[i]] in _TRANSPORT_CATEGORIES:
+                return 2
+            if contains and max(len(v) for v in variants if v in k) >= len(k) * MAIN_SHARE:
+                return 3
+            return 4 if contains else 5  # 名稱裡只是順便提到（接睫毛/…/士林站/…），模糊比對的最後
 
         def key(i: int):
-            exact = 0 if self.name_keys[i] in variants else 1
             if near is not None:
-                return (exact, haversine_m(near, (self.lats[i], self.lons[i])))
-            return (exact, -self.confidence[i], self.names[i])
+                return (tier(i), haversine_m(near, (self.lats[i], self.lons[i])))
+            return (tier(i), -self.confidence[i], self.names[i])
 
         ranked = sorted(hits, key=key)[:limit]
         scored = [(haversine_m(near, (self.lats[i], self.lons[i])) if near is not None else None, i) for i in ranked]

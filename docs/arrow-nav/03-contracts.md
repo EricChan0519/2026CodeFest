@@ -406,3 +406,37 @@ web/src/mocks/routes-two-turns.json   改版：fastest，先左轉再右轉，NA
 | `?demo=1` | 模擬行走，用 `web/public/demo/` 的內建路線，不需要連線 |
 | `?night=1` | 主畫面：路線模式用 `simulate: "night"`（安全模式的路燈權重變高），「怎麼去」標示「模擬晚上」 |
 | `?setup=1` | 主畫面：重新選語言、年紀、路線模式 |
+
+
+### `POST /api/translate/query`
+
+外語地點搜尋字串 → 中文（規則＋開放資料，不用 AI 模型；見 08-poi-data.md）。
+
+```json
+// request
+{ "q": "대만박물관" }
+// response
+{ "lang": "ko", "queries": ["臺灣博物館"], "partial": false,
+  "segments": [{ "text": "대만", "kind": "proper", "zh": ["臺灣"], "via": "glossary" },
+               { "text": "박물관", "kind": "head", "zh": ["博物館"], "via": "glossary" }],
+  "sources": [...] }
+```
+
+- `lang`：`ko` `ja` `vi` `th` `km` `en` `id`，中文是 `zh`（只做簡體、日文字轉繁體）。
+- `queries`：中文搜尋字串，最可能的在前，最多 3 個；翻不出來是 `[]`，前端改用原字串搜尋。
+- `partial`：有看不懂、略過的部分（`segments[].kind == "unknown"`）。
+
+### `POST /api/translate/names`
+
+中文地名 → 使用者的語言，一次最多 100 個。
+
+```json
+// request
+{ "lang": "id", "names": ["國立臺灣博物館", "臺北榮民總醫院"] }
+// response
+{ "lang": "id", "names": [
+  { "zh": "國立臺灣博物館", "text": "Museum Nasional Taiwan", "reading": null },
+  { "zh": "臺北榮民總醫院", "text": null, "reading": "Tai Bei Rong Min Zong Yi Yuan" } ] }
+```
+
+`text` 為 `null` 表示拆不出來、不硬翻；`reading` 是讀音（日文不給，日文使用者看得懂漢字）。
