@@ -39,14 +39,14 @@ defineProps<{ hollow?: boolean; done?: boolean; navigation?: boolean }>()
   opacity: 0.55;
 }
 .am-direction {
-  display: none;
+  opacity: 0;
   transition: opacity 0.3s ease;
 }
 .navigation .am-arrow {
-  display: none;
+  opacity: 0;
 }
 .navigation .am-direction {
-  display: block;
+  opacity: 1;
 }
 .am-direction path {
   fill: none;
@@ -99,5 +99,9 @@ defineProps<{ hollow?: boolean; done?: boolean; navigation?: boolean }>()
 .done.reduce-motion .am-check {
   animation: none;
   stroke-dashoffset: 0;
+}
+.reduce-motion .am-arrow,
+.reduce-motion .am-direction {
+  transition: none;
 }
 </style>
