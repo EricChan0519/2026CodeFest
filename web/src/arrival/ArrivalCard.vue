@@ -56,16 +56,16 @@ onMounted(() => {
     <div class="mt-6 flex flex-col gap-3">
       <button
         v-if="cards.length"
-        class="min-h-16 rounded-xl bg-white px-4 text-xl font-bold text-arrived"
+        class="min-h-16 rounded-[20px] bg-gray-50 px-4 text-xl font-bold text-arrived active:scale-[0.98]"
         @click="showingCard = true"
       >
         {{ arrival.labels.showOthers }}
       </button>
       <div class="flex gap-3">
-        <button class="min-h-16 flex-1 rounded-xl border-2 border-white px-3 text-xl font-bold" @click="hearAgain">
+        <button class="min-h-16 flex-1 rounded-[20px] border border-white/15 border-t-white/30 bg-white/10 px-3 text-xl font-bold active:scale-[0.98]" @click="hearAgain">
           {{ arrival.labels.hearAgain }}
         </button>
-        <button class="min-h-16 flex-1 rounded-xl border-2 border-white px-3 text-xl font-bold" @click="emit('primary')">
+        <button class="min-h-16 flex-1 rounded-[20px] border border-white/15 border-t-white/30 bg-white/10 px-3 text-xl font-bold active:scale-[0.98]" @click="emit('primary')">
           {{ primaryLabel ?? arrival.labels.done }}
         </button>
       </div>

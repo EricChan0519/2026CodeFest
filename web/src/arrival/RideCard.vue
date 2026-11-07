@@ -42,22 +42,22 @@ onMounted(() => say(ride.value.getOff))
       <p v-if="ride.direction" class="mt-3 text-2xl font-bold">{{ ride.direction }}</p>
       <p v-if="ride.getOff" class="mt-6 text-3xl font-bold">{{ ride.getOff }}</p>
       <p class="mt-4 text-2xl">{{ ride.stopsLeft }}</p>
-      <p v-if="ride.cueText" class="mt-6 rounded-xl bg-white px-4 py-3 text-2xl font-bold text-[#356C77]" role="alert">
+      <p v-if="ride.cueText" class="mt-6 rounded-[20px] bg-gray-50 px-4 py-3 text-2xl font-bold text-[#356C77]" role="alert">
         {{ ride.cueText }}
       </p>
     </div>
 
     <div class="mt-6 flex flex-col gap-3">
-      <button class="min-h-16 rounded-xl bg-white px-4 text-xl font-bold text-[#356C77]" @click="emit('gotOff')">
+      <button class="min-h-16 rounded-[20px] bg-gray-50 px-4 text-xl font-bold text-[#356C77] active:scale-[0.98]" @click="emit('gotOff')">
         {{ ride.labels.gotOff }}
       </button>
-      <button v-if="cards.length" class="min-h-16 rounded-xl border-2 border-white px-3 text-xl font-bold" @click="showingCard = true">
+      <button v-if="cards.length" class="min-h-16 rounded-[20px] border border-white/15 border-t-white/30 bg-white/10 px-3 text-xl font-bold active:scale-[0.98]" @click="showingCard = true">
         {{ showOthers }}
       </button>
-      <button class="min-h-16 rounded-xl border-2 border-white px-3 text-xl font-bold" @click="hearAgain">
+      <button class="min-h-16 rounded-[20px] border border-white/15 border-t-white/30 bg-white/10 px-3 text-xl font-bold active:scale-[0.98]" @click="hearAgain">
         {{ ride.labels.hearAgain }}
       </button>
-      <button v-if="simulate" class="min-h-12 rounded-xl bg-white/20 px-3 text-base" @click="emit('simNext')">
+      <button v-if="simulate" class="min-h-12 rounded-[20px] border border-dashed border-white/30 px-3 text-base" @click="emit('simNext')">
         模擬：公車往前開一站
       </button>
     </div>
