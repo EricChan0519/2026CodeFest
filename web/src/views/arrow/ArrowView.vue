@@ -30,7 +30,7 @@ import type { Cue } from '@/nav/announcer'
 import { easeRotation } from '@/nav/arrow'
 import { NAV_CONFIG } from '@/nav/config'
 import { DEFAULT_DESTINATION } from '@/nav/destination'
-import { bearingDeg, distanceM } from '@/nav/geo'
+import { distanceM } from '@/nav/geo'
 import { useDestinationSearch } from '@/trip/useDestinationSearch'
 import { useTrip } from '@/trip/useTrip'
 import type { TripChoice } from '@/trip/useTrip'
@@ -886,31 +886,6 @@ const showRecal = computed(() => {
 })
 const failed = computed(() => view.value?.state === 'failed' && !navArrived.value)
 
-/**
- * 箭頭外圈的小圓點：從現在位置看「最後的目的地」的直線方向（相對手機上緣）。
- * 箭頭跟著路線走（下一個要走的點），圓點不看路線，只看目的地在哪；
- * 走去公車站時也指著最後的目的地，不是公車站。只到站牌（沒有最後目的地）時才指站牌。
- */
-const destinationPoint = computed<LatLon | null>(() => {
-  const fin = trip.journey.value?.final.point
-  if (fin) return fin
-  const a = nav.active.value
-  const here = view.value?.here
-  if (!a || !a.points.length) return null
-  if (!here) return a.points[0]!
-  return a.points.reduce((best, p) => (distanceM(here, p) < distanceM(here, best) ? p : best))
-})
-const destinationDeg = computed<number | null>(() => {
-  const v = view.value
-  const dest = destinationPoint.value
-  if (!v || !dest || navArrived.value || v.state === 'arrived' || !v.here || v.headingDeg === null || v.headingLost) return null
-  return bearingDeg(v.here, dest) - v.headingDeg
-})
-/** 給 CSS rotate() 用，走最短方向，不會倒轉一整圈 */
-const destinationRotation = ref(0)
-watch(destinationDeg, (d) => {
-  if (d !== null) destinationRotation.value += shortestDelta(destinationRotation.value, d)
-})
 // 報讀只在「說法」變的時候更新，不跟著距離刷新
 const announce = computed(() => (phase.value === 'nav' && !trip.card.value ? hint.value.main : ''))
 
@@ -1274,11 +1249,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="nav-mid">
-        <div ref="navSlot" class="nav-slot">
-          <div v-if="phase === 'nav' && destinationDeg !== null" class="destination-orbit" :style="{ transform: `rotate(${destinationRotation}deg)` }" aria-hidden="true">
-            <span class="destination-dot" />
-          </div>
-        </div>
+        <div ref="navSlot" class="nav-slot" />
         <div v-if="!navArrived && !failed" class="eta">
           <template v-if="remainingM !== null">
             <p>{{ fill(S.remaining, { d: distanceWords(remainingM, lang) }) }}</p>
@@ -1369,9 +1340,10 @@ onBeforeUnmount(() => {
   --glass-edge: rgb(255 255 255 / 0.14);
   --glass-rim: rgb(255 255 255 / 0.3);
   --idle: #30383d;
-  --go: #008849;
+  /* 城市通 TPColors：primary600／primary700（白字對比 ≥ 3:1，primary500 太亮） */
+  --go: #468d9b;
   --warn: #74521b;
-  --arrived: #008849;
+  --arrived: #356c77;
   --ease-out: cubic-bezier(0.2, 0.9, 0.1, 1);
   /* 對象的字級倍率（長者 1.2、兒童 1.1） */
   --fs: 1;
@@ -1383,7 +1355,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   color: var(--ink);
   /* 單色背景：首頁深色；導航換成規格的狀態色 */
-  background-color: #10171a;
+  background-color: #112629; /* TPColors.primary900 */
   transition: background-color 0.6s ease;
   touch-action: manipulation;
   user-select: none;
@@ -1982,25 +1954,6 @@ onBeforeUnmount(() => {
   width: var(--hero, 240px);
   height: var(--hero, 240px);
 }
-.destination-orbit {
-  position: absolute;
-  /* 圓點軌道比箭頭方塊大一圈，跟箭頭尖端分開，不會看起來黏在箭頭上 */
-  inset: -22px;
-  pointer-events: none;
-  transition: transform 0.25s linear;
-}
-.destination-dot {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  width: 24px;
-  height: 24px;
-  border: 6px solid rgb(255 255 255 / 0.35);
-  border-radius: 50%;
-  background: #fff;
-  background-clip: padding-box;
-  transform: translate(-50%, -50%);
-}
 .foot {
   display: flex;
   justify-content: flex-end;
@@ -2014,8 +1967,7 @@ onBeforeUnmount(() => {
     transform 0.2s ease;
 }
 .eta {
-  /* 留出圓點軌道（方塊外 22px＋圓點半徑）的空間，目的地在背後時圓點不會壓到字 */
-  margin-top: 44px;
+  margin-top: 28px;
   text-align: center;
   font-size: calc(26px * var(--fs));
   font-weight: 400;
