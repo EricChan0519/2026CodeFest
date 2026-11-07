@@ -7,6 +7,8 @@
  * 文字是實驗用的中文；正式文案走 i18n（UI 負責）。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { arrivalFromStation, tripFromQuery } from '@/arrival/arrival'
 import type { LatLon } from '@/lib/contract'
 import { createAnnouncer } from '@/nav/announcer'
 import { easeRotation } from '@/nav/arrow'
@@ -165,8 +167,24 @@ function log(line: string) {
   cues.value = [`${new Date().toLocaleTimeString()} ${line}`, ...cues.value].slice(0, 12)
 }
 
+const router = useRouter()
+const currentRoute = useRoute()
+let arrivedHandled = false
+
+/**
+ * 到站：跳到 /arrived，由那個畫面念「到了。等 307 號，往板橋方向」（只念一次）。
+ * 語言與對象用 /lab/nav?lang=en&audience=elder 指定，沒給就是 zh-TW、visitor（正式流程由設定頁提供）。
+ * 網址只帶站名、路線名和方向，不帶座標和 UID。
+ */
+function goArrived() {
+  const { station, stationRoute } = DEFAULT_DESTINATION
+  if (!station || !stationRoute) return
+  const { lang, audience } = tripFromQuery(currentRoute.query)
+  void router.push(arrivalFromStation(station, stationRoute, lang, audience))
+}
+
 function speakOrBuzz(cue: Cue) {
-  log(`${cueText(cue)}${cue.haptic ? `  [震動 ${cue.haptic}]` : ''}`)
+  log(`${cueText(cue)}${cue.haptic ? `  [震動 ${cue.haptic}]` : ''}${cue.speak ? '' : '  [不出聲]'}`)
   // 實驗頁只用網頁能力；speak／haptic Handler 在步驟 6 與 APP 對接
   if (cue.haptic && 'vibrate' in navigator) {
     navigator.vibrate(cue.haptic === 'arrive' ? [200, 80, 200, 80, 400] : cue.haptic === 'turn' ? [150] : [100, 60, 100])
@@ -204,9 +222,14 @@ async function begin() {
   if (perm === 'denied') useManualHeading.value = true
 
   const m = machine
+  arrivedHandled = false
   m.subscribe((v) => {
     view.value = v
-    announcer.update(v).forEach(speakOrBuzz)
+    announcer.update(v).forEach(speakOrBuzz) // 抵達那句只震動，不出聲
+    if (v.state === 'arrived' && !arrivedHandled) {
+      arrivedHandled = true
+      goArrived()
+    }
   })
   m.onEffect((e) => {
     if (mode.value === 'route') {

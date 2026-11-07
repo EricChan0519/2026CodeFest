@@ -171,9 +171,12 @@ current += delta
 | 接近轉彎 | 前面路口向左轉 | `turn` |
 | 需要向後轉 | 請向後轉 | `warn` |
 | 走偏 | 走偏了，正在重新找路 | `warn` |
-| 抵達 | 到了，在這裡等 307 | `arrive` |
+| 抵達 | （導航不出聲；由 `/arrived` 畫面念「到了。等 307 號，往板橋方向」） | `arrive` |
 
 規則：
+
+- **抵達只震動、不出聲**：播報器的 `arrived` cue 是 `speak: false`。`/arrived` 畫面一打開就會念一次，導航再念會兩句疊在一起。
+- 導航要記住使用者選的那班車：`Destination` 帶站點 API 的 `station` 和使用者選的 `stationRoute`（`destinationFromStation()`）。到站時 `router.push(arrivalFromStation(station, stationRoute, lang, audience))`，網址只有站名、路線名、方向，不帶座標和 UID。
 
 - 句子來自語言檔，不用 LLM，也不用 Valhalla 的文字指令（它沒有 `zh-TW`）。
 - 重要提示用 `interrupt: true` 打斷目前的語音。

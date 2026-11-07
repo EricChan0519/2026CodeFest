@@ -76,13 +76,26 @@ describe('announcer', () => {
     expect(a.update(view({ direction: 'turn_around' }))).toEqual([])
   })
 
-  it('arrival is announced once with the arrive haptic', () => {
+  it('arrival is announced once with the arrive haptic, and stays silent (the /arrived screen speaks)', () => {
     const { a } = setup()
     a.update(view({}))
     const cues = a.update(view({ state: 'arrived' }))
     expect(cues).toHaveLength(1)
-    expect(cues[0]).toMatchObject({ key: 'arrived', haptic: 'arrive' })
+    expect(cues[0]).toMatchObject({ key: 'arrived', haptic: 'arrive', speak: false })
     expect(a.update(view({ state: 'arrived' }))).toEqual([])
+  })
+
+  it('every cue except arrival is spoken', () => {
+    const { a } = setup()
+    const all = [
+      ...a.update(view({})),
+      ...a.update(view({ nextTurn: { kind: 'left', distanceM: 25, index: 1 } })),
+      ...a.update(view({ direction: 'turn_around' })),
+      ...a.update(view({ state: 'rerouting' })),
+      ...a.update(view({ state: 'weak_signal' })),
+    ]
+    expect(all.length).toBeGreaterThanOrEqual(4)
+    expect(all.every((c) => c.speak)).toBe(true)
   })
 
   it('weak signal warns when entering', () => {

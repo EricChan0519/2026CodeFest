@@ -25,6 +25,11 @@ export interface Cue {
   haptic: HapticPattern | null
   /** 重要提示打斷目前的語音 */
   interrupt: boolean
+  /**
+   * 要不要出聲。false 時只做震動（haptic），不可念出來。
+   * 抵達是 false：到站畫面（/arrived）打開時會自己念「到了。等 307 號，往板橋方向」，這裡再念會兩句疊在一起。
+   */
+  speak: boolean
 }
 
 export interface Announcer {
@@ -60,24 +65,24 @@ export function createAnnouncer(opts: { cfg?: NavConfig; now?: () => number } = 
       }
       const enter = (s: NavState) => view.state === s && prevState !== s
 
-      // 抵達：一次就好，之後什麼都不再說
+      // 抵達：一次就好，之後什麼都不再說。只震動，不出聲（語音由 /arrived 畫面念，避免兩句疊在一起）
       if (view.state === 'arrived') {
-        if (enter('arrived')) push({ key: 'arrived', haptic: 'arrive', interrupt: true }, 'arrived')
+        if (enter('arrived')) push({ key: 'arrived', haptic: 'arrive', interrupt: true, speak: false }, 'arrived')
         prevState = view.state
         return out
       }
 
       if (view.state === 'navigating' && !started && view.hasPosition) {
         started = true
-        push({ key: 'start', haptic: null, interrupt: false }, 'start')
+        push({ key: 'start', haptic: null, interrupt: false, speak: true }, 'start')
       }
 
       if (enter('rerouting')) turnsDone.clear() // 新路線的轉彎 index 會重編
       if (enter('rerouting') || (enter('back_to_route') && prevState !== 'rerouting')) {
-        push({ key: 'off_route', haptic: 'warn', interrupt: true }, 'off_route')
+        push({ key: 'off_route', haptic: 'warn', interrupt: true, speak: true }, 'off_route')
       }
       if (enter('weak_signal')) {
-        push({ key: 'weak_signal', haptic: 'warn', interrupt: false }, 'weak_signal')
+        push({ key: 'weak_signal', haptic: 'warn', interrupt: false, speak: true }, 'weak_signal')
       }
 
       if (view.state === 'navigating') {
@@ -85,11 +90,11 @@ export function createAnnouncer(opts: { cfg?: NavConfig; now?: () => number } = 
         const t = view.nextTurn
         if (t && t.kind !== 'arrive' && t.distanceM <= cfg.announceBeforeTurnM && !turnsDone.has(t.index)) {
           turnsDone.add(t.index)
-          push({ key: 'turn_ahead', turn: t.kind, haptic: 'turn', interrupt: true }, `turn_ahead:${t.index}`)
+          push({ key: 'turn_ahead', turn: t.kind, haptic: 'turn', interrupt: true, speak: true }, `turn_ahead:${t.index}`)
         }
         // 需要向後轉（剛變成向後轉時提示，不要每次更新都說）
         if (view.direction === 'turn_around' && prevDirection !== 'turn_around') {
-          push({ key: 'turn_around', haptic: 'warn', interrupt: true }, 'turn_around')
+          push({ key: 'turn_around', haptic: 'warn', interrupt: true, speak: true }, 'turn_around')
         }
       }
 
