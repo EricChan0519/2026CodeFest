@@ -14,7 +14,7 @@ import { NAV_CONFIG } from '@/nav/config'
 import type { Cue } from '@/nav/announcer'
 import { createNavMachine } from '@/nav/machine'
 import type { NavMachine, NavState, NavView } from '@/nav/machine'
-import { DEFAULT_DESTINATION, nearestPoint } from '@/nav/destination'
+import { DEFAULT_DESTINATION, createDestinationLock } from '@/nav/destination'
 import { ORIGIN_TAIPEI, twoLegRoute } from '@/nav/synth'
 import { fetchWalkRoute } from '@/lib/walkRoute'
 import type { WalkRoute } from '@/lib/walkRoute'
@@ -63,6 +63,8 @@ let tickTimer: number | null = null
 let manual: ManualGpsSource | null = null
 let recorder: TraceRecorder | null = null
 let courseFrom: LatLon | null = null
+/** 目的地站位一趟只選一次，重算不可以換到對面站牌 */
+const destLock = createDestinationLock(DEFAULT_DESTINATION)
 const wake = new WakeLockHolder()
 const announcer = createAnnouncer()
 
@@ -192,6 +194,7 @@ async function begin() {
   routeError.value = ''
 
   destinationPoint.value = null
+  destLock.reset()
   gpsCourse.value = null
   courseFrom = null
   manual = null
@@ -292,7 +295,7 @@ async function begin() {
 
 /** 向 Valhalla 要從目前位置到目的地站牌的步行路線（避開階梯、小巷）；重新規劃也走這裡 */
 async function fetchRealRoute(m: NavMachine, from: LatLon, candidate: string | null) {
-  const to = nearestPoint(DEFAULT_DESTINATION, from)
+  const to = destLock.pick(from)
   destinationPoint.value = to
   if (candidate !== null && rerouteFails.value) {
     // 模擬重算失敗：不給新路線，箭頭指最近的路線點

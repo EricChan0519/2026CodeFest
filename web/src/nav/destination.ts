@@ -26,3 +26,32 @@ export const DEFAULT_DESTINATION: Destination = {
 export function nearestPoint(d: Destination, from: LatLon): LatLon {
   return d.points.reduce((best, p) => (distanceM(from, p) < distanceM(from, best) ? p : best))
 }
+
+export interface DestinationLock {
+  /** 第一次呼叫時選最近的站位並鎖定；之後（含重新規劃）一律回傳同一個 */
+  pick(from: LatLon): LatLon
+  /** 已鎖定的站位，還沒選時為 null */
+  readonly point: LatLon | null
+  /** 開始新的一趟時呼叫 */
+  reset(): void
+}
+
+/**
+ * 目的地一趟只選一次。重算時若用「目前位置」重新選最近站位，
+ * 走到馬路另一側就會跳到對面站牌，新路線要人過馬路，箭頭會往旁邊指（2026-11-07 實測）。
+ */
+export function createDestinationLock(d: Destination): DestinationLock {
+  let locked: LatLon | null = null
+  return {
+    pick(from) {
+      locked ??= nearestPoint(d, from)
+      return locked
+    },
+    get point() {
+      return locked
+    },
+    reset() {
+      locked = null
+    },
+  }
+}
