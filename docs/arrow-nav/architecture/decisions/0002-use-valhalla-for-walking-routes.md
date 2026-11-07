@@ -1,6 +1,6 @@
 # 0002. 用 Valhalla 算步行路線，OSRM 備案
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-07
 - Deciders: 隊長、Claude
 - Tags: routing

@@ -5,7 +5,7 @@
 | ADR | 決策 | 狀態 |
 |---|---|---|
 | [0001](0001-keep-the-app-thin.md) | App 保持很薄，功能放網頁 | accepted |
-| [0002](0002-use-valhalla-for-walking-routes.md) | 用 Valhalla 算步行路線，OSRM 備案 | proposed（等 V3） |
+| [0002](0002-use-valhalla-for-walking-routes.md) | 用 Valhalla 算步行路線，OSRM 備案 | accepted（V3 通過） |
 | [0003](0003-use-web-sensors-first.md) | 感測先用網頁能力，備案是 Flutter 跨平台 Handler | accepted（V1、V2 決定是否啟用備案） |
 | [0004](0004-serve-open-data-from-snapshots.md) | 開放資料用快照提供 | accepted |
 | [0005](0005-keep-location-out-of-urls-and-logs.md) | 位置不進網址和 log | accepted |
