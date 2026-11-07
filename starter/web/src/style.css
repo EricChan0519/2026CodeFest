@@ -1,0 +1,345 @@
+@import "tailwindcss";
+
+/* ── Design tokens：簡約、中性、單一主色 ─────────────────────────── */
+:root {
+  --fs: 1;               /* 字級倍率：長者 = 2 */
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --text: #0f172a;
+  --text-2: #334155;
+  --text-3: #475569;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --accent: #3e7c8a;       /* 藍綠；白字對比 4.7:1 */
+  --accent-hover: #336773;
+  --accent-weak: #ecf4f6;
+  --accent-line: #b8d4da;
+  --success: #15803d;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --shadow: 0 1px 2px rgb(15 23 42 / .05), 0 1px 3px rgb(15 23 42 / .06);
+  --gutter: 20px;
+
+  font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #app { height: 100%; margin: 0; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .4; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.icon { flex: none; display: block; }
+
+/* ── 外框 ──────────────────────────────────────────────────────── */
+.app {
+  height: 100dvh; max-width: 520px; margin: 0 auto; overflow: hidden;
+  background: var(--surface); border-inline: 1px solid var(--border);
+}
+.shell { height: 100%; display: flex; flex-direction: column; }
+
+.topbar {
+  flex: none; height: 64px; padding: 0 12px 0 var(--gutter);
+  display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid var(--border); background: var(--surface);
+}
+.topbar:has(.back) { padding-left: 8px; }
+.brand-mark {
+  display: grid; place-items: center; width: 34px; height: 34px;
+  border-radius: 8px; background: var(--accent); color: #fff;
+}
+.brand-name { font-size: calc(20px * var(--fs)); font-weight: 600; letter-spacing: .01em; }
+.icon-button {
+  display: grid; place-items: center; width: 48px; height: 48px; flex: none;
+  border: 0; border-radius: 10px; background: transparent; color: var(--text-2);
+}
+.icon-button:hover { background: var(--surface-2); color: var(--text); }
+.settings-icon { margin-left: auto; }
+
+.content {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column;
+  padding: 28px var(--gutter) max(20px, env(safe-area-inset-bottom));
+}
+.content > * { flex-shrink: 0; }
+.actions { margin-top: auto; padding-top: 24px; display: flex; flex-direction: column; gap: 10px; }
+
+/* ── 文字層級 ─────────────────────────────────────────────────── */
+.eyebrow {
+  font-size: calc(13px * var(--fs)); font-weight: 600; color: var(--accent);
+  letter-spacing: .02em; margin-bottom: 8px;
+}
+.step-count { font-size: calc(13px * var(--fs)); font-weight: 500; color: var(--text-3); margin-bottom: 8px; }
+h1 { font-size: calc(40px * var(--fs)); line-height: 1.3; font-weight: 700; letter-spacing: -.01em; margin: 0 0 8px; }
+h2 { font-size: calc(18px * var(--fs)); font-weight: 600; margin: 0; }
+.lead { font-size: calc(22px * var(--fs)); font-weight: 700; line-height: 1.6; color: var(--text-2); margin: 0; }
+.muted { font-size: calc(19px * var(--fs)); font-weight: 700; color: var(--text-3); }
+.footnote {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  font-size: calc(19px * var(--fs)); font-weight: 700; color: var(--text-3); margin: 0; text-align: center;
+}
+
+.section-row {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 32px 0 8px;
+}
+.section-row h2 { font-size: calc(24px * var(--fs)); font-weight: 700; }
+
+/* ── 按鈕 ─────────────────────────────────────────────────────── */
+.primary, .secondary {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; min-height: 68px; padding: 0 20px;
+  border-radius: var(--radius); font-size: calc(22px * var(--fs)); font-weight: 600;
+  transition: background-color .15s;
+}
+.primary { border: 0; background: var(--accent); color: #fff; }
+.primary:hover { background: var(--accent-hover); }
+.secondary { border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); }
+.secondary:hover { background: var(--surface-2); }
+.text-button {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 48px; padding: 0 4px;
+  border: 0; background: none; color: var(--accent); font-size: calc(19px * var(--fs)); font-weight: 600; white-space: nowrap;
+}
+
+/* ── 表單 ─────────────────────────────────────────────────────── */
+.field-label { display: block; font-size: calc(20px * var(--fs)); font-weight: 600; margin: 24px 0 8px; }
+select {
+  width: 100%; height: auto; min-height: 68px; padding: 8px 44px 8px 16px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface);
+  appearance: none; font-size: calc(22px * var(--fs));
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 14px center;
+}
+select:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-weak); }
+
+/* 使用對象：選項列表 */
+.option-list { display: flex; flex-direction: column; gap: 8px; margin-top: 24px; }
+.option {
+  display: flex; align-items: center; gap: 14px; width: 100%; min-height: 72px; padding: 0 16px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  text-align: left; font-size: calc(22px * var(--fs)); font-weight: 600;
+}
+.option .option-icon { color: var(--text-3); }
+.option .radio {
+  margin-left: auto; width: 24px; height: 24px; border-radius: 50%;
+  border: 1.5px solid var(--border-strong); display: grid; place-items: center; color: #fff;
+}
+.option.active { border-color: var(--accent); background: var(--accent-weak); }
+.option.active .option-icon { color: var(--accent); }
+.option.active .radio { border-color: var(--accent); background: var(--accent); }
+
+/* 搜尋 */
+.search-entry, .search-field {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 68px; padding: 8px 16px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface);
+  color: var(--text-3); font-size: calc(21px * var(--fs)); font-weight: 700; text-align: left;
+}
+.search-entry { margin-top: 24px; box-shadow: var(--shadow); }
+.search-entry:hover { border-color: var(--accent); }
+.search-field { margin: 24px 0 0; color: var(--text-3); }
+.search-field:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-weak); }
+.search-field input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: calc(20px * var(--fs)); }
+.search-field input::placeholder { color: var(--text-3); font-weight: 700; }
+.search-field .clear { display: grid; place-items: center; width: 40px; height: 32px; margin-right: -8px; border: 0; border-radius: 8px; background: none; color: var(--text-3); }
+
+/* ── 地點列表 ─────────────────────────────────────────────────── */
+.place-list { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.place {
+  display: flex; align-items: center; gap: 14px; width: 100%; min-height: 84px; padding: 12px 16px;
+  border: 0; background: var(--surface); text-align: left;
+}
+.place + .place { border-top: 1px solid var(--border); }
+.place:hover { background: var(--surface-2); }
+.place-icon {
+  display: grid; place-items: center; width: 52px; height: 46px; flex: none;
+  border-radius: 12px; background: var(--accent-weak); color: var(--accent);
+}
+.place-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.place-info strong { font-size: calc(21px * var(--fs)); font-weight: 600; }
+.place-info small { font-size: calc(19px * var(--fs)); font-weight: 700; color: var(--text-3); line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.place-arrow { color: var(--text-3); }
+
+.pager { display: flex; align-items: center; gap: 4px; }
+.pager .icon-button { width: 44px; height: 36px; color: var(--text-2); border: 1px solid var(--border); }
+.pagination { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; font-size: calc(20px * var(--fs)); font-weight: 700; color: var(--text-3); }
+
+.about-link {
+  display: inline-flex; align-items: center; gap: 6px; align-self: flex-start;
+  margin-top: 20px; padding: 8px 0; border: 0; background: none; color: var(--text-3); font-size: calc(20px * var(--fs)); font-weight: 700;
+}
+
+.empty { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 48px 16px; color: var(--text-3); }
+.empty .empty-icon { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; background: var(--surface-2); margin-bottom: 16px; }
+.empty h2 { font-size: calc(24px * var(--fs)); color: var(--text); }
+.empty p { font-size: calc(16px * var(--fs)); margin: 6px 0 20px; }
+.empty .secondary { width: auto; min-height: 56px; }
+
+/* ── 路線確認 ─────────────────────────────────────────────────── */
+.route-card { margin-top: 24px; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.route-point.dest { background: var(--accent-weak); }
+.route-point.dest .end-point { box-shadow: 0 0 0 3px #fff; }
+.route-point { display: flex; align-items: flex-start; gap: 14px; padding: 16px; }
+.route-point + .route-point { border-top: 1px solid var(--border); }
+.route-point > div { flex: 1; min-width: 0; }
+.route-point small { display: block; font-size: calc(19px * var(--fs)); font-weight: 700; color: var(--text-3); margin-bottom: 2px; }
+.route-point strong { display: block; font-size: calc(22px * var(--fs)); font-weight: 600; }
+.route-point p { font-size: calc(19px * var(--fs)); font-weight: 700; color: var(--text-3); margin: 2px 0 0; }
+.point { width: 12px; height: 12px; margin-top: 22px; border-radius: 50%; flex: none; }
+.start-point { border: 2px solid var(--text-3); }
+.end-point { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-weak); }
+.route-point .text-button { margin-top: 14px; }
+
+.stats { margin-top: 12px; }
+.stat-sep { margin: 0 8px; color: var(--text-3); font-weight: 400; }
+.stat { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: var(--radius); background: var(--surface-2); border: 1px solid var(--border); }
+.stat .icon { color: var(--text-3); }
+.stat small { display: block; font-size: calc(19px * var(--fs)); font-weight: 700; color: var(--text-3); }
+.stat strong { display: block; font-size: calc(22px * var(--fs)); font-weight: 600; }
+
+/* ── 設定 ─────────────────────────────────────────────────────── */
+.settings-group { margin-top: 24px; border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.toggle-row { display: flex; align-items: center; gap: 16px; padding: 16px; cursor: pointer; }
+.toggle-row + .toggle-row { border-top: 1px solid var(--border); }
+.toggle-row > span { flex: 1; }
+.toggle-row strong { display: block; font-size: calc(21px * var(--fs)); font-weight: 600; }
+.toggle-row small { display: block; font-size: calc(16px * var(--fs)); font-weight: 700; color: var(--text-3); margin-top: 2px; }
+.switch {
+  appearance: none; flex: none; position: relative; width: 52px; height: 30px; margin: 0;
+  border-radius: 999px; background: var(--border-strong); transition: background-color .15s; cursor: pointer;
+}
+.switch::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px;
+  border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / .2); transition: transform .15s;
+}
+.switch:checked { background: var(--accent); }
+.switch:checked::after { transform: translateX(22px); }
+
+/* ── 導航中 ───────────────────────────────────────────────────── */
+.nav-screen {
+  height: 100%; display: flex; flex-direction: column;
+  padding: 16px var(--gutter) max(20px, env(safe-area-inset-bottom));
+  background: var(--surface);
+}
+/* 目的地整格置中、往下移；按鈕收在右上角 */
+.nav-top { position: relative; padding-top: 76px; text-align: center; }
+.nav-tools { position: absolute; top: 0; right: 0; display: flex; gap: 8px; }
+.nav-destination { min-width: 0; }
+.nav-destination small { display: block; font-size: calc(19px * var(--fs)); font-weight: 700; color: var(--text-3); }
+.nav-destination strong { display: block; font-size: calc(26px * var(--fs)); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-round { width: 60px; height: 60px; border-radius: 14px; border: 1px solid var(--border); }
+.nav-round .icon { width: 30px; height: 30px; }
+.nav-round.on { color: var(--accent); background: var(--accent-weak); border-color: var(--accent-line); }
+/* 進度條：一整條，寬度 = 已走時間 ÷ 預估總時間 */
+.progress { height: 8px; margin-top: 16px; border-radius: 4px; background: var(--border); overflow: hidden; }
+.progress span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .25s linear; }
+@media (prefers-reduced-motion: reduce) { .progress span { transition: none; } }
+.big-arrow { flex: 1; min-height: 0; display: grid; place-items: center; color: var(--accent); }
+.nav-instruction { text-align: center; padding-bottom: 24px; }
+.nav-instruction strong { display: block; font-size: calc(60px * var(--fs)); font-weight: 700; letter-spacing: -.02em; line-height: 1.1; }
+.nav-instruction p { font-size: calc(30px * var(--fs)); font-weight: 700; color: var(--text-2); margin: 8px 0 0; }
+
+/* ── 抵達：亮青藍 #6EC5D1 ──────────── */
+/* 地圖大頭針從上方落下，插在地上的圓圈：就是這裡 */
+.nav-screen.arrived {
+  --arrive: #6ec5d1; --arrive-hover: #57b3c0;
+  padding: 0; background: var(--arrive); color: #fff;
+}
+.arrival-title {
+  flex: none; margin: 0; padding: max(9dvh, env(safe-area-inset-top)) var(--gutter) 0;
+  font-size: min(calc(60px * var(--fs)), 26vw); line-height: 1.1; overflow-wrap: anywhere; color: #fff; text-align: center;
+}
+.arrival-mark { flex: 1 1 0; min-height: 110px; display: flex; justify-content: center; padding: 12px 0 16px; }
+.large-type .arrival-mark { min-height: 26dvh; }
+.arrival-mark svg { height: 100%; width: auto; max-width: 70vw; overflow: visible; }
+.arrival-pin path { fill: #fff; stroke: #fff; stroke-width: 8; stroke-linejoin: round; }
+.arrival-pin { transform-box: fill-box; transform-origin: 50% 100%; }
+.arrival-ring { fill: rgb(255 255 255 / .14); stroke: #fff; stroke-width: 5; transform-box: fill-box; transform-origin: 50% 50%; }
+/* 地名：白色牌子從底部撐滿 */
+.arrival-sheet {
+  flex: none; display: flex; flex-direction: column;
+  padding: 26px var(--gutter) max(20px, env(safe-area-inset-bottom));
+  border-radius: 28px 28px 0 0; background: #fff; color: var(--text);
+}
+.arrival-sheet strong { font-size: calc(30px * var(--fs)); font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
+.arrival-sheet p { font-size: calc(21px * var(--fs)); font-weight: 700; line-height: 1.4; color: var(--text-2); margin: 6px 0 0; }
+.arrival-sheet .arrival-done { margin-top: 22px; background: var(--arrive); font-weight: 700; }
+.arrival-sheet .arrival-done:hover { background: var(--arrive-hover); }
+.arrived :focus-visible { outline: 3px solid var(--arrive); outline-offset: 3px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .arrival-pin { animation: arrive-drop .9s cubic-bezier(.3, .7, .3, 1) both; }
+  .arrival-ring { animation: arrive-ring .5s .5s cubic-bezier(.2, .9, .3, 1.3) both; }
+}
+/* 從上方落下，著地時壓扁一下再彈回 */
+@keyframes arrive-drop {
+  0%   { transform: translateY(-60%); opacity: 0; animation-timing-function: cubic-bezier(.5, 0, 1, .6); }
+  15%  { opacity: 1; }
+  50%  { transform: translateY(0) scale(1.12, .86); animation-timing-function: ease-out; }
+  70%  { transform: translateY(-8%) scale(.96, 1.05); animation-timing-function: ease-in; }
+  85%  { transform: translateY(0) scale(1.03, .97); }
+  100% { transform: translateY(0) scale(1); }
+}
+@keyframes arrive-ring { from { transform: scale(.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+/* ── 對話框 ───────────────────────────────────────────────────── */
+.overlay { position: fixed; inset: 0; z-index: 10; display: grid; place-items: end center; background: rgb(15 23 42 / .45); }
+.dialog {
+  width: min(100%, 520px); padding: 24px var(--gutter) max(20px, env(safe-area-inset-bottom));
+  border-radius: 20px 20px 0 0; background: var(--surface);
+}
+.dialog h2 { font-size: calc(28px * var(--fs)); font-weight: 700; }
+.dialog p { font-size: calc(19px * var(--fs)); font-weight: 700; color: var(--text-2); margin: 6px 0 24px; }
+.dialog .secondary { margin-top: 10px; }
+
+/* ── 長者：所有字級 ×2（--fs 由 .large-type 設定）──────────────── */
+.large-type { --fs: 2; }
+.large-type h1, .large-type h2, .large-type strong, .large-type .lead, .large-type .option { overflow-wrap: anywhere; }
+.large-type .place-info small { white-space: normal; }
+/* 導航中：讓指南針、距離、指示一次都看得到 → 結束鈕移到上方、目的地只留一行 */
+.nav-end { display: none; }
+.large-type .nav-end { display: grid; }
+.large-type .nav-screen > .secondary, .large-type .nav-destination small { display: none; }
+.large-type .nav-top { padding-top: 68px; }
+.large-type .nav-instruction { padding-bottom: 0; }
+.large-type .nav-screen, .large-type .dialog { overflow-y: auto; }
+.large-type .dialog { max-height: 90dvh; }
+/* 指南針吃掉文字之外剩下的高度：螢幕矮時自動縮小，不把距離／指示擠出畫面 */
+.large-type .big-arrow { flex: 1 1 0; min-height: 120px; display: flex; justify-content: center; padding: 8px 0; }
+.large-type .big-arrow .compass { height: 100%; width: auto; max-width: min(70vw, 300px); }
+.large-type .topbar { height: auto; min-height: 64px; }
+.large-type .section-row { flex-wrap: wrap; gap: 8px; }
+.large-type h1 { line-height: 1.15; }
+.large-type .place-icon, .large-type .place-arrow { display: none; }
+
+@media (max-height: 680px) {
+  .content { padding-top: 20px; }
+  h1 { font-size: calc(36px * var(--fs)); line-height: 1.2; }
+  .section-row { margin-top: 20px; }
+  .place { min-height: 72px; padding: 8px 16px; }
+  .nav-instruction strong { font-size: calc(52px * var(--fs)); }
+}
+
+/* 歡迎頁：維持原本的大字體 */
+.welcome h1 { font-size: calc(48px * var(--fs)); }
+.welcome select { min-height: 74px; font-size: calc(24px * var(--fs)); }
+.welcome .primary { min-height: 74px; font-size: calc(24px * var(--fs)); }
+/* 語言選擇：標題與選單在按鈕上方的空間中垂直置中，避免上重下輕 */
+.welcome-center { margin-top: 9vh; }
+
+/* 移除說明文字後的間距補正 */
+h1 + .option-list, h1 + .search-entry, h1 + .search-field, h1 + .route-card, h1 + .field-label { margin-top: 20px; }
+.empty h2 { margin-bottom: 20px; }
+.dialog h2 { margin-bottom: 24px; }
+
+/* 步行路線：藍色粗邊框 */
+.stat { border: 2px solid var(--accent); background: var(--surface); }
+.stat .icon { color: var(--accent); }
+
+/* 開始帶路：按鈕上移到畫面中段、字加大 */
+.route-actions { margin-top: 0; padding-top: 32px; }
+.start-guide { min-height: 76px; font-size: calc(26px * var(--fs)); font-weight: 700; letter-spacing: .04em; }
