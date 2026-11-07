@@ -1,39 +1,172 @@
 <script setup lang="ts">
 /**
  * 導航實驗頁（N6 雛形）：把 nav/ 引擎接到畫面上，手機上可以直接測。
- * - 導到站牌（預設）：用真實定位，向 Valhalla 要「避開階梯、小巷」的步行路線，導到市立臺北特教學校站
- * - 模擬：位置沿合成路線前進，朝向是真實羅盤（室內可跑）
- * - 合成真實：用真實定位，路線以「你面向的方向」合成，走出去就能測箭頭、走偏、抵達
+ * 用真實定位，向 Valhalla 要「避開階梯、小巷」的步行路線，導到使用者自己輸入的目的地：
+ * 輸入站名、地址、路名、地標（或「緯度, 經度」）→ 搜尋 → 選一個結果 → 開始走。
+ * - 公車站牌：查 TDX 站位快照（有現行站名和每個站位的路線、方向），選一班車；走到會跳到 /arrived。
+ * - 連鎖店：便利商店、速食、連鎖餐廳（Overture Maps 快照，離線比對、依距離排序）；到了只在這個畫面顯示「到了」。
+ * - 地點與地址：查 OpenStreetMap（Nominatim）；到了只在這個畫面顯示「到了」。
  * 文字是實驗用的中文；正式文案走 i18n（UI 負責）。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { arrivalFromStation, tripFromQuery } from '@/arrival/arrival'
-import type { LatLon } from '@/lib/contract'
+import type { LatLon, Station, StationRoute } from '@/lib/contract'
 import { createAnnouncer } from '@/nav/announcer'
 import { easeRotation } from '@/nav/arrow'
 import { NAV_CONFIG } from '@/nav/config'
 import type { Cue } from '@/nav/announcer'
 import { createNavMachine } from '@/nav/machine'
 import type { NavMachine, NavState, NavView, ResyncReason } from '@/nav/machine'
-import { DEFAULT_DESTINATION, nearestPoint } from '@/nav/destination'
-import { ORIGIN_TAIPEI, straightRoute, twoLegRoute } from '@/nav/synth'
+import {
+  DEFAULT_DESTINATION,
+  destinationFromPlace,
+  destinationFromStation,
+  nearestPoint,
+} from '@/nav/destination'
+import type { Destination } from '@/nav/destination'
+import { searchPlaces } from '@/lib/geocode'
+import type { Place } from '@/lib/geocode'
+import { formatDistance, loadPoiIndex, searchPois } from '@/lib/poiSearch'
+import type { PoiHit } from '@/lib/poiSearch'
+import { loadStopIndex, searchStops } from '@/lib/stopSearch'
 import { fetchWalkRoute } from '@/lib/walkRoute'
 import type { WalkRoute } from '@/lib/walkRoute'
-import { ReplaySensorSource } from '@/sensors/replay'
 import type { SensorSource } from '@/sensors/source'
 import { WakeLockHolder } from '@/sensors/wakelock'
 import { WebSensorSource } from '@/sensors/web'
 
-type Mode = 'route' | 'replay' | 'real'
-const mode = ref<Mode>('route')
+// 目的地：預設是示範站牌；搜尋後選一個結果就換成那個地點
+const destination = shallowRef<Destination>(DEFAULT_DESTINATION)
+const addressInput = ref('')
+const searching = ref(false)
+const searchError = ref('')
+const stopResults = ref<Station[] | null>(null)
+const placeResults = ref<Place[] | null>(null)
+const poiResults = ref<PoiHit[] | null>(null)
+const stopsUpdatedAt = ref('')
+const poiRelease = ref('')
+/** 連鎖店依距離排序用的參考點：使用者位置；拿不到就用臺北車站 */
+const poiNearUser = ref(false)
+const TAIPEI_STATION: LatLon = [25.0478, 121.517]
+
+/**
+ * 取一次目前位置（可用 1 分鐘內的快取）；拒絕或逾時回傳 null。
+ * 不擋搜尋：搜尋先用臺北車站排序、立刻顯示，位置回來後再重新排序。
+ */
+let userPoint: LatLon | null = null
+let userPointAsked: Promise<LatLon | null> | null = null
+function askUserPoint(): Promise<LatLon | null> {
+  userPointAsked ??= new Promise((resolve) => {
+    if (!('geolocation' in navigator)) return resolve(null)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve((userPoint = [pos.coords.latitude, pos.coords.longitude])),
+      () => resolve(null),
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 },
+    )
+  })
+  return userPointAsked
+}
+let searchSeq = 0
+
+const BEARING_TEXT: Record<string, string> = {
+  N: '北', NE: '東北', E: '東', SE: '東南', S: '南', SW: '西南', W: '西', NW: '西北',
+}
+
+/** 同時查站牌（TDX 快照）、連鎖店（Overture 快照）和地點（OSM）；任何一邊失敗不影響其他 */
+async function search() {
+  const q = addressInput.value.trim()
+  if (!q || searching.value) return
+  searching.value = true
+  const seq = ++searchSeq
+  searchError.value = ''
+  stopResults.value = null
+  placeResults.value = null
+  poiResults.value = null
+  const [stops, pois, places] = await Promise.allSettled([
+    loadStopIndex().then((idx) => {
+      stopsUpdatedAt.value = idx.updatedAt
+      return searchStops(idx, q, 20)
+    }),
+    loadPoiIndex().then((idx) => {
+      poiRelease.value = idx.release
+      poiNearUser.value = !!userPoint
+      return searchPois(idx, q, { near: userPoint ?? TAIPEI_STATION, limit: POI_LIMIT })
+    }),
+    searchPlaces(q),
+  ])
+  stopResults.value = stops.status === 'fulfilled' ? stops.value : []
+  poiResults.value = pois.status === 'fulfilled' ? pois.value : []
+  placeResults.value = places.status === 'fulfilled' ? places.value : []
+  poiShown.value = POI_PAGE
+  const errors: string[] = []
+  if (stops.status === 'rejected') errors.push(`站牌資料載入失敗（${(stops.reason as Error).message}）`)
+  if (pois.status === 'rejected') errors.push(`連鎖店資料載入失敗（${(pois.reason as Error).message}）`)
+  if (places.status === 'rejected') errors.push(`地點搜尋失敗（${(places.reason as Error).message}）`)
+  if (errors.length) searchError.value = errors.join('；')
+  else if (stopResults.value.length === 0 && poiResults.value.length === 0 && placeResults.value.length === 0) {
+    searchError.value = '找不到這個地點，試試站名、路名、地標、連鎖店名（例如「全家」「麥當勞」），或「緯度, 經度」'
+  }
+  searching.value = false
+
+  // 連鎖店有結果、但還不知道你在哪：現在才問位置，拿到再依距離重排（期間使用者可以先看結果）
+  if (!userPoint && (poiResults.value?.length ?? 0) > 0) {
+    const user = await askUserPoint()
+    if (user && seq === searchSeq && pois.status === 'fulfilled') {
+      const idx = await loadPoiIndex()
+      poiResults.value = searchPois(idx, q, { near: user, limit: POI_LIMIT })
+      poiNearUser.value = true
+      poiShown.value = POI_PAGE
+    }
+  }
+}
+
+/** 連鎖店：一次顯示 10 家，按「再多看一些」展開；最多留 100 家 */
+const POI_PAGE = 10
+const POI_LIMIT = 100
+const poiShown = ref(POI_PAGE)
+const poiVisible = computed(() => (poiResults.value ?? []).slice(0, poiShown.value))
+
+function pickPoi(p: PoiHit) {
+  destination.value = destinationFromPlace({ name: p.name, point: p.point })
+}
+
+function isPoiPicked(p: PoiHit): boolean {
+  const pt = destination.value.points[0]
+  return !destination.value.station && !!pt && pt[0] === p.point[0] && pt[1] === p.point[1]
+}
+
+function pickPlace(p: Place) {
+  destination.value = destinationFromPlace(p)
+}
+
+/** 選站牌時一定要同時選一班車，到站才知道要念哪一線 */
+function pickStopRoute(station: Station, route: StationRoute) {
+  destination.value = destinationFromStation(station, route)
+}
+
+function isPlacePicked(p: Place): boolean {
+  const pt = destination.value.points[0]
+  return !destination.value.station && !!pt && pt[0] === p.point[0] && pt[1] === p.point[1]
+}
+
+function isRoutePicked(station: Station, route: StationRoute): boolean {
+  return destination.value.station?.stationUid === station.stationUid && destination.value.stationRoute?.stopUid === route.stopUid
+}
+
+function routeLabel(r: StationRoute): string {
+  return `${r.routeName.zh}${r.headsign.zh ? ` ${r.headsign.zh}` : ''}`
+}
+
+function useDemoStation() {
+  destination.value = DEFAULT_DESTINATION
+}
+
 const routeInfo = ref<WalkRoute | null>(null)
 const routeError = ref('')
 const running = ref(false)
 const view = ref<NavView | null>(null)
 const cues = ref<string[]>([])
-const rerouteFails = ref(false)
-const speedX = ref(1)
 const manualHeading = ref(0)
 const useManualHeading = ref(false)
 const permissionNote = ref('')
@@ -42,9 +175,13 @@ const showDebug = ref(false)
 
 let machine: NavMachine | null = null
 let source: SensorSource | null = null
-let replay: ReplaySensorSource | null = null
 let tickTimer: number | null = null
-let destination: LatLon | null = null
+/** 這一趟實際導航的目的地（開始走時固定下來，之後改搜尋結果不影響） */
+let active: Destination = DEFAULT_DESTINATION
+/** 給畫面用的：這一趟的目的地名稱、是不是站牌（站牌才會說「在這裡等公車」） */
+const activeName = ref('')
+const activeIsStation = ref(false)
+const activeRoute = ref('')
 let lastTickAt = 0
 /** 每秒的計時器隔超過這麼久才回來，代表頁面被凍結過 */
 const RESUME_GAP_MS = 3000
@@ -138,7 +275,7 @@ const sentence = computed(() => {
     case 'back_to_route':
       return '請回到剛才的路'
     case 'arrived':
-      return '在這裡等公車'
+      return activeIsStation.value ? '在這裡等公車' : '到達目的地了'
     case 'failed':
       return '請回上一頁再試一次'
     case 'navigating': {
@@ -172,12 +309,13 @@ const currentRoute = useRoute()
 let arrivedHandled = false
 
 /**
- * 到站：跳到 /arrived，由那個畫面念「到了。等 307 號，往板橋方向」（只念一次）。
+ * 到站：跳到 /arrived，由那個畫面念「到了。等 203 號，往天母方向」（只念一次）。
+ * 只有站牌目的地（帶 station 和 stationRoute）才會跳；使用者自己輸入的地址只在這個畫面顯示「到了」。
  * 語言與對象用 /lab/nav?lang=en&audience=elder 指定，沒給就是 zh-TW、visitor（正式流程由設定頁提供）。
  * 網址只帶站名、路線名和方向，不帶座標和 UID。
  */
 function goArrived() {
-  const { station, stationRoute } = DEFAULT_DESTINATION
+  const { station, stationRoute } = active
   if (!station || !stationRoute) return
   const { lang, audience } = tripFromQuery(currentRoute.query)
   void router.push(arrivalFromStation(station, stationRoute, lang, audience))
@@ -199,22 +337,12 @@ async function begin() {
   routeInfo.value = null
   routeError.value = ''
 
-  const heading = new WebSensorSource({ position: false })
-  if (mode.value === 'route') {
-    replay = null
-    source = new WebSensorSource()
-    machine = createNavMachine({ route: null })
-  } else if (mode.value === 'replay') {
-    const route = twoLegRoute(ORIGIN_TAIPEI, 0, { leg1M: 80, leg2M: 60, turn: 'right' })
-    destination = route.geometry.at(-1)!
-    replay = new ReplaySensorSource({ geometry: route.geometry, speedMps: 1.4, headingSource: heading })
-    source = replay
-    machine = createNavMachine({ route, courseCheck: false }) // 位置是模擬的，不能拿來驗證羅盤
-  } else {
-    replay = null
-    source = new WebSensorSource()
-    machine = createNavMachine({ route: null })
-  }
+  active = destination.value
+  activeName.value = active.name
+  activeIsStation.value = !!active.station
+  activeRoute.value = active.stationRoute ? `搭 ${routeLabel(active.stationRoute)}` : ''
+  source = new WebSensorSource()
+  machine = createNavMachine({ route: null })
 
   // 「開始走」的點擊事件內要求權限（iOS 羅盤）
   const perm = await source.requestPermission()
@@ -231,23 +359,7 @@ async function begin() {
       goArrived()
     }
   })
-  m.onEffect((e) => {
-    if (mode.value === 'route') {
-      void fetchRealRoute(m, e.from, e.candidate)
-      return
-    }
-    // 模擬「API 回覆」：真實模式第一次是合成路線，重新規劃是直線回到終點
-    window.setTimeout(() => {
-      if (e.candidate === null) {
-        // 第一次取得路線（真實模式）
-        const route = twoLegRoute(e.from, m.getView().headingDeg ?? 0, { leg1M: 80, leg2M: 60, turn: 'right' })
-        destination = route.geometry.at(-1)!
-        return m.routeResult(route)
-      }
-      if (rerouteFails.value || destination === null) return m.routeResult(null)
-      m.routeResult(straightRoute(e.from, destination))
-    }, 700)
-  })
+  m.onEffect((e) => void fetchRealRoute(m, e.from, e.candidate))
 
   // 機器發現感測器沒資料、卡住、或羅盤與 GPS 走向不符：自動重新接上
   m.onResync((reason) => {
@@ -280,10 +392,9 @@ async function begin() {
   running.value = true
 }
 
-/** 向 Valhalla 要從目前位置到目的地站牌的步行路線（避開階梯、小巷）；重新規劃也走這裡 */
+/** 向 Valhalla 要從目前位置到目的地的步行路線（避開階梯、小巷）；重新規劃也走這裡 */
 async function fetchRealRoute(m: NavMachine, from: LatLon, candidate: string | null) {
-  const to = nearestPoint(DEFAULT_DESTINATION, from)
-  destination = to
+  const to = nearestPoint(active, from)
   try {
     const route = await fetchWalkRoute(from, to, { id: candidate ?? 'walk-valhalla' })
     if (machine !== m) return // 使用者已經結束
@@ -332,9 +443,7 @@ function stopAll() {
   tickTimer = null
   source?.stop()
   source = null
-  replay = null
   machine = null
-  destination = null
   void wake.off()
   running.value = false
 }
@@ -346,21 +455,6 @@ function end() {
 
 function onManualHeading() {
   if (useManualHeading.value) machine?.onHeading(manualHeading.value)
-}
-
-function drift(east: number, north: number) {
-  replay?.setOffset(east, north)
-}
-
-function setSpeed() {
-  // 加速只改變前進距離；ReplaySensorSource 內每秒前進 speedMps，這裡額外推進
-  if (replay && speedX.value > 1) replay.tick(speedX.value - 1)
-}
-
-function restart() {
-  replay?.restart()
-  announcer.reset()
-  cues.value = []
 }
 
 onBeforeUnmount(stopAll)
@@ -384,10 +478,6 @@ onMounted(() => {
 })
 onBeforeUnmount(() => cancelAnimationFrame(rafId))
 
-// 讓使用者可以在跑的過程中加速
-const speedTimer = window.setInterval(setSpeed, 1000)
-onBeforeUnmount(() => window.clearInterval(speedTimer))
-
 </script>
 
 <template>
@@ -398,23 +488,131 @@ onBeforeUnmount(() => window.clearInterval(speedTimer))
     <!-- 設定區：還沒開始時顯示 -->
     <section v-if="!running" class="space-y-4 p-4">
       <h1 class="text-xl font-bold">導航實驗</h1>
-      <div class="space-y-2">
-        <label class="flex items-center gap-2 rounded-lg bg-white/10 p-3">
-          <input v-model="mode" type="radio" value="route" />
-          <span>
-            導到「{{ DEFAULT_DESTINATION.name }}」（真實定位，走到戶外；路線避開階梯、陡坡與小巷，
-            會把你的座標送到公開的路徑服務）
+
+      <!-- 目的地：輸入地址、路名、地標，或「緯度, 經度」 -->
+      <form class="space-y-2" @submit.prevent="search">
+        <label class="block text-lg font-bold" for="dest-input">要去哪裡？</label>
+        <div class="flex gap-2">
+          <input
+            id="dest-input"
+            v-model="addressInput"
+            type="search"
+            enterkeyhint="search"
+            autocomplete="off"
+            placeholder="輸入站名、店名（全家、麥當勞）、地址或地標"
+            class="h-14 min-w-0 flex-1 rounded-xl bg-white px-4 text-lg text-[#30383D]"
+          />
+          <button
+            type="submit"
+            class="h-14 shrink-0 rounded-xl bg-white/20 px-5 text-lg font-bold disabled:opacity-50"
+            :disabled="searching || !addressInput.trim()"
+          >
+            {{ searching ? '搜尋中…' : '搜尋' }}
+          </button>
+        </div>
+        <p class="text-sm text-white/70">
+          站名查 TDX 站牌資料、連鎖店（7-11、全家、麥當勞、海底撈…）查本站的開放資料快照，這兩種都不會把輸入送到第三方；地址和地標會送到公開的 OpenStreetMap 搜尋服務。搜連鎖店會要一次你的位置來排序最近的；不給也行，改以臺北車站為準。
+        </p>
+      </form>
+
+      <p v-if="searchError" class="text-amber-200" role="alert">{{ searchError }}</p>
+
+      <!-- 公車站牌（TDX 快照）：一個站位一張卡，點路線就是選那班車 -->
+      <section v-if="stopResults && stopResults.length" class="space-y-2" aria-label="公車站牌">
+        <h2 class="text-lg font-bold">公車站牌</h2>
+        <div v-for="st in stopResults" :key="st.stationUid" class="rounded-lg bg-white/10 p-3">
+          <div class="text-lg font-bold">
+            {{ st.name.zh }}
+            <span v-if="st.bearing" class="text-sm font-normal text-white/70">（站位朝{{ BEARING_TEXT[st.bearing] ?? st.bearing }}）</span>
+          </div>
+          <div class="mb-2 text-sm text-white/70">點下要搭的那一班車：</div>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="r in st.routes"
+              :key="r.stopUid"
+              type="button"
+              class="rounded-full px-3 py-2 text-base"
+              :class="isRoutePicked(st, r) ? 'bg-white font-bold text-[#30383D]' : 'bg-white/20'"
+              :aria-pressed="isRoutePicked(st, r)"
+              @click="pickStopRoute(st, r)"
+            >
+              {{ routeLabel(r) }}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 連鎖店（Overture Maps 快照）：由近到遠 -->
+      <section v-if="poiResults && poiResults.length" class="space-y-2" aria-label="連鎖店">
+        <h2 class="text-lg font-bold">
+          連鎖店
+          <span class="text-sm font-normal text-white/70">
+            （{{ poiResults.length >= POI_LIMIT ? `最近的 ${POI_LIMIT} 家` : `共 ${poiResults.length} 家` }}，離{{ poiNearUser ? '你' : '臺北車站' }}由近到遠）
           </span>
-        </label>
-        <label class="flex items-center gap-2 rounded-lg bg-white/10 p-3">
-          <input v-model="mode" type="radio" value="replay" />
-          <span>模擬行走（室內可測，朝向是真實羅盤）</span>
-        </label>
-        <label class="flex items-center gap-2 rounded-lg bg-white/10 p-3">
-          <input v-model="mode" type="radio" value="real" />
-          <span>真實定位＋合成路線（路線沿你面向的方向 80 公尺後右轉 60 公尺）</span>
-        </label>
+        </h2>
+        <button
+          v-for="p in poiVisible"
+          :key="`${p.brand.key}-${p.point[0]}-${p.point[1]}`"
+          type="button"
+          class="block w-full rounded-lg bg-white/10 p-3 text-left"
+          :class="{ 'ring-2 ring-white': isPoiPicked(p) }"
+          :aria-pressed="isPoiPicked(p)"
+          @click="pickPoi(p)"
+        >
+          <div class="flex items-baseline justify-between gap-2">
+            <span class="text-lg font-bold">{{ p.name }}</span>
+            <span class="shrink-0 text-sm text-white/80">{{ formatDistance(p.distanceM) }}</span>
+          </div>
+          <div class="text-sm text-white/70">{{ p.brand.zh }}<template v-if="p.address">・{{ p.address }}</template></div>
+        </button>
+        <button
+          v-if="poiShown < poiResults.length"
+          type="button"
+          class="h-12 w-full rounded-lg bg-white/20 font-bold"
+          @click="poiShown += POI_PAGE"
+        >
+          再多看一些（還有 {{ poiResults.length - poiShown }} 家）
+        </button>
+      </section>
+
+      <!-- 地點與地址（OpenStreetMap） -->
+      <section v-if="placeResults && placeResults.length" class="space-y-2" aria-label="地點與地址">
+        <h2 class="text-lg font-bold">地點與地址</h2>
+        <button
+          v-for="(p, i) in placeResults"
+          :key="`${p.name}-${i}`"
+          type="button"
+          class="block w-full rounded-lg bg-white/10 p-3 text-left"
+          :class="{ 'ring-2 ring-white': isPlacePicked(p) }"
+          :aria-pressed="isPlacePicked(p)"
+          @click="pickPlace(p)"
+        >
+          <div class="text-lg font-bold">{{ p.name }}</div>
+          <div v-if="p.detail" class="text-sm text-white/70">{{ p.detail }}</div>
+        </button>
+      </section>
+
+      <p v-if="stopResults || placeResults || poiResults" class="text-xs text-white/60">
+        資料：公車站牌為 TDX 公車站位資料<template v-if="stopsUpdatedAt">（{{ stopsUpdatedAt.slice(0, 16).replace('T', ' ') }} 版）</template>；
+        連鎖店為 Overture Maps Foundation Places<template v-if="poiRelease">（{{ poiRelease }} 版）</template>
+        （CDLA-Permissive-2.0／Apache-2.0／CC0-1.0），可能有已歇業或位置差幾十公尺的店；
+        地點為 © OpenStreetMap contributors。找不到時改搜站名或路名。
+      </p>
+
+      <div class="rounded-lg bg-white/10 p-3">
+        <div class="text-sm text-white/70">目前的目的地</div>
+        <div class="text-xl font-bold">{{ destination.name }}</div>
+        <div v-if="destination.stationRoute" class="text-lg">搭 {{ routeLabel(destination.stationRoute) }}</div>
+        <button v-if="destination.stationRoute?.stopUid !== DEFAULT_DESTINATION.stationRoute?.stopUid" type="button" class="mt-1 text-sm underline" @click="useDemoStation">
+          改回預設站牌「{{ DEFAULT_DESTINATION.name }}」{{ DEFAULT_DESTINATION.stationRoute ? routeLabel(DEFAULT_DESTINATION.stationRoute) : '' }}
+        </button>
+        <div v-if="destination.station" class="text-sm text-white/70">公車站牌：走到會跳到 /arrived，念「等 {{ destination.stationRoute?.routeName.zh }} 號」</div>
+        <div v-else class="text-sm text-white/70">一般地點：走到只顯示「到了」</div>
       </div>
+
+      <p class="text-sm text-white/70">
+        用真實定位，走到戶外；路線避開階梯、陡坡與小巷，會把你的座標送到公開的路徑服務。
+      </p>
       <button class="h-16 w-full rounded-xl bg-white text-lg font-bold text-[#30383D]" @click="begin">開始走</button>
       <p v-if="permissionNote" class="text-amber-200">{{ permissionNote }}</p>
       <router-link class="block text-center underline" to="/lab/sensors">← 感測實驗</router-link>
@@ -422,19 +620,13 @@ onBeforeUnmount(() => window.clearInterval(speedTimer))
 
     <!-- 導航畫面 -->
     <template v-else-if="view">
-      <div v-if="mode === 'replay'" class="absolute left-3 top-3 rounded bg-white/20 px-2 py-1 text-sm">模擬</div>
       <div class="px-4 pt-10 text-center">
-        <template v-if="mode === 'route'">
-          <div class="text-2xl font-bold">{{ DEFAULT_DESTINATION.name }}</div>
-          <div class="text-lg">
-            <template v-if="routeInfo">全程 {{ routeInfo.distanceM }} 公尺，約 {{ Math.round(routeInfo.durationS / 60) }} 分鐘</template>
-            <template v-else>正在規劃路線…</template>
-          </div>
-        </template>
-        <template v-else>
-          <div class="text-2xl font-bold">實驗路線</div>
-          <div class="text-lg">{{ view.routeId ?? '合成路線' }}</div>
-        </template>
+        <div class="text-2xl font-bold">{{ activeName }}</div>
+        <div v-if="activeRoute" class="text-xl">{{ activeRoute }}</div>
+        <div class="text-lg">
+          <template v-if="routeInfo">全程 {{ routeInfo.distanceM }} 公尺，約 {{ Math.round(routeInfo.durationS / 60) }} 分鐘</template>
+          <template v-else>正在規劃路線…</template>
+        </div>
       </div>
 
       <div class="flex flex-1 items-center justify-center">
@@ -507,22 +699,6 @@ onBeforeUnmount(() => window.clearInterval(speedTimer))
           </div>
           <div v-if="routeError" class="col-span-2 text-amber-200">{{ routeError }}</div>
         </div>
-
-        <template v-if="mode === 'replay'">
-          <div class="flex flex-wrap gap-2">
-            <button class="rounded bg-white/20 px-3 py-2" @click="replay?.setPaused(true)">暫停</button>
-            <button class="rounded bg-white/20 px-3 py-2" @click="replay?.setPaused(false)">繼續</button>
-            <button class="rounded bg-white/20 px-3 py-2" @click="restart">重來</button>
-            <button class="rounded bg-white/20 px-3 py-2" @click="drift(60, 0)">往東偏 60 m</button>
-            <button class="rounded bg-white/20 px-3 py-2" @click="drift(0, 0)">回到路線</button>
-          </div>
-          <label class="flex items-center gap-2">速度 ×{{ speedX }}
-            <input v-model.number="speedX" type="range" min="1" max="8" step="1" class="flex-1" />
-          </label>
-          <label class="flex items-center gap-2">
-            <input v-model="rerouteFails" type="checkbox" /> 重新規劃會失敗（測 back_to_route）
-          </label>
-        </template>
 
         <label class="flex items-center gap-2">
           <input v-model="useManualHeading" type="checkbox" @change="onManualHeading" /> 手動朝向（沒有羅盤時）

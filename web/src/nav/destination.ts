@@ -25,37 +25,34 @@ export function destinationFromStation(station: Station, stationRoute: StationRo
   }
 }
 
+/** 實驗頁：使用者自己輸入的地址或地標。沒有站牌資料，到達時只顯示「到了」，不會跳到 /arrived */
+export function destinationFromPlace(place: { name: string; point: LatLon }): Destination {
+  return { name: place.name, points: [place.point] }
+}
+
 /**
- * 實驗頁的預設目的地：市立臺北特教學校公車站。
+ * 實驗頁的預設目的地：市立臺北特教學校公車站，往天母的 203（北側站位）。
  *
- * OSM 上這個站還叫舊名「啟智學校」（英文 Taipei School of Special Education），
- * 在忠誠路二段上，兩個方向各一個站位，相距約 40 公尺。
- * 座標來自 OpenStreetMap（node 2459681636、2460552097），要到現場確認站牌名稱與方向。
- *
- * station／stationRoute 是**實驗用的示範資料**，不是 TDX 站位資料：
- * 用來在 /lab/nav 走到站後測 /arrived 的跳頁、語音與卡片。正式流程由 destinationFromStation() 帶入真的資料。
+ * 資料來自 TDX 站位快照（web/public/lab/stop_index.json，站位 TPE789、路線 203、stopUid TPE12786），
+ * 不是編的。OSM 上這個站還叫舊名「啟智學校」，所以站牌用 TDX 的資料，不用地址搜尋。
+ * 兩個方向各一個站位，相距約 40 公尺；要到現場確認站牌名稱與方向。
  */
-export const DEFAULT_DESTINATION: Destination = {
-  name: '市立臺北特教學校（公車站）',
-  points: [
-    [25.117252, 121.5346766], // OSM 2459681636
-    [25.1172611, 121.5342664], // OSM 2460552097
-  ],
-  station: {
-    stationUid: 'LAB-DEMO',
-    name: { zh: '市立臺北特教學校', en: 'Taipei School of Special Education' },
-    bearing: null,
-    lat: 25.117252,
-    lon: 121.5346766,
+export const DEFAULT_DESTINATION: Destination = destinationFromStation(
+  {
+    stationUid: 'TPE789',
+    name: { zh: '市立臺北特教學校', en: 'Taipei Municipal School of Special Education' },
+    bearing: 'N',
+    lat: 25.11733,
+    lon: 121.534693,
     routes: [],
   },
-  stationRoute: {
-    routeName: { zh: '307', en: '307' },
+  {
+    routeName: { zh: '203', en: '203' },
     direction: 0,
-    headsign: { zh: '往板橋', en: 'To Banqiao' },
-    stopUid: 'LAB-DEMO',
+    headsign: { zh: '往天母', en: 'To Tianmu' },
+    stopUid: 'TPE12786',
   },
-}
+)
 
 /** 離使用者最近的站位；不知道要搭哪個方向時用最近的 */
 export function nearestPoint(d: Destination, from: LatLon): LatLon {
