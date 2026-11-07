@@ -4,6 +4,8 @@
  */
 
 export type Audience = 'elder' | 'child' | 'visitor'
+/** 使用者選的路線模式：快速＝最快；安全＝路燈、監視器、派出所、便利商店與店面多，避開小巷；平緩＝少階梯、少坡 */
+export type RouteMode = 'fast' | 'safe' | 'gentle'
 export type Lang = 'zh-TW' | 'en' | 'th' | 'vi' | 'id' | 'km' | 'ja' | 'ko'
 export type LatLon = [number, number]
 
@@ -43,6 +45,14 @@ export interface Metrics {
   cameras?: number | null
   /** 路線 150 公尺內的派出所數 */
   policeNearby?: number | null
+  /** 路線 40 公尺內的便利商店數（Overture Maps Places） */
+  stores?: number | null
+  /** 每 20 公尺取一點，附近有店面的比例 0–1 */
+  shopRatio?: number | null
+  /** 走在小巷、私人車道、產業道路、山徑的長度比例 0–1；只有路線模式算 */
+  quietRatio?: number | null
+  /** 走在主要道路（含旁邊人行道）的長度比例 0–1；只有路線模式算 */
+  mainRoadRatio?: number | null
 }
 
 /** POST /api/landmarks/search：地標、餐廳、學校…（Overture Maps Places 快照，不含連鎖店） */
@@ -88,13 +98,25 @@ export interface AroundResponse {
   sources: { name: string; updatedAt: string | null }[]
 }
 
+/** 和最快路線比。distanceM、durationS 是多走多少；其他欄位「正數＝比較好」（少的階梯、多的監視器…） */
 export interface RouteDiff {
   distanceM: number
   durationS: number
   steps: number | null
   climbM: number | null
   unsignalizedCrossings: number | null
+  maxGradePct?: number | null
+  litRatio?: number | null
+  cameras?: number | null
+  policeNearby?: number | null
+  stores?: number | null
+  shopRatio?: number | null
+  quietRatio?: number | null
+  mainRoadRatio?: number | null
 }
+
+/** 路段種類 [begin, end, use, roadClass]（後端 Valhalla trace_attributes）；begin、end 是 geometry 的索引 */
+export type RouteEdge = [number, number, string | null, string | null]
 
 export interface Source {
   name: string
@@ -113,10 +135,12 @@ export interface RouteOption {
   metrics: Metrics | null
   /** fastest 本身是 null */
   diff: RouteDiff | null
+  /** 路線模式才有；問不到時是 null。前端用來判斷過馬路 */
+  edges?: RouteEdge[] | null
 }
 
 export interface RoutesResponse {
-  context: { audience: Audience; period: 'day' | 'night'; simulated: boolean }
+  context: { audience: Audience; period: 'day' | 'night'; simulated: boolean; mode?: RouteMode; maxTimeRatio?: number }
   routes: RouteOption[]
   notes: string[]
   sources: Source[]
@@ -130,6 +154,10 @@ export interface RoutesRequest {
   candidate: string | null
   /** null 或 'night'，只用於 Demo */
   simulate: 'night' | null
+  /** 有值時依路線模式挑路（不看對象規則表）；routes[0] 是推薦的路，和最快不同時 routes[1] 是最快路線 */
+  mode?: RouteMode
+  /** 走到一半重新規劃：後端不另外找繞行路線，回得比較快 */
+  quick?: boolean
 }
 
 export interface BilingualName {

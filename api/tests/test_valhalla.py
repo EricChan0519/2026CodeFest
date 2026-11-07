@@ -201,3 +201,55 @@ def test_iam_auth_comes_from_environment(monkeypatch):
     assert ValhallaEngine("https://r")._iam_auth is True
     monkeypatch.delenv("ROUTING_AUTH")
     assert ValhallaEngine("https://r")._iam_auth is False
+
+
+def test_via_points_are_through_locations_without_alternates():
+    seen = {}
+    def handler(req):
+        seen.update(json.loads(req.content))
+        return httpx.Response(200, json=ROUTE)
+    run_route(handler, alternates=2, via=[(25.044, 121.518)])
+    assert [loc.get("type") for loc in seen["locations"]] == [None, "through", None]
+    assert "alternates" not in seen
+
+
+def test_route_keeps_shape_for_edges():
+    assert run_route(ok)[0].shape == ROUTE["trip"]["legs"][0]["shape"]
+
+
+def test_edges_from_trace_attributes():
+    route = run_route(ok)[0]
+    seen = {}
+    def handler(req):
+        seen["path"] = req.url.path
+        seen["body"] = json.loads(req.content)
+        return httpx.Response(200, json={"shape": route.shape, "edges": [
+            {"begin_shape_index": 0, "end_shape_index": 1, "use": "alley", "road_class": "service_other", "length": 0.05}]})
+    edges = asyncio.run(engine(handler).edges(route))
+    assert seen["path"] == "/trace_attributes" and seen["body"]["encoded_polyline"] == route.shape
+    assert edges[0].use == "alley" and edges[0].length_m == 50 and (edges[0].begin, edges[0].end) == (0, 1)
+
+
+def test_index_map_absorbs_an_inserted_point():
+    route = [(25.0, 121.5), (25.0004, 121.5), (25.0008, 121.5)]           # 每 44 公尺一點
+    trace = [(25.0, 121.5), (25.0001, 121.5), (25.0004, 121.5), (25.0008, 121.5)]
+    assert valhalla._index_map(trace, route) == [0, 0, 1, 2]
+    assert valhalla._index_map(route, route) == [0, 1, 2]
+    assert valhalla._index_map([(25.0, 121.5), (25.01, 121.5)], route[:1] + route) is None  # 1 公里外對不上
+
+
+@pytest.mark.parametrize("reply", [
+    httpx.Response(500, json={}),
+    httpx.Response(200, json={"shape": "", "edges": []}),       # shape 對不上
+    httpx.Response(200, json={"shape": None}),
+    httpx.Response(200, content=b"not json"),
+])
+def test_edges_failures_give_none(reply):
+    route = run_route(ok)[0]
+    assert asyncio.run(engine(lambda req: reply).edges(route)) is None
+
+
+def test_edges_out_of_range_give_none():
+    route = run_route(ok)[0]
+    reply = {"shape": route.shape, "edges": [{"begin_shape_index": 0, "end_shape_index": 9}]}
+    assert asyncio.run(engine(lambda req: httpx.Response(200, json=reply)).edges(route)) is None

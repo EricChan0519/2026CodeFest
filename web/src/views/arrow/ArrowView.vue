@@ -4,10 +4,12 @@
  *
  * 整個畫面只有一個「共用箭頭」(.hero)：
  * 1. 開場在畫面中央轉一圈、重摔縮成主 logo（斜 45°），下方打字機打出「一鍵成行」。
- * 2. 第一次使用：語言清單、年紀清單由左滑入，箭頭在清單外側指著選項；點一個 → 箭頭戳一下、清單淡出。
+ * 2. 第一次使用：語言、年紀、路線模式（快速／安全／平緩）清單由左滑入，箭頭在清單外側指著選項；點一個 → 箭頭戳一下、清單淡出。
+ *    路線模式依年紀建議一個（兒童→安全、長者→平緩），箭頭先指著它。
  *    選過就跳過（存在手機）；搜尋欄右上角的小膠囊可以重選。?reset=1 清掉、?setup=1 強制再選一次。
  * 3. 搜尋：地點、連鎖店、公車站一起找（trip/useDestinationSearch），依現在位置由近到遠；結果出來箭頭滑到第一筆。
- *    - 地點／店家 → 「怎麼去？」：走路過去，或在裝置上算出的公車（直達或轉一次車）。
+ *    - 地點／店家 → 「怎麼去？」：走路過去（依路線模式算的路，說出好在哪；和最快不同時也列出最快的路），
+ *      或在裝置上算出的公車（直達或轉一次車）。路線模式的路不會比最快多花 20% 以上的時間（api/app/route_modes.py）。
  *    - 公車站 → 「要搭哪一班？」：那個站位的路線。
  * 4. 選好走法：像滑動解鎖一樣，箭頭推過那一列到右邊界，框淡出，箭頭放大滑回中央，接上真正的導航（trip/useTrip）。
  *    到上車站、坐車中、只到站牌時蓋上 ArrivalCard／RideCard；走到最後的目的地箭頭換成打勾。
@@ -22,8 +24,10 @@ import { speakText } from '@/arrival/speech'
 import { ARRIVAL_STRINGS } from '@/i18n/arrival'
 import { ARROW_STRINGS, distanceWords, fill } from '@/i18n/arrow'
 import type { AgeKey, CompassKey, TurnWordKey } from '@/i18n/arrow'
-import type { Audience, Lang, LatLon, ManeuverKind, Station } from '@/lib/contract'
+import { ROUTE_MODE_STRINGS } from '@/i18n/routeMode'
+import type { Audience, Lang, LatLon, ManeuverKind, RouteMode, Station } from '@/lib/contract'
 import { createLocator } from '@/lib/locator'
+import type { ModeRoute } from '@/lib/modeRoute'
 import { estimateBusMin } from '@/lib/transferBus'
 import type { BusPlan } from '@/lib/transferBus'
 import type { Cue } from '@/nav/announcer'
@@ -31,19 +35,21 @@ import { easeRotation } from '@/nav/arrow'
 import { NAV_CONFIG } from '@/nav/config'
 import { DEFAULT_DESTINATION } from '@/nav/destination'
 import { distanceM } from '@/nav/geo'
+import { routeDetail } from '@/trip/routeText'
 import { useDestinationSearch } from '@/trip/useDestinationSearch'
 import { useTrip } from '@/trip/useTrip'
 import type { TripChoice } from '@/trip/useTrip'
+import { useWalkPlan } from '@/trip/useWalkPlan'
 import ArrowMark from './ArrowMark.vue'
 import { K_LOGO, K_NAV, heroSize, innerT, outerT, poseAt, reducedMotion, shortestDelta } from './pose'
 import type { Pose } from './pose'
 
 const DebugSheet = defineAsyncComponent(() => import('./DebugSheet.vue'))
 
-type StepName = 'lang' | 'age' | 'search' | 'how' | 'route'
+type StepName = 'lang' | 'age' | 'mode' | 'search' | 'how' | 'route'
 type Phase = 'intro' | 'brand' | StepName | 'launch' | 'nav'
 type StepState = 'off' | 'in' | 'out'
-const STEP_NAMES: StepName[] = ['lang', 'age', 'search', 'how', 'route']
+const STEP_NAMES: StepName[] = ['lang', 'age', 'mode', 'search', 'how', 'route']
 const isStep = (p: Phase): p is StepName => (STEP_NAMES as string[]).includes(p)
 
 /** 開場 logo 斜 45° */
@@ -86,8 +92,12 @@ const AGE_ITEMS: AgeKey[] = ['youth', 'child', 'elder']
 const AUDIENCE: Record<AgeKey, Audience> = { child: 'child', youth: 'visitor', elder: 'elder' }
 /** 字級倍率（01 產品規格「對象設定」） */
 const FONT_SCALE: Record<AgeKey, number> = { child: 1.1, youth: 1, elder: 1.2 }
+const MODE_ITEMS: RouteMode[] = ['fast', 'safe', 'gentle']
+/** 依年紀建議的路線模式（選單上標「建議」、箭頭先指著它） */
+const SUGGESTED_MODE: Record<AgeKey, RouteMode> = { child: 'safe', youth: 'fast', elder: 'gentle' }
 const KEY_LANG = 'arrow.lang'
 const KEY_AGE = 'arrow.age'
+const KEY_MODE = 'arrow.mode'
 
 // ── 設定（存在手機） ───────────────────────────────
 function load(key: string): string | null {
@@ -109,27 +119,35 @@ const params = new URLSearchParams(location.search)
 if (params.has('reset')) {
   save(KEY_LANG, null)
   save(KEY_AGE, null)
+  save(KEY_MODE, null)
 }
 const savedLang = load(KEY_LANG) as Lang | null
 const savedAge = load(KEY_AGE) as AgeKey | null
+const savedMode = load(KEY_MODE) as RouteMode | null
 const lang = ref<Lang>(savedLang && savedLang in ARROW_STRINGS ? savedLang : 'zh-TW')
 const age = ref<AgeKey>(savedAge && AGE_ITEMS.includes(savedAge) ? savedAge : 'youth')
-/** 第一次使用（或 ?setup=1）才走語言、年紀兩步 */
-const needSetup = !savedLang || !savedAge || params.has('setup')
+const mode = ref<RouteMode>(savedMode && MODE_ITEMS.includes(savedMode) ? savedMode : SUGGESTED_MODE[age.value])
+/** 第一次使用（或 ?setup=1）才走語言、年紀、路線模式三步 */
+const needSetup = !savedLang || !savedAge || !savedMode || params.has('setup')
 const audience = computed(() => AUDIENCE[age.value])
+/** Demo：白天展示晚上（安全模式的路燈權重變高），畫面標示「模擬晚上」 */
+const simulate = params.has('night') ? ('night' as const) : null
 const S = computed(() => ARROW_STRINGS[lang.value])
+const R = computed(() => ROUTE_MODE_STRINGS[lang.value])
 const A = computed(() => ARRIVAL_STRINGS[lang.value])
 const langLabel = computed(() => LANG_ITEMS.find((l) => l.id === lang.value)?.label ?? '')
 
 // ── 位置、搜尋、行程 ───────────────────────────────
 const locator = createLocator()
 const search = useDestinationSearch(locator)
-const trip = useTrip({ locator, onCue })
+const routing = { mode: () => mode.value, audience: () => audience.value, simulate: () => simulate }
+const trip = useTrip({ locator, onCue, routing })
 const nav = trip.nav
+const walkPlan = useWalkPlan(locator, routing)
 if (params.has('demo')) nav.simGps.value = true
 
 const phase = ref<Phase>('intro')
-const steps = reactive<Record<StepName, StepState>>({ lang: 'off', age: 'off', search: 'off', how: 'off', route: 'off' })
+const steps = reactive<Record<StepName, StepState>>({ lang: 'off', age: 'off', mode: 'off', search: 'off', how: 'off', route: 'off' })
 const picked = ref(-1) // 剛被點的那一列
 const busy = ref(false) // 過場中不收點擊
 const lift = ref(0) // 標語往上滑的距離
@@ -275,8 +293,16 @@ async function enterStep(s: StepName, from: Pose = cur, easing = EASE_LIST) {
   // 同一格裡開始動畫會掉前幾格，看起來像箭頭先跳一下
   await new Promise<void>((r) => requestAnimationFrame(() => r()))
   if (my !== seq) return
-  // 搜尋：指著搜尋欄；怎麼去：公車已經算好就直接指著建議的第一班車（還在算的話，算好時由 watch 滑過去）
-  armRow = s === 'search' ? -1 : s === 'how' && !search.busLoading.value && search.busOptions.value.length ? 1 : 0
+  // 搜尋：指著搜尋欄；路線模式：指著依年紀建議的那個；
+  // 怎麼去：公車已經算好就直接指著建議的第一班車（還在算的話，算好時由 watch 滑過去）
+  armRow =
+    s === 'search'
+      ? -1
+      : s === 'mode'
+        ? MODE_ITEMS.indexOf(suggestedMode.value)
+        : s === 'how' && !search.busLoading.value && search.busOptions.value.length
+          ? walkRows.value.length
+          : 0
   await play([{ p: from }, { p: pointPose(s, armRow, pointAngle(from.r)) }], dur(T_LIST), easing)
   if (my !== seq) return
   busy.value = false
@@ -361,10 +387,20 @@ async function pickAge(i: number) {
   if (!(await press('age', i))) return
   age.value = AGE_ITEMS[i]!
   save(KEY_AGE, age.value)
-  await goStep('age', 'search')
+  await goStep('age', 'mode')
 }
 
-/** 搜尋欄右上角的膠囊：重選語言和使用者 */
+const suggestedMode = computed(() => SUGGESTED_MODE[age.value])
+
+async function pickMode(i: number) {
+  if (busy.value || phase.value !== 'mode') return
+  if (!(await press('mode', i))) return
+  mode.value = MODE_ITEMS[i]!
+  save(KEY_MODE, mode.value)
+  await goStep('mode', 'search')
+}
+
+/** 搜尋欄右上角的膠囊：重選語言、使用者和路線模式 */
 function changeSettings() {
   if (busy.value || phase.value !== 'search') return
   void goStep('search', 'lang')
@@ -531,6 +567,7 @@ async function pickResult(i: number) {
   }
   target.value = { name: r.name, point: r.point }
   void search.planTo(r.point)
+  void walkPlan.planTo(r.point)
   await goStep('search', 'how')
 }
 
@@ -546,17 +583,66 @@ function busTitle(p: BusPlan): string {
   const names = p.rides.map((r) => nameOf(r.route.routeName))
   return names.length > 1 ? `${names[0]} → ${fill(S.value.transferAt, { route: names.slice(1).join(' → ') })}` : names[0]!
 }
+/** 約幾分鐘（路線的時間；長者用 3.5 km/h 算） */
+const routeMin = (r: ModeRoute) => Math.max(1, Math.round(r.durationS / 60))
+
+/**
+ * 走路的列：依路線模式算好的路在前（說出比最快的路好在哪、多走多久），和最快不同時下面再列最快的路（說出沿路有什麼）。
+ * 還在算、或算不出來時只有一列「走路過去」（導航開始時會再算一次）。
+ */
+const walkRows = computed<HowRow[]>(() => {
+  const t = target.value
+  if (!t) return []
+  const s = S.value
+  const r = R.value
+  const plan = walkPlan.plan.value
+  if (!plan) {
+    return [
+      {
+        key: 'walk',
+        title: s.walkThere,
+        detail: walkPlan.loading.value ? r.planning : '',
+        right: search.walkMin.value ? fill(s.aboutMin, { min: search.walkMin.value }) : '',
+        choice: { kind: 'walk', name: t.name, point: t.point },
+      },
+    ]
+  }
+  return plan.routes.map<HowRow>((route, i) => {
+    const isMode = route.id !== 'fastest'
+    const facts = routeDetail(route, plan.mode, r)
+    return {
+      key: `walk-${route.id}`,
+      title: isMode ? fill(r.walkMode, { mode: r.modes[plan.mode] }) : i > 0 ? r.fastestRoute : s.walkThere,
+      detail: [isMode ? '' : listDistance(route.distanceM), facts].filter(Boolean).join(' · '),
+      right: fill(s.aboutMin, { min: routeMin(route) }),
+      // 選了最快的路：之後重新規劃也走最快的
+      choice: { kind: 'walk', name: t.name, point: t.point, route, from: plan.from, mode: isMode ? plan.mode : 'fast' },
+    }
+  })
+})
+/** 路線模式的說明：沒有更合適的路、後端連不上、時間上限、模擬晚上 */
+const routeNote = computed(() => {
+  const plan = walkPlan.plan.value
+  const r = R.value
+  if (!plan || plan.mode === 'fast') return plan?.fallback ? r.fallback : ''
+  const parts = [
+    plan.fallback ? r.fallback : plan.notes.includes('no_better_route') ? r.noBetter : fill(r.capNote, { pct: 20 }),
+  ]
+  if (plan.notes.includes('simulated_night')) parts.push(r.simNight)
+  return parts.join(' · ')
+})
+// 走路的列從一列變成兩列（推薦＋最快）：箭頭原本指著公車就跟著往下，還是指著同一班車
+watch(
+  () => walkRows.value.length,
+  (n, old) => {
+    if (phase.value === 'how' && armRow >= old) armRow += n - old
+  },
+  { flush: 'sync' },
+)
 const howRows = computed<HowRow[]>(() => {
   const t = target.value
   if (!t) return []
   const s = S.value
-  const walk: HowRow = {
-    key: 'walk',
-    title: s.walkThere,
-    detail: '',
-    right: search.walkMin.value ? fill(s.aboutMin, { min: search.walkMin.value }) : '',
-    choice: { kind: 'walk', name: t.name, point: t.point },
-  }
   const buses = search.busOptions.value.map<HowRow>((p) => {
     const first = p.rides[0]!
     const last = p.rides[p.rides.length - 1]!
@@ -569,7 +655,7 @@ const howRows = computed<HowRow[]>(() => {
       choice: { kind: 'bus', plan: p, name: t.name, point: t.point },
     }
   })
-  return [walk, ...buses]
+  return [...walkRows.value, ...buses]
 })
 const howNote = computed(() => {
   if (search.busLoading.value) return S.value.busLoading
@@ -591,7 +677,7 @@ watch(
   async (loading) => {
     if (loading || phase.value !== 'how' || search.busOptions.value.length === 0) return
     await nextTick()
-    if (!busy.value && armRow === 0) await moveArrow('how', 1)
+    if (!busy.value && armRow === 0) await moveArrow('how', walkRows.value.length)
   },
 )
 
@@ -604,6 +690,7 @@ const stationFacing = computed(() => {
 function back(from: 'how' | 'route') {
   if (busy.value || phase.value !== from) return
   search.clearBus()
+  walkPlan.clear()
   void goStep(from, 'search')
 }
 
@@ -699,6 +786,7 @@ async function backToSearch(clearResults: boolean) {
     void search.rerank()
   }
   search.clearBus()
+  walkPlan.clear()
   const from: Pose = { ...navPose, r: rot }
   await enterStep('search', from)
 }
@@ -896,10 +984,13 @@ watch(view, (v) => {
   if (!v) remainingM.value = null
   else if (v.state === 'navigating' && v.distanceM !== null) remainingM.value = v.distanceM
 })
-/** 約幾分鐘：長者走慢一點 */
-const minutes = computed(() =>
-  remainingM.value === null ? null : Math.max(1, Math.round(remainingM.value / (audience.value === 'elder' ? 55 : 67))),
-)
+/** 約幾分鐘：用這條路線自己的速度（和「怎麼去」列的時間一致；長者 3.5 km/h），沒有路線時長者走慢一點 */
+const minutes = computed(() => {
+  if (remainingM.value === null) return null
+  const r = nav.routeInfo.value
+  const perMin = r && r.durationS > 0 && r.distanceM > 0 ? (r.distanceM / r.durationS) * 60 : audience.value === 'elder' ? 55 : 67
+  return Math.max(1, Math.round(remainingM.value / perMin))
+})
 const showRecal = computed(() => {
   const v = view.value
   return !!v && !navArrived.value && v.state !== 'arrived' && v.state !== 'failed' && (v.headingLost || v.headingCheck === 'suspect')
@@ -1054,7 +1145,7 @@ function onResize() {
   })
 }
 // 清單內容變了（結果、公車、語言），版面跟著變 → 箭頭重新對準
-watch([rows, howRows, howNote, searchNote, lang, age], () => void nextTick(onResize))
+watch([rows, howRows, howNote, routeNote, searchNote, lang, age, mode], () => void nextTick(onResize))
 
 onMounted(() => {
   document.title = '跟著箭頭走'
@@ -1132,6 +1223,20 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
+        <!-- 路線模式：快速／安全／平緩（依年紀建議一個） -->
+        <section class="step" :class="`st-${steps.mode}`" data-step="mode" :inert="steps.mode !== 'in'" aria-labelledby="h-mode">
+          <div class="step-body">
+            <h2 id="h-mode" class="step-h">{{ R.modeTitle }}</h2>
+            <ul class="list" @scroll.passive="onResize">
+              <li v-for="(key, i) in MODE_ITEMS" :key="key">
+                <button type="button" class="row" :class="{ picked: phase === 'mode' && picked === i }" :data-i="i" @click="pickMode(i)">
+                  <span class="row-label">{{ R.modes[key] }}</span>
+                </button>
+              </li>
+            </ul>
+          </div>
+        </section>
+
         <!-- 搜尋＋結果 -->
         <section class="step" :class="`st-${steps.search}`" data-step="search" :inert="steps.search !== 'in'" aria-labelledby="h-search">
           <div class="step-body" :class="{ grow: hasResults || searchNote }">
@@ -1139,7 +1244,7 @@ onBeforeUnmount(() => {
               <h2 id="h-search" class="step-h">{{ S.searchTitle }}</h2>
               <button type="button" class="pill" :aria-label="S.change" @click="changeSettings">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.6 2.6 2.6 15.4 0 18M12 3c-2.6 2.6-2.6 15.4 0 18" /></svg>
-                <span>{{ langLabel }} · {{ S.ages[age] }}</span>
+                <span>{{ langLabel }} · {{ S.ages[age] }} · {{ R.modes[mode] }}</span>
               </button>
             </div>
             <form class="search" role="search" @submit.prevent="submitSearch">
@@ -1223,6 +1328,7 @@ onBeforeUnmount(() => {
                 </button>
               </li>
             </ul>
+            <p v-if="routeNote" class="note" :class="{ warn: walkPlan.plan.value?.fallback }" role="status">{{ routeNote }}</p>
             <p v-if="howNote" class="note" :class="{ warn: !search.busLoading.value }" role="status">{{ howNote }}</p>
           </div>
         </section>

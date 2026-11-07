@@ -21,10 +21,12 @@ def snapshots(tmp_path, monkeypatch):
     metrics._load_crossings.cache_clear()
     metrics._load_lamp_cells.cache_clear()
     metrics._load_safety.cache_clear()
+    metrics._load_stores.cache_clear()
     yield tmp_path
     metrics._load_crossings.cache_clear()
     metrics._load_lamp_cells.cache_clear()
     metrics._load_safety.cache_clear()
+    metrics._load_stores.cache_clear()
 
 
 def write_crossings(path, signal=(), unsignalized=(), unknown=()):
@@ -177,3 +179,39 @@ def test_nearby_point_lamp_radius_is_respected(snapshots):
 
 def test_nearby_point_without_snapshots_is_all_none(snapshots):
     assert metrics.nearby(*START) == {"lamps": None, "cameras": None, "police": None}
+
+
+def write_stores(path, convenience=(), shops=()):
+    (path / "store_points.json").write_text(json.dumps({
+        "updatedAt": "2026-11-07T23:00:00+08:00", "convenience": [list(p) for p in convenience],
+        "shopCells": sorted({cell_of(*p) for p in shops})}))
+
+
+def test_convenience_stores_within_40m_and_shop_ratio(snapshots):
+    write_stores(snapshots, convenience=[
+        (25.0405, 121.50030),   # about 30 m east
+        (25.0405, 121.50060),   # about 60 m east: outside
+    ], shops=[START])
+    m = measure(route())
+    assert m.stores == 1
+    assert 0 < m.shop_ratio < 1
+
+
+def test_missing_store_snapshot_gives_none(snapshots):
+    m = measure(route())
+    assert m.stores is None and m.shop_ratio is None
+
+
+def test_edge_ratios_by_length():
+    from app.engine import EdgeInfo
+    edges = [EdgeInfo(0, 1, "alley", "service_other", 30), EdgeInfo(1, 2, "sidewalk", "primary", 50),
+             EdgeInfo(2, 3, "pedestrian_crossing", "secondary", 10), EdgeInfo(3, 4, "footway", "service_other", 10)]
+    assert metrics.edge_ratios(edges) == (0.3, 0.6)
+    assert metrics.edge_ratios(None) == (None, None) and metrics.edge_ratios([]) == (None, None)
+
+
+def test_anchor_points_lists_police_and_stores_in_box(snapshots):
+    write_safety(snapshots, police=[(25.0405, 121.5001, "士林分局")])
+    write_stores(snapshots, convenience=[(25.0406, 121.5002), (25.0600, 121.5002)])
+    found = metrics.anchor_points(25.04, 25.041, 121.4995, 121.5005)
+    assert sorted(k for *_, k in found) == ["police", "store"]

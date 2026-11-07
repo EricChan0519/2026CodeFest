@@ -36,10 +36,10 @@ def isolate_metrics_data(monkeypatch, tmp_path):
     empty = tmp_path / "metrics_data"
     empty.mkdir()
     monkeypatch.setattr(metrics, "DATA_DIR", empty)
-    for loader in (metrics._load_crossings, metrics._load_lamp_cells, metrics._load_safety):
+    for loader in (metrics._load_crossings, metrics._load_lamp_cells, metrics._load_safety, metrics._load_stores):
         loader.cache_clear()
     yield empty
-    for loader in (metrics._load_crossings, metrics._load_lamp_cells, metrics._load_safety):
+    for loader in (metrics._load_crossings, metrics._load_lamp_cells, metrics._load_safety, metrics._load_stores):
         loader.cache_clear()
 
 
