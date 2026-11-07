@@ -38,6 +38,7 @@
 | [05-stories.md](05-stories.md) | Stories、驗收條件、分工、時程 |
 | [06-demo-script.md](06-demo-script.md) | 初選與決選腳本、備援、問答預備 |
 | [07-adding-tech.md](07-adding-tech.md) | 隊友加技術前要檢查什麼、接在哪裡 |
+| [實作計畫](../superpowers/plans/2026-11-07-arrow-nav.md) | **每個角色要做的任務、測試、順序，開工先看自己的區段** |
 | [architecture/arc42.md](architecture/arc42.md) | C4 圖、部署、品質情境、風險 |
 | [architecture/review.md](architecture/review.md) | 架構審查結果，以及因此做的修改 |
 | [architecture/decisions/](architecture/decisions/README.md) | 7 份架構決策紀錄（MADR） |
