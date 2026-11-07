@@ -34,7 +34,7 @@ import type { StopGroup } from '@/lib/stopSearch'
 import { createLocator } from '@/lib/locator'
 import type { ModeRoute } from '@/lib/modeRoute'
 import { estimateBusMin } from '@/lib/transferBus'
-import type { TransitPlan } from '@/lib/transitPlan'
+import type { PlanTab, TransitPlan } from '@/lib/transitPlan'
 import type { Cue } from '@/nav/announcer'
 import { easeRotation } from '@/nav/arrow'
 import { NAV_CONFIG } from '@/nav/config'
@@ -632,11 +632,22 @@ interface HowRow {
   /** 預估秒數：走路和搭車放在一起依時間排 */
   sortS?: number
 }
-function transitRow(p: TransitPlan, t: { name: string; point: LatLon }, title: string): HowRow {
+/** 怎麼去的分頁：最快（混搭）、只搭公車、只搭捷運 */
+const planTab = ref<PlanTab>('mixed')
+const PLAN_TABS: PlanTab[] = ['mixed', 'bus', 'metro']
+function tabLabel(t: PlanTab): string {
+  return t === 'mixed' ? S.value.tabFastest : t === 'bus' ? S.value.tabBus : S.value.tabMetro
+}
+function transitTitle(p: TransitPlan): string {
+  const names = p.rides.map((r) => nameOf(r.route.routeName))
+  return names.length > 1 ? `${names[0]} → ${fill(S.value.transferAt, { route: names.slice(1).join(' → ') })}` : names[0]!
+}
+function transitRow(p: TransitPlan, t: { name: string; point: LatLon }): HowRow {
+  const first = p.rides[0]!
   const modes = new Set(p.rides.map((r) => r.mode))
   return {
     key: p.rides.map((r) => `${r.mode}:${r.route.routeName.zh}:${r.board.stationUid}`).join('>'),
-    title,
+    title: transitTitle(p),
     right: fill(S.value.aboutMin, { min: Math.max(1, Math.round(p.durationS / 60)) }),
     choice: { kind: 'transit', plan: p, name: t.name, point: t.point },
     mode: modes.size > 1 ? 'mixed' : p.rides[0]!.mode,
@@ -698,10 +709,7 @@ const routeNote = computed(() => {
   const parts = [plan.fallback && plan.mode !== 'fast' ? r.fallback : '', plan.notes.includes('simulated_night') ? r.simNight : '']
   return parts.filter(Boolean).join(' · ')
 })
-/**
- * 搭車：公車、捷運各列最快的一個（直達或轉車），比兩者都快的公車＋捷運混搭再多一列；
- * 搭哪一班、在哪下車導航時再說。末班車已過的反灰放最後。
- */
+/** 公車：只列最快的一個搭法（直達或轉一次車），搭哪一班、在哪下車導航時再說 */
 const howRows = computed<HowRow[]>(() => {
   const t = target.value
   if (!t) return []
@@ -732,6 +740,14 @@ const howRows = computed<HowRow[]>(() => {
     : []
   return [...walkRows.value, ...bus]
 })
+// 公車＋捷運規劃時列表依時間排序：走路的路算好、或時間改變後順序會變，箭頭重新指最快能搭的那個
+watch(
+  () => howRows.value.map((r) => r.key).join('|'),
+  () => {
+    if (phase.value === 'how' && search.transit.value && !busy.value) armRow = firstPickable()
+  },
+  { flush: 'sync' },
+)
 const howNote = computed(() => {
   if (search.busLoading.value) return S.value.busLoading
   const plans = search.transit.value
