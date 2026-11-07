@@ -2,6 +2,7 @@
  * 抵達確認與「給別人看」卡片的文字組合（純函式）。
  * 只用站位資料裡有的路線和方向，不暗示車快來了：到站時間不在目前範圍內。
  */
+import { metroLineName } from '@/lib/metroLines'
 import type { Audience, Lang, Station, StationRoute } from '@/lib/contract'
 import { ARRIVAL_STRINGS } from '@/i18n/arrival'
 
@@ -32,7 +33,6 @@ export const SPEECH_LANGS: Record<Lang, string> = {
   th: 'th-TH',
   vi: 'vi-VN',
   id: 'id-ID',
-  km: 'km-KH',
   ja: 'ja-JP',
   ko: 'ko-KR',
 }
@@ -55,11 +55,13 @@ function displayName(name: Name, lang: Lang): string | null {
 }
 
 const localName = (name: Name, lang: Lang) => (lang === 'zh-TW' ? name.zh || name.en : name.en || name.zh) || null
+/** 路線名：捷運線用官方韓文、日文名稱（淡水信義線 → 단수이신이선），其他照 localName */
+const routeLocal = (name: Name, lang: Lang) => metroLineName(name.zh, lang) ?? localName(name, lang)
 
 export function buildArrival(trip: ArrivalTrip, lang: Lang, audience: Audience) {
   const s = ARRIVAL_STRINGS[lang]
   const headline = trip.changeLine ? s.changeLine : audience === 'child' ? s.arrivedChild : s.arrived
-  const routeBig = localName(trip.route, lang)
+  const routeBig = routeLocal(trip.route, lang)
   const to = stripTo(localName(trip.headsign, lang))
 
   let spoken = headline
@@ -110,7 +112,7 @@ export function askCard(trip: ArrivalTrip, lang: Lang) {
   if (lang !== 'zh-TW') {
     const s = ARRIVAL_STRINGS[lang]
     const to = stripTo(localName(trip.headsign, lang))
-    own = fill(to ? s.ask : s.askNoDirection, { bus: localName(trip.route, lang) ?? routeZh, to: to ?? '' })
+    own = fill(to ? s.ask : s.askNoDirection, { bus: routeLocal(trip.route, lang) ?? routeZh, to: to ?? '' })
     const alightName = trip.alight ? displayName(trip.alight, lang) : null
     if (alightName) own += ` ${fill(s.getOffAt, { stop: alightName })}`
   }

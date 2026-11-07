@@ -8,8 +8,8 @@ const st = (zh: string, en: string | null): Station => ({ stationUid: zh, name: 
 afterEach(() => vi.restoreAllMocks())
 
 describe('isForeignQuery', () => {
-  it('Korean, Thai, Khmer, kana and Latin words are foreign', () => {
-    for (const q of ['대만박물관', 'พิพิธภัณฑ์', 'សារមន្ទីរ', 'バス停', 'Taipei Zoo', 'Bảo tàng Đài Loan']) expect(isForeignQuery(q)).toBe(true)
+  it('Korean, Thai, kana and Latin words are foreign', () => {
+    for (const q of ['대만박물관', 'พิพิธภัณฑ์', 'バス停', 'Taipei Zoo', 'Bảo tàng Đài Loan']) expect(isForeignQuery(q)).toBe(true)
   })
   it('Japanese kanji or simplified characters need converting too', () => {
     for (const q of ['士林駅', '台湾大学', '台北动物园']) expect(isForeignQuery(q)).toBe(true)
@@ -33,7 +33,7 @@ describe('stopLabel', () => {
     ['捷運芝山站', { text: 'MRT 즈산역', approx: false }],
     ['芝山岩', { text: '즈산옌', approx: true }],
   ])
-  it('English and Indonesian use the official TDX English name', () => {
+  it('English uses the official TDX English name', () => {
     expect(stopLabel(st('捷運芝山站', 'MRT Zhishan Sta.'), 'en', labels)).toEqual({ text: 'MRT Zhishan Sta.', approx: false })
   })
   it('other languages use the translation; a spelled-out name also gets the official English name', () => {

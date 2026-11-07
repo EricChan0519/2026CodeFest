@@ -1,70 +1,525 @@
 {
-  "note": "地點類別（scripts/build_place_index.py 的中文類別）→ 7 種語言（人工整理，非核心資料）",
-  "categories": {
-    "交通": {"en": "Transport", "id": "Transportasi", "vi": "Giao thông", "th": "การเดินทาง", "km": "ការដឹកជញ្ជូន", "ko": "교통", "ja": "交通"},
-    "住宿": {"en": "Lodging", "id": "Penginapan", "vi": "Chỗ ở", "th": "ที่พัก", "km": "កន្លែងស្នាក់នៅ", "ko": "숙박", "ja": "宿泊"},
-    "便利商店": {"en": "Convenience Store", "id": "Minimarket", "vi": "Cửa hàng tiện lợi", "th": "ร้านสะดวกซื้อ", "km": "ហាងលក់ទំនិញងាយស្រួល", "ko": "편의점", "ja": "コンビニ"},
-    "停車場": {"en": "Parking", "id": "Tempat Parkir", "vi": "Bãi đỗ xe", "th": "ที่จอดรถ", "km": "ចំណតរថយន្ត", "ko": "주차장", "ja": "駐車場"},
-    "健身房": {"en": "Gym", "id": "Pusat Kebugaran", "vi": "Phòng gym", "th": "ฟิตเนส", "km": "កន្លែងហាត់ប្រាណ", "ko": "헬스장", "ja": "ジム"},
-    "公共機關": {"en": "Public Office", "id": "Kantor Publik", "vi": "Cơ quan công", "th": "หน่วยงานรัฐ", "km": "ស្ថាប័នសាធារណៈ", "ko": "공공기관", "ja": "公共機関"},
-    "公園": {"en": "Park", "id": "Taman", "vi": "Công viên", "th": "สวนสาธารณะ", "km": "សួនច្បារ", "ko": "공원", "ja": "公園"},
-    "公車站": {"en": "Bus Stop", "id": "Halte Bus", "vi": "Trạm xe buýt", "th": "ป้ายรถเมล์", "km": "ចំណតឡានក្រុង", "ko": "버스 정류장", "ja": "バス停"},
-    "冰店": {"en": "Ice Shop", "id": "Toko Es", "vi": "Quán kem", "th": "ร้านน้ำแข็งไส", "km": "ហាងទឹកកក", "ko": "빙수 가게", "ja": "かき氷店"},
-    "博物館": {"en": "Museum", "id": "Museum", "vi": "Bảo tàng", "th": "พิพิธภัณฑ์", "km": "សារមន្ទីរ", "ko": "박물관", "ja": "博物館"},
-    "古蹟": {"en": "Historic Site", "id": "Situs Bersejarah", "vi": "Di tích", "th": "โบราณสถาน", "km": "តំបន់ប្រវត្តិសាស្ត្រ", "ko": "유적", "ja": "史跡"},
-    "咖啡廳": {"en": "Cafe", "id": "Kafe", "vi": "Quán cà phê", "th": "ร้านกาแฟ", "km": "ហាងកាហ្វេ", "ko": "카페", "ja": "カフェ"},
-    "商家": {"en": "Business", "id": "Usaha", "vi": "Cửa hàng", "th": "ธุรกิจ", "km": "អាជីវកម្ម", "ko": "업체", "ja": "店舗"},
-    "商店": {"en": "Shop", "id": "Toko", "vi": "Cửa hàng", "th": "ร้านค้า", "km": "ហាង", "ko": "상점", "ja": "店"},
-    "國中": {"en": "Junior High School", "id": "SMP", "vi": "Trường THCS", "th": "โรงเรียนมัธยมต้น", "km": "អនុវិទ្យាល័យ", "ko": "중학교", "ja": "中学校"},
-    "國小": {"en": "Elementary School", "id": "SD", "vi": "Trường tiểu học", "th": "โรงเรียนประถม", "km": "សាលាបឋមសិក្សា", "ko": "초등학교", "ja": "小学校"},
-    "圖書館": {"en": "Library", "id": "Perpustakaan", "vi": "Thư viện", "th": "ห้องสมุด", "km": "បណ្ណាល័យ", "ko": "도서관", "ja": "図書館"},
-    "地理": {"en": "Place", "id": "Tempat", "vi": "Địa điểm", "th": "สถานที่", "km": "ទីកន្លែង", "ko": "지명", "ja": "地名"},
-    "地點": {"en": "Place", "id": "Tempat", "vi": "Địa điểm", "th": "สถานที่", "km": "ទីកន្លែង", "ko": "장소", "ja": "場所"},
-    "大學": {"en": "University", "id": "Universitas", "vi": "Đại học", "th": "มหาวิทยาลัย", "km": "សាកលវិទ្យាល័យ", "ko": "대학교", "ja": "大学"},
-    "學校": {"en": "School", "id": "Sekolah", "vi": "Trường học", "th": "โรงเรียน", "km": "សាលារៀន", "ko": "학교", "ja": "学校"},
-    "宗教團體": {"en": "Religious Group", "id": "Organisasi Keagamaan", "vi": "Tổ chức tôn giáo", "th": "องค์กรศาสนา", "km": "អង្គការសាសនា", "ko": "종교 단체", "ja": "宗教団体"},
-    "寺廟": {"en": "Temple", "id": "Kuil", "vi": "Chùa miếu", "th": "วัด", "km": "វត្ត", "ko": "사원", "ja": "寺院"},
-    "小吃攤": {"en": "Food Stall", "id": "Warung", "vi": "Quán ăn vặt", "th": "แผงอาหาร", "km": "តូបលក់ម្ហូប", "ko": "노점", "ja": "屋台"},
-    "山": {"en": "Mountain", "id": "Gunung", "vi": "Núi", "th": "ภูเขา", "km": "ភ្នំ", "ko": "산", "ja": "山"},
-    "幼兒園": {"en": "Kindergarten", "id": "TK", "vi": "Trường mầm non", "th": "โรงเรียนอนุบาล", "km": "សាលាមត្តេយ្យ", "ko": "유치원", "ja": "幼稚園"},
-    "捷運站": {"en": "MRT Station", "id": "Stasiun MRT", "vi": "Ga MRT", "th": "สถานีรถไฟฟ้า", "km": "ស្ថានីយ៍ MRT", "ko": "MRT역", "ja": "MRT駅"},
-    "提款機": {"en": "ATM", "id": "ATM", "vi": "ATM", "th": "ตู้ ATM", "km": "ម៉ាស៊ីន ATM", "ko": "ATM", "ja": "ATM"},
-    "政府機關": {"en": "Government Office", "id": "Kantor Pemerintah", "vi": "Cơ quan nhà nước", "th": "หน่วยงานราชการ", "km": "ស្ថាប័នរដ្ឋាភិបាល", "ko": "관공서", "ja": "官公庁"},
-    "教會": {"en": "Church", "id": "Gereja", "vi": "Nhà thờ", "th": "โบสถ์", "km": "ព្រះវិហារ", "ko": "교회", "ja": "教会"},
-    "文化": {"en": "Culture", "id": "Budaya", "vi": "Văn hóa", "th": "วัฒนธรรม", "km": "វប្បធម៌", "ko": "문화", "ja": "文化"},
-    "旅館": {"en": "Hotel", "id": "Hotel", "vi": "Khách sạn", "th": "โรงแรม", "km": "សណ្ឋាគារ", "ko": "호텔", "ja": "ホテル"},
-    "早午餐": {"en": "Brunch", "id": "Brunch", "vi": "Bữa sáng muộn", "th": "บรันช์", "km": "អាហារពេលព្រឹក", "ko": "브런치", "ja": "ブランチ"},
-    "書店": {"en": "Bookstore", "id": "Toko Buku", "vi": "Nhà sách", "th": "ร้านหนังสือ", "km": "បណ្ណាគារ", "ko": "서점", "ja": "書店"},
-    "活動中心": {"en": "Community Center", "id": "Balai Warga", "vi": "Nhà văn hóa", "th": "ศูนย์ชุมชน", "km": "មជ្ឈមណ្ឌលសហគមន៍", "ko": "주민센터", "ja": "コミュニティセンター"},
-    "消防隊": {"en": "Fire Station", "id": "Pemadam Kebakaran", "vi": "Đội cứu hỏa", "th": "สถานีดับเพลิง", "km": "ស្ថានីយ៍ពន្លត់អគ្គិភ័យ", "ko": "소방서", "ja": "消防署"},
-    "游泳池": {"en": "Swimming Pool", "id": "Kolam Renang", "vi": "Hồ bơi", "th": "สระว่ายน้ำ", "km": "អាងហែលទឹក", "ko": "수영장", "ja": "プール"},
-    "牙醫": {"en": "Dentist", "id": "Dokter Gigi", "vi": "Nha khoa", "th": "ทันตแพทย์", "km": "ពេទ្យធ្មេញ", "ko": "치과", "ja": "歯科"},
-    "甜點店": {"en": "Dessert Shop", "id": "Toko Kue", "vi": "Tiệm bánh ngọt", "th": "ร้านขนมหวาน", "km": "ហាងបង្អែម", "ko": "디저트 가게", "ja": "スイーツ店"},
-    "生活服務": {"en": "Services", "id": "Layanan", "vi": "Dịch vụ", "th": "บริการ", "km": "សេវាកម្ម", "ko": "생활 서비스", "ja": "生活サービス"},
-    "百貨公司": {"en": "Department Store", "id": "Department Store", "vi": "Trung tâm thương mại", "th": "ห้างสรรพสินค้า", "km": "ផ្សារទំនើប", "ko": "백화점", "ja": "百貨店"},
-    "社福機構": {"en": "Social Welfare", "id": "Lembaga Sosial", "vi": "Cơ sở phúc lợi xã hội", "th": "สถานสงเคราะห์", "km": "ស្ថាប័នសុខុមាលភាពសង្គម", "ko": "사회복지기관", "ja": "福祉施設"},
-    "職業學校": {"en": "Vocational School", "id": "Sekolah Kejuruan", "vi": "Trường nghề", "th": "โรงเรียนอาชีวะ", "km": "សាលាវិជ្ជាជីវៈ", "ko": "직업학교", "ja": "職業学校"},
-    "茶館": {"en": "Tea House", "id": "Rumah Teh", "vi": "Quán trà", "th": "ร้านน้ำชา", "km": "ហាងតែ", "ko": "찻집", "ja": "茶館"},
-    "藝廊": {"en": "Gallery", "id": "Galeri", "vi": "Phòng tranh", "th": "หอศิลป์", "km": "វិចិត្រសាល", "ko": "갤러리", "ja": "ギャラリー"},
-    "藝文娛樂": {"en": "Arts & Entertainment", "id": "Seni & Hiburan", "vi": "Nghệ thuật & giải trí", "th": "ศิลปะและบันเทิง", "km": "សិល្បៈ និងការកម្សាន្ត", "ko": "문화·오락", "ja": "芸術・娯楽"},
-    "藥局": {"en": "Pharmacy", "id": "Apotek", "vi": "Nhà thuốc", "th": "ร้านขายยา", "km": "ឱសថស្ថាន", "ko": "약국", "ja": "薬局"},
-    "診所": {"en": "Clinic", "id": "Klinik", "vi": "Phòng khám", "th": "คลินิก", "km": "គ្លីនិក", "ko": "의원", "ja": "診療所"},
-    "警察局": {"en": "Police", "id": "Polisi", "vi": "Công an", "th": "สถานีตำรวจ", "km": "ប៉ុស្តិ៍នគរបាល", "ko": "경찰서", "ja": "警察署"},
-    "購物中心": {"en": "Shopping Mall", "id": "Mal", "vi": "Trung tâm mua sắm", "th": "ศูนย์การค้า", "km": "មជ្ឈមណ្ឌលផ្សារទំនើប", "ko": "쇼핑몰", "ja": "ショッピングモール"},
-    "超市": {"en": "Supermarket", "id": "Supermarket", "vi": "Siêu thị", "th": "ซูเปอร์มาร์เก็ต", "km": "ផ្សារទំនើប", "ko": "슈퍼마켓", "ja": "スーパー"},
-    "車站": {"en": "Station", "id": "Stasiun", "vi": "Nhà ga", "th": "สถานี", "km": "ស្ថានីយ៍", "ko": "역", "ja": "駅"},
-    "遊樂場": {"en": "Playground", "id": "Taman Bermain", "vi": "Sân chơi", "th": "สนามเด็กเล่น", "km": "សួនកុមារ", "ko": "놀이터", "ja": "遊び場"},
-    "運動休閒": {"en": "Sports & Leisure", "id": "Olahraga & Rekreasi", "vi": "Thể thao & giải trí", "th": "กีฬาและสันทนาการ", "km": "កីឡា និងការកម្សាន្ត", "ko": "스포츠·레저", "ja": "スポーツ・レジャー"},
-    "運動場館": {"en": "Sports Venue", "id": "Gedung Olahraga", "vi": "Nhà thi đấu", "th": "สนามกีฬา", "km": "កីឡដ្ឋាន", "ko": "체육시설", "ja": "スポーツ施設"},
-    "郵局": {"en": "Post Office", "id": "Kantor Pos", "vi": "Bưu điện", "th": "ไปรษณีย์", "km": "ប្រៃសណីយ៍", "ko": "우체국", "ja": "郵便局"},
-    "酒吧": {"en": "Bar", "id": "Bar", "vi": "Quán bar", "th": "บาร์", "km": "បារ", "ko": "바", "ja": "バー"},
-    "醫療": {"en": "Medical", "id": "Medis", "vi": "Y tế", "th": "การแพทย์", "km": "វេជ្ជសាស្ត្រ", "ko": "의료", "ja": "医療"},
-    "醫院": {"en": "Hospital", "id": "Rumah Sakit", "vi": "Bệnh viện", "th": "โรงพยาบาล", "km": "មន្ទីរពេទ្យ", "ko": "병원", "ja": "病院"},
-    "銀行": {"en": "Bank", "id": "Bank", "vi": "Ngân hàng", "th": "ธนาคาร", "km": "ធនាគារ", "ko": "은행", "ja": "銀行"},
-    "飲料店": {"en": "Drink Shop", "id": "Toko Minuman", "vi": "Quán đồ uống", "th": "ร้านเครื่องดื่ม", "km": "ហាងភេសជ្ជៈ", "ko": "음료 가게", "ja": "ドリンク店"},
-    "餐廳": {"en": "Restaurant", "id": "Restoran", "vi": "Nhà hàng", "th": "ร้านอาหาร", "km": "ភោជនីយដ្ឋាន", "ko": "식당", "ja": "レストラン"},
-    "餐飲": {"en": "Food & Drink", "id": "Makanan & Minuman", "vi": "Ăn uống", "th": "อาหารและเครื่องดื่ม", "km": "អាហារ និងភេសជ្ជៈ", "ko": "음식점", "ja": "飲食"},
-    "高中": {"en": "Senior High School", "id": "SMA", "vi": "Trường THPT", "th": "โรงเรียนมัธยมปลาย", "km": "វិទ្យាល័យ", "ko": "고등학교", "ja": "高校"},
-    "麵包店": {"en": "Bakery", "id": "Toko Roti", "vi": "Tiệm bánh mì", "th": "ร้านเบเกอรี่", "km": "ហាងនំប៉័ង", "ko": "빵집", "ja": "パン屋"}
+ "note": "地點類別（scripts/build_place_index.py 的中文類別）→ 7 種語言（人工整理，非核心資料）",
+ "categories": {
+  "交通": {
+   "en": "Transport",
+   "id": "Transportasi",
+   "vi": "Giao thông",
+   "th": "การเดินทาง",
+   "ko": "교통",
+   "ja": "交通"
+  },
+  "住宿": {
+   "en": "Lodging",
+   "id": "Penginapan",
+   "vi": "Chỗ ở",
+   "th": "ที่พัก",
+   "ko": "숙박",
+   "ja": "宿泊"
+  },
+  "便利商店": {
+   "en": "Convenience Store",
+   "id": "Minimarket",
+   "vi": "Cửa hàng tiện lợi",
+   "th": "ร้านสะดวกซื้อ",
+   "ko": "편의점",
+   "ja": "コンビニ"
+  },
+  "停車場": {
+   "en": "Parking",
+   "id": "Tempat Parkir",
+   "vi": "Bãi đỗ xe",
+   "th": "ที่จอดรถ",
+   "ko": "주차장",
+   "ja": "駐車場"
+  },
+  "健身房": {
+   "en": "Gym",
+   "id": "Pusat Kebugaran",
+   "vi": "Phòng gym",
+   "th": "ฟิตเนส",
+   "ko": "헬스장",
+   "ja": "ジム"
+  },
+  "公共機關": {
+   "en": "Public Office",
+   "id": "Kantor Publik",
+   "vi": "Cơ quan công",
+   "th": "หน่วยงานรัฐ",
+   "ko": "공공기관",
+   "ja": "公共機関"
+  },
+  "公園": {
+   "en": "Park",
+   "id": "Taman",
+   "vi": "Công viên",
+   "th": "สวนสาธารณะ",
+   "ko": "공원",
+   "ja": "公園"
+  },
+  "公車站": {
+   "en": "Bus Stop",
+   "id": "Halte Bus",
+   "vi": "Trạm xe buýt",
+   "th": "ป้ายรถเมล์",
+   "ko": "버스 정류장",
+   "ja": "バス停"
+  },
+  "冰店": {
+   "en": "Ice Shop",
+   "id": "Toko Es",
+   "vi": "Quán kem",
+   "th": "ร้านน้ำแข็งไส",
+   "ko": "빙수 가게",
+   "ja": "かき氷店"
+  },
+  "博物館": {
+   "en": "Museum",
+   "id": "Museum",
+   "vi": "Bảo tàng",
+   "th": "พิพิธภัณฑ์",
+   "ko": "박물관",
+   "ja": "博物館"
+  },
+  "古蹟": {
+   "en": "Historic Site",
+   "id": "Situs Bersejarah",
+   "vi": "Di tích",
+   "th": "โบราณสถาน",
+   "ko": "유적",
+   "ja": "史跡"
+  },
+  "咖啡廳": {
+   "en": "Cafe",
+   "id": "Kafe",
+   "vi": "Quán cà phê",
+   "th": "ร้านกาแฟ",
+   "ko": "카페",
+   "ja": "カフェ"
+  },
+  "商家": {
+   "en": "Business",
+   "id": "Usaha",
+   "vi": "Cửa hàng",
+   "th": "ธุรกิจ",
+   "ko": "업체",
+   "ja": "店舗"
+  },
+  "商店": {
+   "en": "Shop",
+   "id": "Toko",
+   "vi": "Cửa hàng",
+   "th": "ร้านค้า",
+   "ko": "상점",
+   "ja": "店"
+  },
+  "國中": {
+   "en": "Junior High School",
+   "id": "SMP",
+   "vi": "Trường THCS",
+   "th": "โรงเรียนมัธยมต้น",
+   "ko": "중학교",
+   "ja": "中学校"
+  },
+  "國小": {
+   "en": "Elementary School",
+   "id": "SD",
+   "vi": "Trường tiểu học",
+   "th": "โรงเรียนประถม",
+   "ko": "초등학교",
+   "ja": "小学校"
+  },
+  "圖書館": {
+   "en": "Library",
+   "id": "Perpustakaan",
+   "vi": "Thư viện",
+   "th": "ห้องสมุด",
+   "ko": "도서관",
+   "ja": "図書館"
+  },
+  "地理": {
+   "en": "Place",
+   "id": "Tempat",
+   "vi": "Địa điểm",
+   "th": "สถานที่",
+   "ko": "지명",
+   "ja": "地名"
+  },
+  "地點": {
+   "en": "Place",
+   "id": "Tempat",
+   "vi": "Địa điểm",
+   "th": "สถานที่",
+   "ko": "장소",
+   "ja": "場所"
+  },
+  "大學": {
+   "en": "University",
+   "id": "Universitas",
+   "vi": "Đại học",
+   "th": "มหาวิทยาลัย",
+   "ko": "대학교",
+   "ja": "大学"
+  },
+  "學校": {
+   "en": "School",
+   "id": "Sekolah",
+   "vi": "Trường học",
+   "th": "โรงเรียน",
+   "ko": "학교",
+   "ja": "学校"
+  },
+  "宗教團體": {
+   "en": "Religious Group",
+   "id": "Organisasi Keagamaan",
+   "vi": "Tổ chức tôn giáo",
+   "th": "องค์กรศาสนา",
+   "ko": "종교 단체",
+   "ja": "宗教団体"
+  },
+  "寺廟": {
+   "en": "Temple",
+   "id": "Kuil",
+   "vi": "Chùa miếu",
+   "th": "วัด",
+   "ko": "사원",
+   "ja": "寺院"
+  },
+  "小吃攤": {
+   "en": "Food Stall",
+   "id": "Warung",
+   "vi": "Quán ăn vặt",
+   "th": "แผงอาหาร",
+   "ko": "노점",
+   "ja": "屋台"
+  },
+  "山": {
+   "en": "Mountain",
+   "id": "Gunung",
+   "vi": "Núi",
+   "th": "ภูเขา",
+   "ko": "산",
+   "ja": "山"
+  },
+  "幼兒園": {
+   "en": "Kindergarten",
+   "id": "TK",
+   "vi": "Trường mầm non",
+   "th": "โรงเรียนอนุบาล",
+   "ko": "유치원",
+   "ja": "幼稚園"
+  },
+  "捷運站": {
+   "en": "MRT Station",
+   "id": "Stasiun MRT",
+   "vi": "Ga MRT",
+   "th": "สถานีรถไฟฟ้า",
+   "ko": "MRT역",
+   "ja": "MRT駅"
+  },
+  "提款機": {
+   "en": "ATM",
+   "id": "ATM",
+   "vi": "ATM",
+   "th": "ตู้ ATM",
+   "ko": "ATM",
+   "ja": "ATM"
+  },
+  "政府機關": {
+   "en": "Government Office",
+   "id": "Kantor Pemerintah",
+   "vi": "Cơ quan nhà nước",
+   "th": "หน่วยงานราชการ",
+   "ko": "관공서",
+   "ja": "官公庁"
+  },
+  "教會": {
+   "en": "Church",
+   "id": "Gereja",
+   "vi": "Nhà thờ",
+   "th": "โบสถ์",
+   "ko": "교회",
+   "ja": "教会"
+  },
+  "文化": {
+   "en": "Culture",
+   "id": "Budaya",
+   "vi": "Văn hóa",
+   "th": "วัฒนธรรม",
+   "ko": "문화",
+   "ja": "文化"
+  },
+  "旅館": {
+   "en": "Hotel",
+   "id": "Hotel",
+   "vi": "Khách sạn",
+   "th": "โรงแรม",
+   "ko": "호텔",
+   "ja": "ホテル"
+  },
+  "早午餐": {
+   "en": "Brunch",
+   "id": "Brunch",
+   "vi": "Bữa sáng muộn",
+   "th": "บรันช์",
+   "ko": "브런치",
+   "ja": "ブランチ"
+  },
+  "書店": {
+   "en": "Bookstore",
+   "id": "Toko Buku",
+   "vi": "Nhà sách",
+   "th": "ร้านหนังสือ",
+   "ko": "서점",
+   "ja": "書店"
+  },
+  "活動中心": {
+   "en": "Community Center",
+   "id": "Balai Warga",
+   "vi": "Nhà văn hóa",
+   "th": "ศูนย์ชุมชน",
+   "ko": "주민센터",
+   "ja": "コミュニティセンター"
+  },
+  "消防隊": {
+   "en": "Fire Station",
+   "id": "Pemadam Kebakaran",
+   "vi": "Đội cứu hỏa",
+   "th": "สถานีดับเพลิง",
+   "ko": "소방서",
+   "ja": "消防署"
+  },
+  "游泳池": {
+   "en": "Swimming Pool",
+   "id": "Kolam Renang",
+   "vi": "Hồ bơi",
+   "th": "สระว่ายน้ำ",
+   "ko": "수영장",
+   "ja": "プール"
+  },
+  "牙醫": {
+   "en": "Dentist",
+   "id": "Dokter Gigi",
+   "vi": "Nha khoa",
+   "th": "ทันตแพทย์",
+   "ko": "치과",
+   "ja": "歯科"
+  },
+  "甜點店": {
+   "en": "Dessert Shop",
+   "id": "Toko Kue",
+   "vi": "Tiệm bánh ngọt",
+   "th": "ร้านขนมหวาน",
+   "ko": "디저트 가게",
+   "ja": "スイーツ店"
+  },
+  "生活服務": {
+   "en": "Services",
+   "id": "Layanan",
+   "vi": "Dịch vụ",
+   "th": "บริการ",
+   "ko": "생활 서비스",
+   "ja": "生活サービス"
+  },
+  "百貨公司": {
+   "en": "Department Store",
+   "id": "Department Store",
+   "vi": "Trung tâm thương mại",
+   "th": "ห้างสรรพสินค้า",
+   "ko": "백화점",
+   "ja": "百貨店"
+  },
+  "社福機構": {
+   "en": "Social Welfare",
+   "id": "Lembaga Sosial",
+   "vi": "Cơ sở phúc lợi xã hội",
+   "th": "สถานสงเคราะห์",
+   "ko": "사회복지기관",
+   "ja": "福祉施設"
+  },
+  "職業學校": {
+   "en": "Vocational School",
+   "id": "Sekolah Kejuruan",
+   "vi": "Trường nghề",
+   "th": "โรงเรียนอาชีวะ",
+   "ko": "직업학교",
+   "ja": "職業学校"
+  },
+  "茶館": {
+   "en": "Tea House",
+   "id": "Rumah Teh",
+   "vi": "Quán trà",
+   "th": "ร้านน้ำชา",
+   "ko": "찻집",
+   "ja": "茶館"
+  },
+  "藝廊": {
+   "en": "Gallery",
+   "id": "Galeri",
+   "vi": "Phòng tranh",
+   "th": "หอศิลป์",
+   "ko": "갤러리",
+   "ja": "ギャラリー"
+  },
+  "藝文娛樂": {
+   "en": "Arts & Entertainment",
+   "id": "Seni & Hiburan",
+   "vi": "Nghệ thuật & giải trí",
+   "th": "ศิลปะและบันเทิง",
+   "ko": "문화·오락",
+   "ja": "芸術・娯楽"
+  },
+  "藥局": {
+   "en": "Pharmacy",
+   "id": "Apotek",
+   "vi": "Nhà thuốc",
+   "th": "ร้านขายยา",
+   "ko": "약국",
+   "ja": "薬局"
+  },
+  "診所": {
+   "en": "Clinic",
+   "id": "Klinik",
+   "vi": "Phòng khám",
+   "th": "คลินิก",
+   "ko": "의원",
+   "ja": "診療所"
+  },
+  "警察局": {
+   "en": "Police",
+   "id": "Polisi",
+   "vi": "Công an",
+   "th": "สถานีตำรวจ",
+   "ko": "경찰서",
+   "ja": "警察署"
+  },
+  "購物中心": {
+   "en": "Shopping Mall",
+   "id": "Mal",
+   "vi": "Trung tâm mua sắm",
+   "th": "ศูนย์การค้า",
+   "ko": "쇼핑몰",
+   "ja": "ショッピングモール"
+  },
+  "超市": {
+   "en": "Supermarket",
+   "id": "Supermarket",
+   "vi": "Siêu thị",
+   "th": "ซูเปอร์มาร์เก็ต",
+   "ko": "슈퍼마켓",
+   "ja": "スーパー"
+  },
+  "車站": {
+   "en": "Station",
+   "id": "Stasiun",
+   "vi": "Nhà ga",
+   "th": "สถานี",
+   "ko": "역",
+   "ja": "駅"
+  },
+  "遊樂場": {
+   "en": "Playground",
+   "id": "Taman Bermain",
+   "vi": "Sân chơi",
+   "th": "สนามเด็กเล่น",
+   "ko": "놀이터",
+   "ja": "遊び場"
+  },
+  "運動休閒": {
+   "en": "Sports & Leisure",
+   "id": "Olahraga & Rekreasi",
+   "vi": "Thể thao & giải trí",
+   "th": "กีฬาและสันทนาการ",
+   "ko": "스포츠·레저",
+   "ja": "スポーツ・レジャー"
+  },
+  "運動場館": {
+   "en": "Sports Venue",
+   "id": "Gedung Olahraga",
+   "vi": "Nhà thi đấu",
+   "th": "สนามกีฬา",
+   "ko": "체육시설",
+   "ja": "スポーツ施設"
+  },
+  "郵局": {
+   "en": "Post Office",
+   "id": "Kantor Pos",
+   "vi": "Bưu điện",
+   "th": "ไปรษณีย์",
+   "ko": "우체국",
+   "ja": "郵便局"
+  },
+  "酒吧": {
+   "en": "Bar",
+   "id": "Bar",
+   "vi": "Quán bar",
+   "th": "บาร์",
+   "ko": "바",
+   "ja": "バー"
+  },
+  "醫療": {
+   "en": "Medical",
+   "id": "Medis",
+   "vi": "Y tế",
+   "th": "การแพทย์",
+   "ko": "의료",
+   "ja": "医療"
+  },
+  "醫院": {
+   "en": "Hospital",
+   "id": "Rumah Sakit",
+   "vi": "Bệnh viện",
+   "th": "โรงพยาบาล",
+   "ko": "병원",
+   "ja": "病院"
+  },
+  "銀行": {
+   "en": "Bank",
+   "id": "Bank",
+   "vi": "Ngân hàng",
+   "th": "ธนาคาร",
+   "ko": "은행",
+   "ja": "銀行"
+  },
+  "飲料店": {
+   "en": "Drink Shop",
+   "id": "Toko Minuman",
+   "vi": "Quán đồ uống",
+   "th": "ร้านเครื่องดื่ม",
+   "ko": "음료 가게",
+   "ja": "ドリンク店"
+  },
+  "餐廳": {
+   "en": "Restaurant",
+   "id": "Restoran",
+   "vi": "Nhà hàng",
+   "th": "ร้านอาหาร",
+   "ko": "식당",
+   "ja": "レストラン"
+  },
+  "餐飲": {
+   "en": "Food & Drink",
+   "id": "Makanan & Minuman",
+   "vi": "Ăn uống",
+   "th": "อาหารและเครื่องดื่ม",
+   "ko": "음식점",
+   "ja": "飲食"
+  },
+  "高中": {
+   "en": "Senior High School",
+   "id": "SMA",
+   "vi": "Trường THPT",
+   "th": "โรงเรียนมัธยมปลาย",
+   "ko": "고등학교",
+   "ja": "高校"
+  },
+  "麵包店": {
+   "en": "Bakery",
+   "id": "Toko Roti",
+   "vi": "Tiệm bánh mì",
+   "th": "ร้านเบเกอรี่",
+   "ko": "빵집",
+   "ja": "パン屋"
   }
+ }
 }

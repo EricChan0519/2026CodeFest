@@ -32,7 +32,7 @@ from functools import lru_cache
 from pathlib import Path
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
-LANGS = ("en", "id", "vi", "th", "km", "ko", "ja")
+LANGS = ("en", "id", "vi", "th", "ko", "ja")
 # 專有名稱最多幾個字才翻譯（臺北的地名多半 2、3 個字：芝山、天母、西門町；再長多半混了沒收錄的普通詞，
 # 例如「臺大綜合體育館」的「綜合」、「臺北榮民總醫院」的「榮民總」，硬拼成拼音會變成看不懂的字）
 MAX_PROPER_CHARS = 3
@@ -45,13 +45,12 @@ MAX_CANDIDATES = 3
 # （정치 → 精緻 在店名裡很常見，但「政治大學」才是真的地名）
 MAX_READING_CANDIDATES = 8
 # 種類詞放在專有名稱前面的語言（Bảo tàng Đài Loan、Museum Taiwan、พิพิธภัณฑ์…）
-HEAD_FIRST = {"vi", "id", "th", "km"}
+HEAD_FIRST = {"vi", "id", "th"}
 
 # ---------------------------------------------------------------- 文字、語言判斷
 
 _HANGUL = re.compile(r"[가-힣]")
 _THAI = re.compile(r"[฀-๿]")
-_KHMER = re.compile(r"[ក-៿]")
 _KANA = re.compile(r"[぀-ヿ]")
 _HAN = re.compile(r"[㐀-鿿豈-﫿]")
 _LATIN = re.compile(r"[a-zA-ZÀ-ɏḀ-ỿ]")
@@ -60,13 +59,11 @@ _VIET = re.compile(r"[ăâđêôơưĂÂĐÊÔƠỰ̀́̃̉]|[Ạ-ỹ]")
 
 
 def detect_lang(q: str) -> str:
-    """回傳 ko、th、km、ja、vi、latin（英文或印尼文，translate_query 再細分）或 zh"""
+    """回傳 ko、th、ja、vi、latin（英文或印尼文，translate_query 再細分）或 zh"""
     if _HANGUL.search(q):
         return "ko"
     if _THAI.search(q):
         return "th"
-    if _KHMER.search(q):
-        return "km"
     if _KANA.search(q):
         return "ja"
     if _HAN.search(q):
@@ -98,13 +95,103 @@ class Term:
 
 
 @lru_cache(maxsize=1)
-def load_glossary() -> list[Term]:
+def load_base_glossary() -> list[Term]:
+    """人工整理的詞彙表（api/data/place_glossary.json）"""
     path = Path(os.environ.get("PLACE_GLOSSARY_PATH") or DATA_DIR / "place_glossary.json")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return [Term(t["zh"], t["kind"], {lang: list(t.get(lang) or []) for lang in LANGS}) for t in data["terms"]]
     except (OSError, ValueError, KeyError, TypeError):
         return []
+
+
+@lru_cache(maxsize=1)
+def load_glossary() -> list[Term]:
+    """詞彙表＋臺北捷運站的官方站名（2026-11-08 回報：雙連等站名要用官方翻譯）"""
+    base = load_base_glossary()
+    return base + station_terms(frozenset(t.zh for t in base))
+
+
+@lru_cache(maxsize=1)
+def metro_station_names() -> tuple[tuple[str, str, str], ...]:
+    """捷運站的官方中英文站名（scripts/build_metro_index.py 從 TDX 產生的 api/data/metro_index.json）"""
+    path = Path(os.environ.get("METRO_INDEX_PATH") or DATA_DIR / "metro_index.json")
+    try:
+        out = {}
+        for st in json.loads(path.read_text(encoding="utf-8"))["stations"]:
+            zh, en = st["name"]["zh"], st["name"].get("en")
+            if zh and en:
+                out.setdefault(zh.replace("台", "臺"), (en.strip(), zh))
+        return tuple((k, en, orig) for k, (en, orig) in sorted(out.items()))
+    except (OSError, ValueError, KeyError, TypeError):
+        return ()
+
+
+_PINYIN_SYLLABLES: frozenset[str] | None = None
+
+
+def _split_official_pinyin(en: str, n: int) -> list[str] | None:
+    """官方英文站名（Dingpu、Shuanglian）切成 n 個拼音音節；不是拼音（Taipei Main Station）回 None"""
+    global _PINYIN_SYLLABLES
+    if _PINYIN_SYLLABLES is None:
+        _PINYIN_SYLLABLES = frozenset(load_readings().pinyin.values()) | {"lv", "nv"}
+    letters = re.sub(r"[^a-z]", "", fold(en))
+    if not letters:
+        return None
+
+    @lru_cache(maxsize=None)
+    def go(i: int, k: int) -> tuple[str, ...] | None:
+        if i == len(letters):
+            return () if k == 0 else None
+        if k == 0:
+            return None
+        for j in range(min(len(letters), i + 6), i, -1):
+            syl = letters[i:j]
+            if syl in _PINYIN_SYLLABLES:
+                rest = go(j, k - 1)
+                if rest is not None:
+                    return (syl,) + rest
+        return None
+
+    found = go(0, n)
+    return list(found) if found else None
+
+
+def station_terms(skip: frozenset[str]) -> list[Term]:
+    """每個捷運站一個專有名稱：英、印尼、越、泰、高棉文用官方英文站名；韓文照官方英文的拼音轉成韓文
+    （頂埔 Dingpu → 딩푸，不會因為「埔」有兩個讀音變成 딩부）；日文用漢字。
+    官方英文是意譯的（台北車站 Taipei Main Station），韓文照原本的詞彙表組（타이베이역）。"""
+    out = []
+    for zh, en, original in metro_station_names():
+        if zh in skip or "/" in zh:
+            continue
+        han = [c for c in zh if is_han(c)]
+        syl = _split_official_pinyin(en, len(han)) if len(han) == len(zh) else None
+        # 切出來的音節要有一半以上和那個字的讀音一樣，才算是拼音（Taipei Arena 也切得成 tai pei a ren a，但不是）
+        if syl and sum(a == load_readings().pinyin.get(c) for a, c in zip(syl, zh)) * 2 < len(zh):
+            syl = None
+        th = en
+        if syl:
+            parts = [pinyin_to_hangul(x) for x in syl]
+            ko = "".join(parts) if None not in parts else None
+            thai = [pinyin_to_thai(x) for x in syl]
+            if None not in thai:
+                th = "".join(thai)  # 泰文照官方拼音轉成泰文（Zhishan → จือซาน）
+        else:
+            ko = localize_name(zh, "ko", base_only=True)["text"] or romanize(zh, "ko")
+            # 泰文：官方英文是意譯的（NTU Hospital）也照泰文組，不留英文
+            th = localize_name(zh, "th", base_only=True)["text"] or romanize(zh, "th") or en
+        if not ko:
+            continue
+        forms = {lang: [en] for lang in ("en", "id")}
+        # 越南文：不在車站的名稱（士林夜市、士林區）用漢越音 Sĩ Lâm；是車站時 localize_name 換成官方站名
+        forms["vi"] = [(romanize(zh, "vi") if syl else None) or en]
+        forms["th"] = [th]
+        forms["ko"] = [ko]
+        # 日文：台北車站 → 台北駅（日本人的說法），其他站名用漢字
+        forms["ja"] = [re.sub(r"車站$", "駅", original)]
+        out.append(Term(zh, "proper", forms))
+    return out
 
 
 @dataclass
@@ -117,6 +204,9 @@ class Readings:
     available: bool = True
 
 
+_VIET_FIX = {"好": ["hảo"], "樂": ["lạc"], "行": ["hành"], "長": ["trường"], "重": ["trùng"]}
+
+
 @lru_cache(maxsize=1)
 def load_readings() -> Readings:
     path = Path(os.environ.get("HAN_READINGS_PATH") or DATA_DIR / "han_readings.json")
@@ -126,7 +216,8 @@ def load_readings() -> Readings:
         return Readings(
             pinyin={c: v[0] for c, v in chars.items() if v[0]},
             hangul={c: v[1] for c, v in chars.items() if v[1]},
-            viet={c: v[2] for c, v in chars.items() if v[2]},
+            # 漢越音有好幾個時 Unihan 不一定把常用的放第一個：好 = hảo（不是 háo）
+            viet={**{c: v[2] for c, v in chars.items() if v[2]}, **_VIET_FIX},
             jp=data.get("jp") or {},
             s2t=data.get("s2t") or {},
         )
@@ -171,6 +262,18 @@ def sources() -> list[dict]:
 def _taiwan_chars() -> frozenset[str]:
     """公車站官方名稱用到的字（全是臺灣的正體字）：這些字不用換"""
     return frozenset("".join(english_names()[0].keys()))
+
+
+@lru_cache(maxsize=1)
+def _to_shinjitai() -> dict[str, str]:
+    """繁體 → 日文新字體（JPShinjitaiCharacters 反過來：學 → 学、藝 → 芸）"""
+    return {trad: jp for jp, trad in load_readings().jp.items() if len(trad) == 1}
+
+
+def to_japanese(s: str) -> str:
+    """日文顯示：繁體字換成日文的寫法（中山駅裝置藝術街 → 中山駅装置芸術街）"""
+    table = _to_shinjitai()
+    return "".join(table.get(c, c) for c in s).replace("臺", "台")
 
 
 def to_traditional(s: str) -> str:
@@ -267,6 +370,36 @@ def pinyin_to_hangul(py: str) -> str | None:
             jung = _PALATAL.get(jung, jung)
         out.append(_syllable(cho if i == 0 else 11, jung, jong))
     return "".join(out)
+
+
+# 漢語拼音 → 泰文（2026-11-08 回報：泰文結果英文太多；照泰國常見的中文地名寫法，不標聲調）
+_TH_INI = {"b": "บ", "p": "พ", "m": "ม", "f": "ฟ", "d": "ต", "t": "ท", "n": "น", "l": "ล", "g": "ก", "k": "ค", "h": "ฮ",
+           "j": "จ", "q": "ช", "x": "ซ", "zh": "จ", "ch": "ช", "sh": "ซ", "r": "ร", "z": "จ", "c": "ช", "s": "ซ", "": "อ"}
+# {C} 是聲母
+_TH_FIN = {
+    "a": "{C}า", "o": "{C}อ", "e": "เ{C}อ", "ai": "ไ{C}", "ei": "เ{C}ย", "ao": "เ{C}า", "ou": "โ{C}ว", "an": "{C}าน",
+    "en": "เ{C}ิน", "ang": "{C}าง", "eng": "เ{C}ิง", "ong": "{C}ง", "er": "เออร์",
+    "i": "{C}ี", "ia": "เ{C}ีย", "ie": "เ{C}ีย", "iao": "เ{C}ียว", "iu": "{C}ิว", "ian": "เ{C}ียน", "in": "{C}ิน",
+    "iang": "เ{C}ียง", "ing": "{C}ิง", "iong": "{C}ยง",
+    "u": "{C}ู", "ua": "{C}วา", "uo": "{C}วอ", "uai": "{C}วาย", "ui": "{C}ุย", "uan": "{C}วน", "un": "{C}ุน",
+    "uang": "{C}วง", "ueng": "เวิง",
+    "v": "{C}วี", "ve": "เ{C}วีย", "van": "เ{C}วียน", "vn": "{C}วิน",
+}
+
+
+def pinyin_to_thai(py: str) -> str | None:
+    ini, fin, zero = _split_pinyin(py)
+    if ini in ("zh", "ch", "sh", "r", "z", "c", "s") and fin == "i":
+        pattern = "{C}ือ"  # zhi จือ、shi ซือ
+    elif zero and fin == "ui":
+        pattern = "เว่ย"
+    elif zero and fin == "un":
+        pattern = "เวิน"
+    else:
+        pattern = _TH_FIN.get(fin)
+    if not pattern:
+        return None
+    return pattern.replace("{C}", _TH_INI[ini])
 
 
 # ---------------------------------------------------------------- 讀音
@@ -618,6 +751,9 @@ def translate_query(q: str) -> dict:
         display = _guess_latin(segments)
 
     queries = _assemble(prefixes + propers + heads)
+    if not queries and propers and heads:
+        # 「士林公車站」這種組法沒有任何地名用到：只用地名找（Shilin bus stop → 士林）
+        queries = _assemble(prefixes + propers) or _assemble(propers)
     if not queries and propers:
         unknown = unknown + [p for p in propers if p.via == "reading"]
     if lang in ("latin", "vi"):
@@ -638,12 +774,46 @@ def translate_query(q: str) -> dict:
 
 # ---------------------------------------------------------------- 中文 → 外語
 
-def _zh_terms() -> list[Term]:
-    return sorted(load_glossary(), key=lambda t: -len(t.zh))
+def _zh_terms(base_only: bool = False) -> list[Term]:
+    return sorted(load_base_glossary() if base_only else load_glossary(), key=lambda t: -len(t.zh))
 
 
-def _segment_zh(name: str) -> list[tuple[str, Term | None]]:
-    terms = _zh_terms()
+_TRANSIT_WORDS = ("捷運", "臺鐵", "台鐵", "高鐵", "輕軌", "公車", "客運", "機捷")
+_STOP_CORE = re.compile(r"\(.*?\)|（.*?）|捷運|臺鐵|台鐵|高鐵|輕軌|公車|客運|車站|站|[一二三四五六七八九十0-9]+$")
+
+
+@lru_cache(maxsize=1)
+def _known_stop_places() -> frozenset[str]:
+    """公車站、捷運站名拿掉 捷運、站、括號之後的地名（芝山、士林、臺北）"""
+    return frozenset(c for c in (_STOP_CORE.sub("", zh) for zh in english_names()[0]) if len(c) >= 2)
+
+
+def _station_context(name: str, residual: str, out: list) -> bool:
+    if any(w in name for w in _TRANSIT_WORDS):
+        return True
+    if out and out[-1][1] is not None and out[-1][1].kind == "proper":
+        return True  # 臺北站、新北站
+    before = "".join(text for text, _ in out) + residual
+    known = _known_stop_places()
+    # 前面那一段、或整個名稱到「站」之前（大安森林公園站）是認得的站名
+    return residual.replace("台", "臺") in known or before.replace("台", "臺") in known
+
+
+def _merge_prefix_head(segs: list[tuple[str, Term | None]]) -> list[tuple[str, Term | None]]:
+    """前綴＋最後的種類詞合起來是一個詞時用那個詞：公車＋…＋站 → 公車站（Trạm xe buýt，不是 Ga Xe buýt）"""
+    if len(segs) < 2 or segs[0][1] is None or segs[-1][1] is None:
+        return segs
+    first, last = segs[0][1], segs[-1][1]
+    if first.kind != "prefix" or last.kind != "head":
+        return segs
+    merged = next((t for t in load_base_glossary() if t.zh == first.zh + last.zh and t.kind == "head"), None)
+    if merged is None:
+        return segs
+    return segs[1:-1] + [(merged.zh, merged)]
+
+
+def _segment_zh(name: str, base_only: bool = False) -> list[tuple[str, Term | None]]:
+    terms = _zh_terms(base_only)
     out: list[tuple[str, Term | None]] = []
     residual = ""
     i = 0
@@ -656,6 +826,10 @@ def _segment_zh(name: str) -> list[tuple[str, Term | None]]:
                 after_term = not residual and bool(out) and out[-1][1] is not None
                 at_end = i + 1 == len(name)
                 if len(t.zh) == 1 and t.kind == "head" and (not at_end or (len(residual) < 2 and not after_term)):
+                    continue
+                # 「站」只在交通的地方才是車站：前面是認得的地名（芝山、臺北），或名稱有 捷運、臺鐵、公車…；
+                # 「芝山抽水站」「某某工作站」不是車站（2026-11-08 回報：芝山抽水站 → 즈산 처우수이역）
+                if t.zh == "站" and not _station_context(name, residual, out):
                     continue
                 hit = t
                 break
@@ -691,7 +865,15 @@ def romanize(text: str, lang: str, spaced: bool = False) -> str | None:
             if not h:
                 return None
             syllables.append(h)
+        elif lang == "th":
+            p = r.pinyin.get(ch)
+            h = pinyin_to_thai(p) if p else None
+            if not h:
+                return None
+            syllables.append(h)
         elif lang == "vi":
+            # 越南文：一般地名用漢越音（士林 → Sĩ Lâm、天母 → Thiên Mẫu），越南人熟悉的說法；
+            # 捷運站名稱另外用官方站名（station_terms、localize_name 的 is_station）
             v = r.viet.get(ch)
             if not v:
                 return None
@@ -701,7 +883,7 @@ def romanize(text: str, lang: str, spaced: bool = False) -> str | None:
             if not p:
                 return None
             syllables.append(p.replace("v", "ü"))
-    if lang == "ko":
+    if lang in ("ko", "th"):
         return "".join(syllables)
     if lang == "vi" or spaced:
         return " ".join(s[:1].upper() + s[1:] for s in syllables)
@@ -712,18 +894,19 @@ def romanize(text: str, lang: str, spaced: bool = False) -> str | None:
 def _join(parts: list[str], lang: str) -> str:
     if lang == "ja":
         return "".join(parts)
-    if lang in ("th", "km", "ko"):
+    if lang in ("th", "ko"):
         # 泰文、高棉文、韓文地名詞之間不空格；夾在中間的拉丁字母（拼音、MRT）前後空一格
         out = ""
         for p in parts:
-            if out and (p[:1].isascii() or out[-1:].isascii()):
+            # 前一個詞本身有空格（쇼타임 시네마）時也空一格
+            if out and (p[:1].isascii() or out[-1:].isascii() or (lang in ("ko", "th") and len(p) > 1 and (" " in p or " " in parts[parts.index(p) - 1]))):
                 out += " "
             out += p
         return out
     return " ".join(parts)
 
 
-def localize_name(name: str, lang: str) -> dict:
+def localize_name(name: str, lang: str, base_only: bool = False) -> dict:
     """中文地名 → {"text": 翻譯或 None, "reading": 讀音或 None}；有翻譯時不給讀音"""
     if lang not in LANGS:
         return {"zh": name, "text": None, "reading": None}
@@ -738,7 +921,7 @@ def localize_name(name: str, lang: str) -> dict:
         if outer["reading"] and inner["reading"]:
             return {"zh": name, "text": None, "reading": f"{outer['reading']} ({inner['reading']})"}
     zh = re.sub(r"\s+", "", name.replace("台", "臺"))
-    segs = _segment_zh(zh)
+    segs = _segment_zh(zh, base_only)
     kinds = [("proper" if t is None else t.kind) for _, t in segs]
     order = {"prefix": 0, "proper": 1, "head": 2}
     ordered = all(order[a] <= order[b] for a, b in zip(kinds, kinds[1:]))
@@ -754,8 +937,14 @@ def localize_name(name: str, lang: str) -> dict:
     text = None
     if ok:
         parts: dict[str, list[str]] | None = {"prefix": [], "proper": [], "head": []}
+        segs = _merge_prefix_head(segs)
+        is_station = zh.startswith("捷運") or zh.endswith("站")
+        official = {k: en for k, en, _ in metro_station_names()}
         for seg, t in segs:
             form = romanize(seg, lang) if t is None else (t.forms.get(lang) or [None])[0]
+            # 捷運站的名稱用官方站名（捷運台大醫院站 → NTU Hospital，不是醫院本身的 National Taiwan University Hospital）
+            if t is not None and t.kind == "proper" and is_station and seg in official and lang in ("en", "id", "vi"):
+                form = official[seg]
             if not form:
                 parts = None
                 break
@@ -763,9 +952,12 @@ def localize_name(name: str, lang: str) -> dict:
         if parts:
             if lang in HEAD_FIRST:
                 # 最後一個種類詞才是真正的種類（溫泉博物館是博物館）：放最前面
-                seq = parts["head"][::-1] + parts["prefix"] + parts["proper"]
+                # 最外層（最後一個）種類詞最前面，再來前綴，再來裡面的種類詞：Ga MRT Công viên rừng Đại An
+                seq = parts["head"][-1:] + parts["prefix"] + parts["head"][:-1][::-1] + parts["proper"]
             else:
-                seq = parts["prefix"] + parts["proper"] + parts["head"]
+                # 韓文：好幾個專有名稱（잇푸도、브리즈、타이베이역）之間空一格，前綴、種類詞照樣接在一起
+                propers = [" ".join(parts["proper"])] if lang == "ko" and len(parts["proper"]) > 1 else parts["proper"]
+                seq = parts["prefix"] + propers + parts["head"]
             text = _join(seq, lang) or None
     reading = None
     # 讀音只給短的名稱：長的店名逐字音譯（이펑탕웨이펑타이베이처잔뎬）使用者看不懂，反而像亂碼

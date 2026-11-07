@@ -3,6 +3,7 @@
  * 站名一律帶中文（要對得上路邊站牌）；非中文介面前面加英文站名。
  */
 import type { Lang, ManeuverKind } from '@/lib/contract'
+import { metroLineName } from '@/lib/metroLines'
 import { NAV_STRINGS, type NavStrings } from '@/i18n/nav'
 import type { BusPlan } from '@/lib/transferBus'
 import type { Cue } from './announcer'
@@ -131,7 +132,8 @@ export function stopName(name: Named, lang: Lang): string {
 
 /** 路線名：非中文介面用英文路線名（R3）；數字路線一樣 */
 export function routeName(name: Named, lang: Lang): string {
-  return (lang === 'zh-TW' ? name.zh || name.en : name.en || name.zh) || ''
+  // 捷運線：韓文、日文用官方名稱（淡水信義線 → 단수이신이선）
+  return metroLineName(name.zh, lang) ?? ((lang === 'zh-TW' ? name.zh || name.en : name.en || name.zh) || '')
 }
 
 /** 一種搭法的每一步，一步一行 */

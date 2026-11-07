@@ -31,6 +31,7 @@ import { stationQuery } from '@/lib/placeSearch'
 import { groupStops } from '@/lib/stopSearch'
 import type { StopGroup } from '@/lib/stopSearch'
 import { poiNameForTranslation, stopLabel } from '@/lib/foreignSearch'
+import { metroLineName } from '@/lib/metroLines'
 import { createLocator } from '@/lib/locator'
 import type { ModeRoute } from '@/lib/modeRoute'
 import { estimateBusMin } from '@/lib/transferBus'
@@ -87,7 +88,6 @@ const LANG_ITEMS: { id: Lang; label: string }[] = [
   { id: 'th', label: 'ไทย' },
   { id: 'vi', label: 'Tiếng Việt' },
   { id: 'id', label: 'Bahasa Indonesia' },
-  { id: 'km', label: 'ខ្មែរ' },
   { id: 'ja', label: '日本語' },
   { id: 'ko', label: '한국어' },
 ]
@@ -459,7 +459,7 @@ type Row = ResultRow | MoreRow
 
 /** 站名：zh-TW 用中文；其他語言有英文就用英文（01 的站名規則） */
 const nameOf = (n: { zh: string | null; en: string | null }) =>
-  (lang.value === 'zh-TW' ? n.zh || n.en : n.en || n.zh) ?? ''
+  metroLineName(n.zh, lang.value) ?? (lang.value === 'zh-TW' ? n.zh || n.en : n.en || n.zh) ?? ''
 
 /** 列表上的距離：350 公尺、2.4 公里 */
 function listDistance(m: number | null): string {

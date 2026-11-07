@@ -9,7 +9,7 @@ import { api } from '@/lib/api'
 import type { ForeignLang, LocalizedName, Station } from '@/lib/contract'
 import type { PoiBrand } from '@/lib/poiSearch'
 
-export const FOREIGN_LANGS: ForeignLang[] = ['en', 'id', 'vi', 'th', 'km', 'ko', 'ja']
+export const FOREIGN_LANGS: ForeignLang[] = ['en', 'id', 'vi', 'th', 'ko', 'ja']
 
 /** 韓文、泰文、高棉文、假名、拉丁字母（含越南文）；中文夾雜英文字母（「MRT 芝山」「7-11」）不算 */
 const FOREIGN_SCRIPT = /[가-힣฀-๿ក-៿぀-ヿ]/
@@ -110,15 +110,17 @@ export async function localizeResults(
 }
 
 /**
- * 站牌的外語名稱：英文、印尼文直接用 TDX 的官方英文站名；其他語言用翻譯結果，
+ * 站牌的外語名稱：英文直接用 TDX 的官方英文站名；其他語言用翻譯結果，
  * 只有讀音（approx）又有官方英文站名時，英文站名也一起附上。
  */
 export function stopLabel(st: Station, lang: ForeignLang, labels: Map<string, NameLabel>): NameLabel | null {
   const official = st.name.en ? { text: st.name.en, approx: false } : null
-  if (lang === 'en' || lang === 'id') return official ?? labels.get(st.name.zh) ?? null
+  // 英文直接用 TDX 官方英文站名；印尼文不用（TDX 是英文縮寫「MRT Zhishan Sta.」），照後端翻的 Stasiun MRT Zhishan
+  if (lang === 'en') return official ?? labels.get(st.name.zh) ?? null
   const mine = labels.get(st.name.zh)
   if (mine && !mine.approx) return mine
-  if (mine && official) return { text: `${mine.text} · ${official.text}`, approx: true }
+  // 泰文不附英文（2026-11-08 回報：泰文結果英文太多）
+  if (mine && official && lang !== 'th') return { text: `${mine.text} · ${official.text}`, approx: true }
   return mine ?? official
 }
 

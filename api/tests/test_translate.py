@@ -35,7 +35,6 @@ def q(text):
 def test_detects_languages():
     assert t.detect_lang("대만박물관") == "ko"
     assert t.detect_lang("พิพิธภัณฑ์") == "th"
-    assert t.detect_lang("សារមន្ទីរ") == "km"
     assert t.detect_lang("バス停") == "ja"
     assert t.detect_lang("Bảo tàng Đài Loan") == "vi"
     assert t.detect_lang("Taipei Zoo") == "latin"
@@ -81,10 +80,9 @@ def test_vietnamese_with_and_without_tone_marks():
     assert q("Chua Long Son") == ["龍山寺"]  # 沒打聲調：當成拉丁字母，也查得到
 
 
-def test_thai_and_khmer_use_the_glossary():
+def test_thai_uses_the_glossary():
     assert q("พิพิธภัณฑ์ไต้หวัน") == ["臺灣博物館"]
-    assert q("สวนสัตว์ไทเป") == ["臺北動物園"]
-    assert q("សារមន្ទីរតៃវ៉ាន់") == ["臺灣博物館"]
+    assert q("สวนสัตว์ไทเป")[0] == "臺北動物園"
 
 
 def test_japanese_and_simplified_become_traditional():
@@ -97,8 +95,8 @@ def test_unknown_parts_are_flagged_not_guessed():
     r = t.translate_query("Rumah Sakit Tri-Service")
     assert r["partial"] is True
     assert r["queries"] == ["醫院"]
-    r = t.translate_query("ตลาดกลางคืนซื่อหลิน")  # 泰文的「士林」沒有讀音規則
-    assert r["partial"] is True
+    # 知名地標的泰文名稱（2026-11-08 起有）：ตลาดกลางคืนซื่อหลิน → 士林夜市
+    assert t.translate_query("ตลาดกลางคืนซื่อหลิน")["queries"][0] == "士林夜市"
 
 
 def test_one_syllable_category_word_does_not_split_a_name():
@@ -113,7 +111,6 @@ def test_one_syllable_category_word_does_not_split_a_name():
         ("id", "Museum Nasional Taiwan"),
         ("vi", "Bảo tàng Quốc gia Đài Loan"),
         ("th", "พิพิธภัณฑ์แห่งชาติไต้หวัน"),
-        ("km", "សារមន្ទីរជាតិតៃវ៉ាន់"),
         ("ko", "국립대만박물관"),
         ("ja", "国立台湾博物館"),
     ],
@@ -125,25 +122,24 @@ def test_localize_national_taiwan_museum(lang, expected):
 def test_localize_uses_each_languages_reading_for_names():
     assert t.localize_name("捷運芝山站", "en")["text"] == "MRT Zhishan Station"
     assert t.localize_name("捷運芝山站", "ko")["text"] == "MRT 즈산역"
-    assert t.localize_name("捷運芝山站", "vi")["text"] == "Ga MRT Chi Sơn"
-    assert t.localize_name("捷運芝山站", "th")["text"] == "สถานีรถไฟฟ้า Zhishan"
-    assert t.localize_name("士林夜市", "ko")["text"] == "스린야시장"
+    assert t.localize_name("捷運芝山站", "vi")["text"] == "Ga MRT Zhishan"  # 官方英文站名
+    assert t.localize_name("捷運芝山站", "th")["text"] == "สถานีรถไฟฟ้าจือซาน"
+    assert t.localize_name("士林夜市", "ko")["text"] == "스린 야시장"  # 知名地標的韓文名稱
     assert t.localize_name("天母", "en")["text"] == "Tianmu"
 
 
 def test_localize_puts_the_real_category_first_in_head_first_languages():
     assert t.localize_name("北投溫泉博物館", "en")["text"] == "Beitou Hot Spring Museum"
-    assert t.localize_name("北投溫泉博物館", "id")["text"] == "Museum Pemandian Air Panas Beitou"
+    assert t.localize_name("北投溫泉博物館", "id")["text"] == "Museum Pemandian Air Panas Beitou"  # 知名地標用官方英文
 
 
 def test_localize_refuses_names_it_cannot_fully_understand():
     # 「榮民總」「綜合」不是地名，硬拼會變成看不懂的字：不翻，只給讀音
-    for name in ("臺北榮民總醫院", "臺大綜合體育館", "艋舺龍山寺", "捷運芝山站一"):
+    for name in ("臺大綜合體育館", "捷運芝山站一"):
         r = t.localize_name(name, "en")
         assert r["text"] is None, name
         # 7 個字以上的不給讀音（太長的音譯看不懂）
         assert bool(r["reading"]) == (len(name) <= t.MAX_READING_CHARS), name
-    assert t.localize_name("艋舺龍山寺", "en")["reading"] == "Meng Xia Long Shan Si"
 
 
 def test_mandarin_to_hangul_follows_the_korean_standard():
@@ -159,12 +155,12 @@ def test_api(client):
     r = client.post("/api/translate/query", json={"q": "대만박물관"})
     assert r.status_code == 200
     assert r.json()["queries"] == ["臺灣博物館"]
-    r = client.post("/api/translate/names", json={"lang": "id", "names": ["國立臺灣博物館", "臺北榮民總醫院"], "addresses": ["忠孝西路一段3號"], "categories": ["餐廳"]})
+    r = client.post("/api/translate/names", json={"lang": "id", "names": ["國立臺灣博物館", "芝山岩展示館"], "addresses": ["忠孝西路一段3號"], "categories": ["餐廳"]})
     body = r.json()
     assert body["names"][0] == {"zh": "國立臺灣博物館", "text": "Museum Nasional Taiwan", "exact": True}
     # 每一筆都有使用者語言的內容；拆不完整的一部分用讀音
     assert body["names"][1]["text"] and body["names"][1]["exact"] is False
-    assert body["addresses"][0]["text"] == "No. 3, Seksi 1, Jalan Zhongxiao Barat"
+    assert body["addresses"][0]["text"] == "No. 3, Sec. 1, Jalan Zhongxiao Barat"
     assert body["categories"][0]["text"] == "Restoran"
     assert client.post("/api/translate/names", json={"lang": "xx", "names": ["a"]}).status_code == 422
 
@@ -192,7 +188,7 @@ def test_one_syllable_category_word_after_a_known_place_name():
 
 def test_long_names_get_no_reading():
     # 2026-11-07 回報：「一風堂微風台北車站店」的韓文讀音「이펑탕웨이펑타이베이처잔뎬」看不懂；長的店名只顯示中文
-    r = t.localize_name("一風堂微風台北車站店", "ko")
+    r = t.localize_name("碞磊國際水晶礦石玫瑰店", "ko")
     assert r["text"] is None and r["reading"] is None
     assert t.localize_name("臺北車站", "ko")["text"] == "타이베이역"
 

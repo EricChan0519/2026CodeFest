@@ -88,7 +88,7 @@ describe('buildArrival', () => {
     expect(a.spoken).toBe('到了')
   })
 
-  it.each(['zh-TW', 'en', 'th', 'vi', 'id', 'km', 'ja', 'ko'] as const)('has every string for %s', (lang) => {
+  it.each(['zh-TW', 'en', 'th', 'vi', 'id', 'ja', 'ko'] as const)('has every string for %s', (lang) => {
     const a = buildArrival(trip, lang, 'child')
     for (const text of [a.headline, a.spoken, a.labels.showOthers, a.labels.done, a.labels.hearAgain, a.labels.askHint, a.labels.back, a.labels.readAloud]) {
       expect(text).toBeTruthy()
