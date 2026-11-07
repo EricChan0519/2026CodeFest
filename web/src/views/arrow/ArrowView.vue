@@ -25,7 +25,8 @@ import { ARRIVAL_STRINGS } from '@/i18n/arrival'
 import { ARROW_STRINGS, distanceWords, fill } from '@/i18n/arrow'
 import type { AgeKey, CompassKey, TurnWordKey } from '@/i18n/arrow'
 import { ROUTE_MODE_STRINGS } from '@/i18n/routeMode'
-import type { Audience, Lang, LatLon, ManeuverKind, RouteMode } from '@/lib/contract'
+import type { Audience, Lang, LatLon, ManeuverKind, RouteMode, Station } from '@/lib/contract'
+import { poiNameForTranslation, stopLabel } from '@/lib/foreignSearch'
 import { parseQuery } from '@/lib/fuzzy'
 import { stationQuery } from '@/lib/placeSearch'
 import { groupStops } from '@/lib/stopSearch'
@@ -141,7 +142,9 @@ const langLabel = computed(() => LANG_ITEMS.find((l) => l.id === lang.value)?.la
 
 // ── 位置、搜尋、行程 ───────────────────────────────
 const locator = createLocator()
-const search = useDestinationSearch(locator)
+const search = useDestinationSearch(locator, () => lang.value)
+// 換語言時，現有結果重新翻成新語言
+watch(lang, () => search.relabel())
 const routing = { mode: () => mode.value, audience: () => audience.value, simulate: () => simulate }
 const trip = useTrip({ locator, onCue, routing })
 const nav = trip.nav
@@ -436,6 +439,8 @@ interface ResultRow {
   key: string
   kind: Kind
   name: string
+  /** 中文原名（招牌、站牌上看到的）；名稱已經是中文時是空字串 */
+  zh: string
   dist: number | null
   point: LatLon
   stop?: StopGroup
@@ -454,6 +459,14 @@ type Row = ResultRow | MoreRow
 const nameOf = (n: { zh: string | null; en: string | null }) =>
   (lang.value === 'zh-TW' ? n.zh || n.en : n.en || n.zh) ?? ''
 
+/** 站名：使用者的語言（英文、印尼文用 TDX 官方英文站名），第二行附中文站名 */
+function stopNames(st: Station): { name: string; zh: string } {
+  const dl = search.displayLang.value
+  const l = dl ? stopLabel(st, dl, search.labels.value.names) : null
+  if (l && l.text !== st.name.zh) return { name: l.text, zh: st.name.zh }
+  return { name: nameOf(st.name), zh: lang.value === 'zh-TW' ? '' : st.name.zh }
+}
+
 /** 列表上的距離：350 公尺、2.4 公里 */
 function listDistance(m: number | null): string {
   if (m === null) return ''
@@ -461,8 +474,14 @@ function listDistance(m: number | null): string {
   return fill(S.value.km, { n: (m / 1000).toFixed(m < 10000 ? 1 : 0) })
 }
 
+/** 結果名稱：使用者的語言（翻不出來的部分照讀音），沒有就用中文；第二個值是要另外附上的中文原名 */
+function localName(zh: string, key = zh): [string, string] {
+  const l = search.displayLang.value ? search.labels.value.names.get(key) : undefined
+  return l && l.text !== zh ? [l.text, zh] : [zh, '']
+}
+
 /**
- * 搜尋結果：每筆只有名稱和距離（2026-11-08 回報：下面那行小字太冗長）。
+ * 搜尋結果：每筆只有名稱和距離；外語介面再附中文原名對照招牌（2026-11-08 回報：下面那行小字太冗長）。
  * 分組順序：找車站（芝山捷運站、士林站）時地點在前（合併後的車站排第一）、公車站牌第二；
  * 找公車站牌（○○公車站、站牌）時站牌在前；其他搜尋地點、店家、站牌。
  */
@@ -476,7 +495,8 @@ const rows = computed<Row[]>(() => {
       type: 'hit',
       key: `pl-${p.name}-${p.point[0]}-${p.point[1]}-${i}`,
       kind: 'place',
-      name: p.name,
+      name: localName(p.name)[0],
+      zh: localName(p.name)[1],
       dist: p.distanceM,
       point: p.point,
       head: i === 0 ? s.groupPlaces : undefined,
@@ -490,18 +510,20 @@ const rows = computed<Row[]>(() => {
       type: 'hit',
       key: `poi-${p.brand.key}-${p.point[0]}-${p.point[1]}`,
       kind: 'poi',
-      name: p.name,
+      name: localName(p.name, poiNameForTranslation(p.name, p.brand))[0],
+      zh: localName(p.name, poiNameForTranslation(p.name, p.brand))[1],
       dist: p.distanceM,
       point: p.point,
       head: i === 0 ? s.groupStores : undefined,
     }),
   )
   if (poiAll.length > poiShown.value) poiRows.push({ type: 'more', key: 'more-poi', kind: 'poi', left: poiAll.length - poiShown.value })
+  // 合併後的站牌用合併後的名稱（拿掉括號）翻譯；英文、印尼文用 TDX 官方英文站名
   const stopRows: Row[] = groupStops(search.stops.value, search.near.value).map((g, i) => ({
     type: 'hit',
     key: `st-${g.key}`,
     kind: 'stop',
-    name: nameOf(g.name),
+    ...stopNames({ ...g.stations[0]!, name: g.name }),
     dist: distanceM(search.near.value, [g.lat, g.lon]),
     point: [g.lat, g.lon],
     stop: g,
@@ -562,6 +584,12 @@ async function submitSearch() {
   await kb
   const first = rows.value.findIndex((r) => r.type === 'hit')
   if (first >= 0 && !busy.value) await moveArrow('search', first)
+}
+
+/** 外語搜尋的「也可能是…」：用那個中文重新搜尋 */
+function searchAlt(text: string) {
+  query.value = text
+  void submitSearch()
 }
 
 /** 點搜尋欄要改字：箭頭回到搜尋欄 */
@@ -1259,6 +1287,22 @@ onBeforeUnmount(() => {
             </form>
             <div v-if="search.searching.value" class="search-spinner" role="status" :aria-label="S.searching"></div>
             <p v-if="searchNote" class="note warn" role="status">{{ searchNote }}</p>
+            <!-- 外語搜尋：讓使用者看到用什麼中文搜的（즈산역 → 芝山站）；有其他可能就給按鈕 -->
+            <div v-if="search.translation.value && !search.searching.value" class="note translated" aria-live="polite">
+              <span>{{ search.translation.value.from }} → </span>
+              <b v-if="search.translation.value.to" lang="zh-TW">{{ search.translation.value.to }}</b>
+              <span v-else>?</span>
+              <button
+                v-for="alt in search.translation.value.alternatives"
+                :key="alt"
+                type="button"
+                class="alt"
+                lang="zh-TW"
+                @click="searchAlt(alt)"
+              >
+                {{ alt }}
+              </button>
+            </div>
             <ul v-if="hasResults && !search.searching.value" class="list results" @scroll.passive="onResize">
               <template v-for="(r, i) in rows" :key="r.key">
                 <li v-if="r.type === 'hit' && r.head" class="group-h" aria-hidden="true">{{ r.head }}</li>
@@ -1278,6 +1322,7 @@ onBeforeUnmount(() => {
                     </span>
                     <span class="row-text">
                       <span class="row-main">{{ r.name }}</span>
+                      <span v-if="r.zh" class="row-zh" lang="zh-TW">{{ r.zh }}</span>
                     </span>
                     <span v-if="r.dist !== null" class="row-right">{{ listDistance(r.dist) }}</span>
                   </button>
@@ -1818,6 +1863,25 @@ onBeforeUnmount(() => {
   font-size: calc(17px * var(--fs));
   font-weight: 700;
   line-height: 1.3;
+}
+/* 外語介面：名稱下面附中文原名，對得上招牌 */
+.row-zh {
+  font-size: calc(15px * var(--fs));
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--ink-2);
+}
+.note.translated {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.note.translated .alt {
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: inherit;
 }
 .row-right {
   flex: none;
