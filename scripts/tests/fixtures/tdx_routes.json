@@ -1,0 +1,5 @@
+[
+  {"RouteUID": "TPE10001", "DepartureStopNameZh": "範例起點", "DepartureStopNameEn": "Example Origin",
+   "DestinationStopNameZh": "範例終點", "DestinationStopNameEn": "Example Terminal"},
+  {"RouteUID": "TPE10002", "DepartureStopNameZh": "甲", "DepartureStopNameEn": "", "DestinationStopNameZh": "乙"}
+]

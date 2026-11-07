@@ -1,0 +1,16 @@
+[
+  {"RouteUID": "TPE10001", "RouteName": {"Zh_tw": "307", "En": "307"}, "Direction": 0,
+   "Stops": [
+     {"StopUID": "TPE5001", "StationID": "1001", "StopName": {"Zh_tw": "範例站", "En": "Example Stop"}, "StopPosition": {"PositionLat": 25.1, "PositionLon": 121.5}, "StopBoarding": 0, "StopSequence": 1},
+     {"StopUID": "TPE5002", "StationID": "1002", "StopName": {"Zh_tw": "範例站", "En": "Example Stop"}, "StopPosition": {"PositionLat": 25.1003, "PositionLon": 121.5004}, "StopBoarding": 1, "StopSequence": 2},
+     {"StopUID": "TPE5003", "StationID": "1003", "StopName": {"Zh_tw": "下車站"}, "StopPosition": {"PositionLat": 25.11, "PositionLon": 121.51}, "StopBoarding": -1, "StopSequence": 3}
+   ]},
+  {"RouteUID": "TPE10001", "RouteName": {"Zh_tw": "307", "En": "307"}, "Direction": 1,
+   "Stops": [
+     {"StopUID": "TPE5011", "StationID": "1001", "StopName": {"Zh_tw": "範例站", "En": "Example Stop"}, "StopPosition": {"PositionLat": 25.1, "PositionLon": 121.5}, "StopBoarding": 0, "StopSequence": 9}
+   ]},
+  {"RouteUID": "TPE10002", "RouteName": {"Zh_tw": "小18", "En": ""}, "Direction": 255,
+   "Stops": [
+     {"StopUID": "TPE5021", "StationID": "1004", "StopName": {"Zh_tw": "無英文站"}, "StopPosition": {"PositionLat": 25.12, "PositionLon": 121.52}, "StopBoarding": 0, "StopSequence": 1}
+   ]}
+]
