@@ -98,7 +98,7 @@ function toRide(leg: Leg, byUid: Map<string, Station>): Ride | null {
   const route = board?.routes.find((r) => r.routeName.zh === p.routeName.zh && r.direction === p.direction)
   if (!board || !alight || !route) return null
   const stops = p.stops.slice(leg.board, leg.alight + 1).map((uid) => byUid.get(uid)).filter((s): s is Station => !!s)
-  return { board, route, alight, stops }
+  return { mode: 'bus', board, route, alight, stops }
 }
 
 export function planTransferBus(
@@ -200,7 +200,7 @@ export function planBus(stations: Station[], patterns: RoutePattern[], from: Lat
   // 走路比 MIN_WALK_SAVED_M 還近，怎麼搭都省不到路
   if (directM < MIN_WALK_SAVED_M) return []
   const direct: BusPlan[] = planDirectBus(stations, patterns, from, to).map((o) => ({
-    rides: [{ board: o.board, route: o.route, alight: o.alight, stops: o.stops }],
+    rides: [{ mode: 'bus', board: o.board, route: o.route, alight: o.alight, stops: o.stops }],
     walkToBoardM: o.walkToBoardM,
     transferWalkM: 0,
     walkFromAlightM: o.walkFromAlightM,
