@@ -1,0 +1,107 @@
+{
+  "stations": [
+    {
+      "stationUid": "TPE100003",
+      "name": {
+        "zh": "範例站",
+        "en": "Example Stop"
+      },
+      "bearing": null,
+      "lat": 25.1147,
+      "lon": 121.5308,
+      "routes": [
+        {
+          "routeName": {
+            "zh": "小18",
+            "en": "S18"
+          },
+          "direction": 255,
+          "headsign": {
+            "zh": null,
+            "en": null
+          },
+          "stopUid": "TPE200004"
+        },
+        {
+          "routeName": {
+            "zh": "645",
+            "en": "645"
+          },
+          "direction": 2,
+          "headsign": {
+            "zh": null,
+            "en": null
+          },
+          "stopUid": "TPE200005"
+        }
+      ],
+      "distanceM": 90
+    },
+    {
+      "stationUid": "TPE100001",
+      "name": {
+        "zh": "範例站",
+        "en": "Example Stop"
+      },
+      "bearing": "N",
+      "lat": 25.11572,
+      "lon": 121.52703,
+      "routes": [
+        {
+          "routeName": {
+            "zh": "220",
+            "en": "220"
+          },
+          "direction": 0,
+          "headsign": {
+            "zh": "往範例終點",
+            "en": "To Example Terminal"
+          },
+          "stopUid": "TPE200001"
+        },
+        {
+          "routeName": {
+            "zh": "紅15",
+            "en": "R15"
+          },
+          "direction": 1,
+          "headsign": {
+            "zh": "往範例起點",
+            "en": "To Example Origin"
+          },
+          "stopUid": "TPE200002"
+        }
+      ],
+      "distanceM": 248
+    },
+    {
+      "stationUid": "TPE100002",
+      "name": {
+        "zh": "範例站",
+        "en": "Example Stop"
+      },
+      "bearing": "S",
+      "lat": 25.1159,
+      "lon": 121.52715,
+      "routes": [
+        {
+          "routeName": {
+            "zh": "220",
+            "en": "220"
+          },
+          "direction": 1,
+          "headsign": {
+            "zh": "往範例起點",
+            "en": "To Example Origin"
+          },
+          "stopUid": "TPE200003"
+        }
+      ],
+      "distanceM": 265
+    }
+  ],
+  "source": {
+    "name": "TDX 公車站位資料",
+    "updatedAt": "2026-11-07T15:00:00+08:00"
+  }
+}
