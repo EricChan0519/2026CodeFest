@@ -91,7 +91,10 @@ export function planDirectBus(
     best.set(key, { board, route, alight, walkToBoardM: bw, walkFromAlightM: alightWalk, stopCount: ai - bi })
   }
 
+  // 搭車要走的路不比直接走過去少，就不建議搭車
+  const direct = distanceM(from, to)
   return [...best.values()]
+    .filter((o) => o.walkToBoardM + o.walkFromAlightM < direct)
     .sort((a, b) => a.walkToBoardM + a.walkFromAlightM - (b.walkToBoardM + b.walkFromAlightM) || a.stopCount - b.stopCount)
     .slice(0, limit)
 }

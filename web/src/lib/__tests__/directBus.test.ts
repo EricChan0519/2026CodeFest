@@ -77,4 +77,11 @@ describe('planDirectBus', () => {
     const bare = station('A', 25.0)
     expect(planDirectBus([bare, B, C], [pattern(0, ['A', 'B', 'C'])], from, to)).toEqual([])
   })
+
+  it('drops a bus that does not save walking compared with walking straight there', () => {
+    const near = station('N', 25.001, [r307(0, 'n0')])
+    // 起點在 A 東邊約 300 公尺，終點在 N 東邊約 300 公尺；兩點直線只有約 111 公尺
+    const options = planDirectBus([A, near], [pattern(0, ['A', 'N'])], [25.0, 121.503], [25.001, 121.503])
+    expect(options).toEqual([])
+  })
 })
