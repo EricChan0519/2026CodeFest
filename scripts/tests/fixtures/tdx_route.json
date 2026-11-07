@@ -1,0 +1,9 @@
+[
+  {
+    "RouteUID": "r",
+    "DepartureStopNameZh": "起點",
+    "DepartureStopNameEn": "Start",
+    "DestinationStopNameZh": "終點",
+    "DestinationStopNameEn": "End"
+  }
+]

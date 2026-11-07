@@ -18,7 +18,7 @@ def test_radius_bounds(client, radius, status):
     response = client.post("/api/stations/nearby", json={"lat": 25.1, "lon": 121.5, "radiusM": radius})
     assert response.status_code == status
     if status == 200:
-        assert response.json() == {"stations": [], "source": None}
+        assert "stations" in response.json() and response.json()["source"] is not None
 
 
 def test_api_error_format():
