@@ -9,6 +9,8 @@ import type {
   AroundRequest,
   AroundResponse,
   NearbyRequest,
+  PlaceSearchRequest,
+  PlaceSearchResponse,
   RoutesRequest,
   RoutesResponse,
   StationsResponse,
@@ -68,6 +70,10 @@ const endpoints = {
   search: async (q: string): Promise<StationsResponse> => {
     if (isMockApi()) return (await import('../mocks/stations-search.json')).default as unknown as StationsResponse
     return request<StationsResponse>(`/api/stations/search?q=${encodeURIComponent(q)}`)
+  },
+  landmarks: async (req: PlaceSearchRequest): Promise<PlaceSearchResponse> => {
+    if (isMockApi()) return { places: [], source: { name: 'Overture Maps Places', release: null, license: null, updatedAt: null } }
+    return post<PlaceSearchResponse>('/api/landmarks/search', req, 8000)
   },
   around: async (req: AroundRequest): Promise<AroundResponse> => {
     if (isMockApi()) {

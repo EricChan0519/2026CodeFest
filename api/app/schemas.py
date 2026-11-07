@@ -18,6 +18,14 @@ class AroundRequest(BaseModel):
     policeRadiusM: int = Field(150, ge=10, le=1000)
 
 
+class PlaceSearchRequest(BaseModel):
+    q: str = Field(min_length=1, max_length=60)
+    # 使用者位置：只用來依距離排序；不給就依資料信心排
+    lat: float | None = Field(None, ge=-90, le=90)
+    lon: float | None = Field(None, ge=-180, le=180)
+    limit: int = Field(20, ge=1, le=50)
+
+
 class LatLonIn(BaseModel):
     lat: float
     lon: float

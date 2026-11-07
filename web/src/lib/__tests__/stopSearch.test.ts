@@ -65,6 +65,21 @@ describe('searchStops', () => {
     expect(searchStops(index, '運動公園').map((s) => s.stationUid)).toEqual(['D1'])
   })
 
+  it('same match quality: nearest stop first, and it follows the user', () => {
+    const far = { ...st('F1', '天母國小', null), lat: 25.05, lon: 121.52 }
+    const near = { ...st('F2', '天母國中', null), lat: 25.118, lon: 121.537 }
+    const idx = buildStopIndex({ updatedAt: '', stations: [far, near] })
+    expect(searchStops(idx, '天母國', 20, [25.115, 121.536]).map((s) => s.stationUid)).toEqual(['F2', 'F1'])
+    expect(searchStops(idx, '天母國', 20, [25.0478, 121.517]).map((s) => s.stationUid)).toEqual(['F1', 'F2'])
+  })
+
+  it('better name match still wins over distance', () => {
+    const exactFar = { ...st('G1', '天母', null), lat: 25.05, lon: 121.52 }
+    const containsNear = { ...st('G2', '天母運動公園', null), lat: 25.115, lon: 121.536 }
+    const idx = buildStopIndex({ updatedAt: '', stations: [containsNear, exactFar] })
+    expect(searchStops(idx, '天母', 20, [25.115, 121.536]).map((s) => s.stationUid)).toEqual(['G1', 'G2'])
+  })
+
   it('respects the limit and returns nothing for unknown names', () => {
     expect(searchStops(index, '北', 1)).toHaveLength(1)
     expect(searchStops(index, '不存在的站')).toEqual([])

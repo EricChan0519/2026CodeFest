@@ -83,3 +83,10 @@ export const offRouteM = (accuracyM: number): number => Math.max(30, 1.5 * accur
  * 通過後目標點改成下一段的前視點，不會退回（04「箭頭依路徑轉彎」）。
  */
 export const turnPassM = (accuracyM: number): number => Math.max(8, 0.5 * accuracyM)
+
+/**
+ * 過馬路：離「馬路對面」多近就算過完了：max(5, 0.3 × accuracy)，最多 10 公尺。
+ * 比一般轉彎嚴：人站在這一側路邊時，離對面常常只有 10 幾公尺，用 turnPassM 會在還沒過馬路就算過了，
+ * 箭頭先轉向、說「右轉」（2026-11-07 回報）。
+ */
+export const crossPassM = (accuracyM: number): number => Math.min(10, Math.max(5, 0.3 * accuracyM))

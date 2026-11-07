@@ -5,12 +5,29 @@
  * 輸入站名、地址、路名、地標（或「緯度, 經度」）→ 搜尋 → 選一個結果 → 開始走。
  * - 公車站牌：查 TDX 站位快照（有現行站名和每個站位的路線、方向），選一班車；走到會跳到 /arrived。
  * - 連鎖店：便利商店、速食、連鎖餐廳（Overture Maps 快照，離線比對、依距離排序）；到了只在這個畫面顯示「到了」。
- * - 地點與地址：查 OpenStreetMap（Nominatim）；到了只在這個畫面顯示「到了」。
+ * - 地點與地址：地標、餐廳、學校查自己後端的 Overture Maps 快照（/api/landmarks/search），路名、地址查 OpenStreetMap（Nominatim），
+ *   兩邊合併後依距離排序；到了只在這個畫面顯示「到了」。
+ * 所有結果都用「現在」的位置排序、算公車（lib/locator.ts），不沿用第一次定位的位置。
  * 文字是實驗用的中文；正式文案走 i18n（UI 負責）。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { arrivalFromStation, tripFromQuery } from '@/arrival/arrival'
+import { useRoute } from 'vue-router'
+import { tripFromQuery, type ArrivalTrip } from '@/arrival/arrival'
+import ArrivalCard from '@/arrival/ArrivalCard.vue'
+import RideCard from '@/arrival/RideCard.vue'
+import { ARRIVAL_STRINGS } from '@/i18n/arrival'
+import {
+  boarded,
+  currentRide,
+  gotOff,
+  legArrived,
+  rideStatus,
+  startJourney,
+  walkTarget,
+  type Journey,
+  type Ride,
+  type RideStatus,
+} from '@/nav/journey'
 import type { LatLon, Station, StationRoute } from '@/lib/contract'
 import { createAnnouncer } from '@/nav/announcer'
 import { easeRotation } from '@/nav/arrow'
@@ -28,11 +45,15 @@ import {
 import type { Destination, DestinationLock } from '@/nav/destination'
 import { searchPlaces } from '@/lib/geocode'
 import type { Place } from '@/lib/geocode'
+import { createLocator } from '@/lib/locator'
+import { fromOsm, mergePlaces, searchLandmarks } from '@/lib/placeSearch'
+import type { PlaceHit } from '@/lib/placeSearch'
 import { formatDistance, loadPoiIndex, searchPois } from '@/lib/poiSearch'
-import type { PoiHit } from '@/lib/poiSearch'
-import { planDirectBus } from '@/lib/directBus'
-import type { DirectBusOption } from '@/lib/directBus'
+import type { PoiHit, PoiIndex } from '@/lib/poiSearch'
+import { WALK_M_PER_MIN, planBus, type BusPlan } from '@/lib/transferBus'
 import { loadStopIndex, searchStops } from '@/lib/stopSearch'
+import type { StopIndex } from '@/lib/stopSearch'
+import type { ManeuverKind } from '@/lib/contract'
 import { fetchWalkRoute } from '@/lib/walkRoute'
 import type { WalkRoute } from '@/lib/walkRoute'
 import { bearingDeg, distanceM } from '@/nav/geo'
@@ -53,38 +74,73 @@ const addressInput = ref('')
 const searching = ref(false)
 const searchError = ref('')
 const stopResults = ref<Station[] | null>(null)
-const placeResults = ref<Place[] | null>(null)
+const placeResults = ref<PlaceHit[] | null>(null)
 const poiResults = ref<PoiHit[] | null>(null)
 const stopsUpdatedAt = ref('')
 const poiRelease = ref('')
-/** 連鎖店依距離排序用的參考點：使用者位置；拿不到就用臺北車站 */
-const poiNearUser = ref(false)
+/** 結果依距離排序用的參考點是不是使用者位置；拿不到位置就用臺北車站 */
+const nearUser = ref(false)
 const TAIPEI_STATION: LatLon = [25.0478, 121.517]
 
 /**
- * 取一次目前位置（可用 1 分鐘內的快取）；拒絕或逾時回傳 null。
- * 不擋搜尋：搜尋先用臺北車站排序、立刻顯示，位置回來後再重新排序。
+ * 使用者「現在」的位置：頁面開著就持續更新，導航中的真實 GPS 也會餵進來（lib/locator.ts）。
+ * 每次搜尋、選地點都重新取，不沿用第一次定位的位置（2026-11-07 回報：中斷導航後換地點，還在用舊位置算）。
  */
-let userPoint: LatLon | null = null
-let userPointAsked: Promise<LatLon | null> | null = null
-function askUserPoint(): Promise<LatLon | null> {
-  userPointAsked ??= new Promise((resolve) => {
-    if (!('geolocation' in navigator)) return resolve(null)
-    navigator.geolocation.getCurrentPosition(
-      (pos) => resolve((userPoint = [pos.coords.latitude, pos.coords.longitude])),
-      () => resolve(null),
-      { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 },
-    )
-  })
-  return userPointAsked
+const locator = createLocator()
+onMounted(() => locator.start())
+onBeforeUnmount(() => locator.stop())
+/** 搜尋時最多等位置這麼久；等不到先用臺北車站排序、立刻顯示，位置回來再重排 */
+const SEARCH_LOCATE_WAIT_MS = 2500
+
+function positionWithin(ms: number): Promise<LatLon | null> {
+  return Promise.race([locator.current(), new Promise<null>((r) => setTimeout(() => r(null), ms))])
 }
+
 let searchSeq = 0
+/** 最近一次搜尋：位置變了（位置晚到、導航結束回來）時用來重排，不用再查一次 OpenStreetMap */
+let lastSearch: { q: string; osm: Place[]; stops: StopIndex | null; pois: PoiIndex | null } | null = null
 
 const BEARING_TEXT: Record<string, string> = {
   N: '北', NE: '東北', E: '東', SE: '東南', S: '南', SW: '西南', W: '西', NW: '西北',
 }
 
-/** 同時查站牌（TDX 快照）、連鎖店（Overture 快照）和地點（OSM）；任何一邊失敗不影響其他 */
+/**
+ * 依參考點排序三種結果。地標要重查後端，因為「最近的 20 筆」會跟著位置變。
+ * @returns 地標查詢失敗的原因（沒失敗是 null）
+ */
+async function rankResults(seq: number, near: LatLon, isUser: boolean): Promise<string | null> {
+  const last = lastSearch
+  if (!last) return null
+  let landmarks: PlaceHit[] = []
+  let landError: string | null = null
+  try {
+    landmarks = await searchLandmarks(last.q, near)
+  } catch (e) {
+    landError = (e as Error).message
+  }
+  if (seq !== searchSeq) return null
+  stopResults.value = last.stops ? searchStops(last.stops, last.q, 20, near) : []
+  poiResults.value = last.pois ? searchPois(last.pois, last.q, { near, limit: POI_LIMIT }) : []
+  placeResults.value = mergePlaces(last.q, [landmarks, last.osm.map(fromOsm)], near)
+  nearUser.value = isUser
+  poiShown.value = POI_PAGE
+  placeShown.value = PLACE_PAGE
+  return landError
+}
+
+/** 用現在的位置重排目前的搜尋結果（導航結束回到搜尋畫面時） */
+async function rerankWithCurrentPosition() {
+  if (!lastSearch || searching.value) return
+  const seq = searchSeq
+  const user = await locator.current()
+  if (user && seq === searchSeq && !searching.value) await rankResults(seq, user, true)
+}
+
+function hasAnyResult(): boolean {
+  return !!(stopResults.value?.length || poiResults.value?.length || placeResults.value?.length)
+}
+
+/** 同時查站牌（TDX 快照）、連鎖店（Overture 快照）、地標（後端 Overture 快照）和地址（OSM）；任何一邊失敗不影響其他 */
 async function search() {
   const q = addressInput.value.trim()
   if (!q || searching.value) return
@@ -95,43 +151,41 @@ async function search() {
   stopResults.value = null
   placeResults.value = null
   poiResults.value = null
-  const [stops, pois, places] = await Promise.allSettled([
-    loadStopIndex().then((idx) => {
-      stopsUpdatedAt.value = idx.updatedAt
-      return searchStops(idx, q, 20)
-    }),
-    loadPoiIndex().then((idx) => {
-      poiRelease.value = idx.release
-      poiNearUser.value = !!userPoint
-      return searchPois(idx, q, { near: userPoint ?? TAIPEI_STATION, limit: POI_LIMIT })
-    }),
-    searchPlaces(q),
-  ])
-  stopResults.value = stops.status === 'fulfilled' ? stops.value : []
-  poiResults.value = pois.status === 'fulfilled' ? pois.value : []
-  placeResults.value = places.status === 'fulfilled' ? places.value : []
-  poiShown.value = POI_PAGE
+  const later = locator.current()
+  const loads = Promise.allSettled([loadStopIndex(), loadPoiIndex(), searchPlaces(q)])
+  const user = await positionWithin(SEARCH_LOCATE_WAIT_MS)
+  const [stops, pois, places] = await loads
+  if (stops.status === 'fulfilled') stopsUpdatedAt.value = stops.value.updatedAt
+  if (pois.status === 'fulfilled') poiRelease.value = pois.value.release
+  lastSearch = {
+    q,
+    osm: places.status === 'fulfilled' ? places.value : [],
+    stops: stops.status === 'fulfilled' ? stops.value : null,
+    pois: pois.status === 'fulfilled' ? pois.value : null,
+  }
+  const landError = await rankResults(seq, user ?? TAIPEI_STATION, !!user)
   const errors: string[] = []
   if (stops.status === 'rejected') errors.push(`站牌資料載入失敗（${(stops.reason as Error).message}）`)
   if (pois.status === 'rejected') errors.push(`連鎖店資料載入失敗（${(pois.reason as Error).message}）`)
-  if (places.status === 'rejected') errors.push(`地點搜尋失敗（${(places.reason as Error).message}）`)
+  if (places.status === 'rejected') errors.push(`地址搜尋失敗（${(places.reason as Error).message}）`)
+  if (landError) errors.push(`地標搜尋失敗（${landError}）`)
   if (errors.length) searchError.value = errors.join('；')
-  else if (stopResults.value.length === 0 && poiResults.value.length === 0 && placeResults.value.length === 0) {
-    searchError.value = '找不到這個地點，試試站名、路名、地標、連鎖店名（例如「全家」「麥當勞」），或「緯度, 經度」'
+  else if (!hasAnyResult()) {
+    searchError.value = '找不到這個地點，試試站名、路名、地標、店名（例如「天母體育館」「全家」），或「緯度, 經度」'
   }
   searching.value = false
 
-  // 連鎖店有結果、但還不知道你在哪：現在才問位置，拿到再依距離重排（期間使用者可以先看結果）
-  if (!userPoint && (poiResults.value?.length ?? 0) > 0) {
-    const user = await askUserPoint()
-    if (user && seq === searchSeq && pois.status === 'fulfilled') {
-      const idx = await loadPoiIndex()
-      poiResults.value = searchPois(idx, q, { near: user, limit: POI_LIMIT })
-      poiNearUser.value = true
-      poiShown.value = POI_PAGE
-    }
+  // 還不知道你在哪：位置回來後用真正的位置重排（期間使用者可以先看以臺北車站排序的結果）
+  if (!user) {
+    const pos = await later
+    if (pos && seq === searchSeq) await rankResults(seq, pos, true)
   }
 }
+
+/** 地點與地址：一次顯示 10 筆 */
+const PLACE_PAGE = 10
+const placeShown = ref(PLACE_PAGE)
+const placeVisible = computed(() => (placeResults.value ?? []).slice(0, placeShown.value))
 
 /** 連鎖店：一次顯示 10 家，按「再多看一些」展開；最多留 100 家 */
 const POI_PAGE = 10
@@ -144,10 +198,10 @@ const poiVisible = computed(() => (poiResults.value ?? []).slice(0, poiShown.val
  * 選一班車 → 導航到上車站，到站時 /arrived 會顯示「在 ○○ 下車」。
  * 沒選車就維持步行直接到 A。整個計算在裝置上做，不呼叫外部服務。
  */
-const busOptions = ref<DirectBusOption[] | null>(null)
+const busOptions = ref<BusPlan[] | null>(null)
 const busLoading = ref(false)
 const busNote = ref('')
-const pickedBus = shallowRef<DirectBusOption | null>(null)
+const pickedBus = shallowRef<BusPlan | null>(null)
 const busTargetName = ref('')
 const busTargetPoint = shallowRef<LatLon | null>(null)
 let busSeq = 0
@@ -186,7 +240,8 @@ async function planBusTo(target: LatLon, name: string) {
   busNote.value = ''
   busLoading.value = true
   try {
-    const [idx, user] = await Promise.all([loadStopIndex(), userPoint ? Promise.resolve(userPoint) : askUserPoint()])
+    // 每次都用現在的位置（不是第一次定位的位置）
+    const [idx, user] = await Promise.all([loadStopIndex(), locator.current()])
     if (seq !== busSeq) return
     if (!user) {
       busNote.value = '拿不到你的位置，無法列出搭公車的方法；可以直接走過去。'
@@ -196,8 +251,11 @@ async function planBusTo(target: LatLon, name: string) {
       busNote.value = '站牌資料沒有路線停靠順序（舊快照），無法列出搭公車的方法。'
       return
     }
-    busOptions.value = planDirectBus(idx.stations, idx.patterns, user, target)
-    if (busOptions.value.length === 0) busNote.value = '附近沒有直達的公車比直接走過去更省路，建議走過去。'
+    busOptions.value = planBus(idx.stations, idx.patterns, user, target)
+    if (busOptions.value.length === 0) {
+      const walkMin = Math.max(1, Math.round(distanceM(user, target) / WALK_M_PER_MIN))
+      busNote.value = `走過去約 ${walkMin} 分鐘；搭公車（直達或轉一次車）不會比較快或省不到多少路，建議走過去。`
+    }
   } catch (e) {
     if (seq === busSeq) busNote.value = `公車資料載入失敗（${(e as Error).message}），可以直接走過去。`
   } finally {
@@ -217,18 +275,28 @@ function clearBusPlan() {
   busLoading.value = false
 }
 
-function pickBus(o: DirectBusOption) {
+function pickBus(o: BusPlan) {
   pickedBus.value = o
-  destination.value = destinationFromBusOption(o)
+  destination.value = destinationFromBusOption(o.rides[0])
 }
 
-function isBusPicked(o: DirectBusOption): boolean {
+function isBusPicked(o: BusPlan): boolean {
   return pickedBus.value === o
 }
 
-function busLabel(o: DirectBusOption): string {
-  return `${o.route.routeName.zh}${o.route.headsign.zh ? ` ${o.route.headsign.zh}` : ''}`
+function rideLabel(r: BusPlan['rides'][number]): string {
+  return `${r.route.routeName.zh}${r.route.headsign.zh ? ` ${r.route.headsign.zh}` : ''}`
 }
+
+function busLabel(o: BusPlan): string {
+  return o.rides.map(rideLabel).join(' → 轉 ')
+}
+
+function busKey(o: BusPlan): string {
+  return o.rides.map((r) => `${r.route.routeName.zh}-${r.route.direction}`).join('>')
+}
+
+const busIsTransfer = computed(() => (busOptions.value ?? []).some((o) => o.rides.length > 1))
 
 function pickPoi(p: PoiHit) {
   destination.value = destinationFromPlace({ name: p.name, point: p.point })
@@ -253,7 +321,7 @@ function pickStopRoute(station: Station, route: StationRoute) {
   destination.value = destinationFromStation(station, route)
 }
 
-function isPlacePicked(p: Place): boolean {
+function isPlacePicked(p: Place | PlaceHit): boolean {
   const pt = destination.value.points[0]
   return !destination.value.station && !!pt && pt[0] === p.point[0] && pt[1] === p.point[1]
 }
@@ -283,6 +351,13 @@ const wakeNote = ref('')
 const showDebug = ref(false)
 /** 模擬 GPS：位置由方向鍵／點地圖決定，朝向仍用真實羅盤（或手動滑桿） */
 const simGps = ref(false)
+/**
+ * 模擬 GPS 的搖桿「往上」是哪個方向：
+ * - map（預設）：地圖的上方＝北。下面的除錯地圖是北朝上，往上推點就往上走，不會覺得反了
+ * - phone：手機面對的方向（真的拿著手機轉身測箭頭時用）
+ */
+const joyFrame = ref<'map' | 'phone'>('map')
+const joyForwardDeg = () => (joyFrame.value === 'map' ? 0 : (view.value?.headingDeg ?? 0))
 /** 搖桿推到底時的速度（公尺／秒）；1.4 約等於步行 */
 const simSpeed = ref(1.4)
 /** 鍵盤方向鍵一次移動幾公尺 */
@@ -357,12 +432,18 @@ const TURN_TEXT: Record<string, string> = {
   stairs: '有階梯',
 }
 
+/** 「前面路口右轉」；過馬路是「過完馬路再右轉」或「前面過馬路」（先過馬路才轉彎，2026-11-07 回報） */
+function turnPhrase(kind: ManeuverKind | undefined, then?: ManeuverKind | null): string {
+  if (kind === 'cross') return then ? `過完馬路再${TURN_TEXT[then] ?? '轉彎'}` : '前面過馬路，注意來車'
+  return `前面路口${TURN_TEXT[kind ?? ''] ?? '轉彎'}`
+}
+
 function cueText(c: Cue): string {
   switch (c.key) {
     case 'start':
       return '請注意來車和紅綠燈'
     case 'turn_ahead':
-      return `前面路口${TURN_TEXT[c.turn ?? ''] ?? '轉彎'}`
+      return turnPhrase(c.turn, c.then)
     case 'turn_around':
       return '請向後轉'
     case 'off_route':
@@ -413,7 +494,7 @@ const sentence = computed(() => {
       return '請回上一頁再試一次'
     case 'navigating': {
       const t = v.nextTurn
-      if (t && t.kind !== 'arrive' && t.distanceM <= 30) return `前面路口${TURN_TEXT[t.kind] ?? '轉彎'}`
+      if (t && t.kind !== 'arrive' && (t.startM ?? t.distanceM) <= 30) return turnPhrase(t.kind, t.then)
       return v.direction ? DIR_TEXT[v.direction] : ''
     }
     default:
@@ -437,21 +518,114 @@ function log(line: string) {
   cues.value = [`${new Date().toLocaleTimeString()} ${line}`, ...cues.value].slice(0, 12)
 }
 
-const router = useRouter()
 const currentRoute = useRoute()
 let arrivedHandled = false
+/** 語言與對象用 /lab/nav?lang=en&audience=elder 指定，沒給就是 zh-TW、visitor（正式流程由設定頁提供） */
+const langAudience = computed(() => tripFromQuery(currentRoute.query))
+const doneLabel = computed(() => ARRIVAL_STRINGS[langAudience.value.lang].done)
+const boardedLabel = computed(() => ARRIVAL_STRINGS[langAudience.value.lang].boarded)
 
 /**
- * 到站：跳到 /arrived，由那個畫面念「到了。等 203 號，往天母方向」（只念一次）。
- * 只有站牌目的地（帶 station 和 stationRoute）才會跳；使用者自己輸入的地址只在這個畫面顯示「到了」。
- * 語言與對象用 /lab/nav?lang=en&audience=elder 指定，沒給就是 zh-TW、visitor（正式流程由設定頁提供）。
- * 網址只帶站名、路線名和方向，不帶座標和 UID。
+ * 行程：走到上車站 → 上車 → 坐車 → 下車 →（轉乘）→ 走到目的地，走到目的地才結束。
+ * 到站畫面、坐車畫面直接蓋在這一頁上，不跳頁，行程才不會中斷。
+ * 只選了站牌和那班車（沒有最終目的地）時，走到站牌顯示到站畫面就結束。
  */
-function goArrived() {
-  const { station, stationRoute } = active
-  if (!station || !stationRoute) return
-  const { lang, audience } = tripFromQuery(currentRoute.query)
-  void router.push(arrivalFromStation(station, stationRoute, lang, audience, active.alight))
+const journey = shallowRef<Journey | null>(null)
+const stopOnlyArrived = ref(false)
+const rideNow = ref<RideStatus>({ index: 0, remaining: 0, cue: 'none' })
+let rideWatchId: number | null = null
+
+function rideTrip(r: Ride): ArrivalTrip {
+  return { station: r.board.name, route: r.route.routeName, headsign: r.route.headsign, alight: r.alight.name }
+}
+const atStopTrip = computed(() => {
+  const r = journey.value && currentRide(journey.value)
+  return r ? rideTrip(r) : null
+})
+const finalTrip = computed<ArrivalTrip | null>(() =>
+  journey.value ? { station: { zh: journey.value.final.name, en: null }, route: { zh: '', en: null }, headsign: { zh: null, en: null } } : null,
+)
+const stopOnlyTrip = computed<ArrivalTrip | null>(() =>
+  active.station && active.stationRoute
+    ? { station: active.station.name, route: active.stationRoute.routeName, headsign: active.stationRoute.headsign, alight: active.alight?.name }
+    : null,
+)
+
+/** 「開始走」：選了公車就建一趟完整行程；只選站牌就只走到站牌；一般地點就走到那裡 */
+function startTrip() {
+  stopOnlyArrived.value = false
+  const d = destination.value
+  if (pickedBus.value && busTargetPoint.value) {
+    journey.value = startJourney(pickedBus.value.rides, { name: busTargetName.value, point: busTargetPoint.value })
+  } else if (d.station) {
+    journey.value = null
+  } else {
+    journey.value = startJourney([], { name: d.name, point: d.points[0] })
+  }
+  const target = journey.value && walkTarget(journey.value)
+  if (target) destination.value = target
+  void begin()
+}
+
+/** 這段走到了：行程往下一步，畫面換成到站卡或抵達卡 */
+function onWalkArrived() {
+  stopAll()
+  if (journey.value) journey.value = legArrived(journey.value)
+  else stopOnlyArrived.value = true
+}
+
+function onBoarded() {
+  const j = journey.value
+  if (!j) return
+  journey.value = boarded(j)
+  const r = currentRide(journey.value)!
+  const start: LatLon = [r.board.lat, r.board.lon]
+  rideNow.value = rideStatus(r.stops, start, 0)
+  void wake.on()
+  if (simGps.value || !('geolocation' in navigator)) return
+  rideWatchId = navigator.geolocation.watchPosition(
+    (p) => {
+      locator.feed([p.coords.latitude, p.coords.longitude], p.coords.accuracy)
+      const ride = journey.value && currentRide(journey.value)
+      if (ride) rideNow.value = rideStatus(ride.stops, [p.coords.latitude, p.coords.longitude], rideNow.value.index)
+    },
+    () => {},
+    { enableHighAccuracy: true, maximumAge: 5000 },
+  )
+}
+
+/** 模擬：公車開到下一站 */
+function simNextStop() {
+  const r = journey.value && currentRide(journey.value)
+  if (!r) return
+  const next = r.stops[Math.min(rideNow.value.index + 1, r.stops.length - 1)]
+  rideNow.value = rideStatus(r.stops, [next.lat, next.lon], rideNow.value.index)
+}
+
+function stopRideWatch() {
+  if (rideWatchId !== null) navigator.geolocation.clearWatch(rideWatchId)
+  rideWatchId = null
+}
+
+/** 下車了：走去下一個上車站（轉乘）或目的地，模擬 GPS 從下車站出發 */
+function onGotOff() {
+  const j = journey.value
+  const r = j && currentRide(j)
+  if (!j || !r) return
+  stopRideWatch()
+  journey.value = gotOff(j)
+  const target = walkTarget(journey.value)
+  if (!target) return
+  destination.value = target
+  void begin([r.alight.lat, r.alight.lon])
+}
+
+/** 行程結束：回到搜尋畫面 */
+function finishTrip() {
+  stopRideWatch()
+  journey.value = null
+  stopOnlyArrived.value = false
+  end()
 }
 
 function speakOrBuzz(cue: Cue) {
@@ -462,7 +636,7 @@ function speakOrBuzz(cue: Cue) {
   }
 }
 
-async function begin() {
+async function begin(simStart?: LatLon) {
   stopAll()
   cues.value = []
   announcer.reset()
@@ -501,7 +675,10 @@ async function begin() {
   if (perm === 'denied') useManualHeading.value = true
 
   // 模擬 GPS 的起點：先試真實位置，拿不到就用預設點
-  if (manual) {
+  if (manual && simStart) {
+    manual.moveTo(simStart)
+    simNote.value = '模擬 GPS：從下車站出發'
+  } else if (manual) {
     const real = await currentPositionOnce()
     manual.moveTo(real ?? simFallbackStart())
     simNote.value = real ? '模擬 GPS：從你現在的位置出發' : '模擬 GPS：拿不到位置，從目的地南方約 400 公尺出發'
@@ -518,7 +695,7 @@ async function begin() {
     announcer.update(v).forEach(speakOrBuzz) // 抵達那句只震動，不出聲
     if (v.state === 'arrived' && !arrivedHandled) {
       arrivedHandled = true
-      goArrived()
+      onWalkArrived()
     }
   })
   m.onEffect((e) => void fetchRealRoute(m, e.from, e.candidate))
@@ -540,6 +717,8 @@ async function begin() {
     onPosition: (p) => {
       rec.position(p)
       updateCourse(p)
+      // 真實 GPS 的位置也記下來：中斷導航後再搜尋，用的是這裡（模擬 GPS 不算）
+      if (!useSim) locator.feed([p.lat, p.lon], p.accuracyM)
       m.onPosition(p)
     },
     onError: (c) => {
@@ -629,7 +808,7 @@ const courseDiff = computed(() => {
 /** 模擬 GPS（鍵盤）：以目前朝向為前方，一次移動 KEY_STEP_M 公尺 */
 function simMove(forward: number, right: number) {
   if (!manual) return
-  const h = view.value?.headingDeg ?? 0
+  const h = joyForwardDeg()
   manual.step(h, forward * KEY_STEP_M, right * KEY_STEP_M)
 }
 
@@ -644,7 +823,7 @@ function onJoystick(v: JoystickVector) {
 }
 const joyTimer = window.setInterval(() => {
   if (!manual || (joy.forward === 0 && joy.right === 0)) return
-  const h = view.value?.headingDeg ?? 0
+  const h = joyForwardDeg()
   const m = simSpeed.value * 0.1
   manual.step(h, joy.forward * m, joy.right * m, { emit: false })
   const now = Date.now()
@@ -748,13 +927,18 @@ function stopAll() {
 function end() {
   stopAll()
   view.value = null
+  // 回到搜尋畫面：結果的距離改用現在的位置
+  void rerankWithCurrentPosition()
 }
 
 function onManualHeading() {
   if (useManualHeading.value) machine?.onHeading(manualHeading.value)
 }
 
-onBeforeUnmount(stopAll)
+onBeforeUnmount(() => {
+  stopAll()
+  stopRideWatch()
+})
 
 // 箭頭每一幀往目標角度內插，直接寫 DOM（不經 Vue 重繪、不用 CSS transition）。
 // 感測事件 10 Hz 或 60 Hz 都一樣順，延遲約 headingTauMs + arrowTauMs。
@@ -782,6 +966,46 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
     class="flex min-h-dvh flex-col text-white"
     :style="{ background: running && view ? BG[view.state] : '#30383D' }"
   >
+    <!-- 行程中的到站、坐車、抵達畫面：蓋在整頁上，不跳頁 -->
+    <div v-if="journey?.phase === 'at_stop' && atStopTrip" class="fixed inset-0 z-20 overflow-y-auto">
+      <ArrivalCard
+        :trip="atStopTrip"
+        :lang="langAudience.lang"
+        :audience="langAudience.audience"
+        :primary-label="boardedLabel"
+        @primary="onBoarded"
+      />
+    </div>
+    <div v-else-if="journey?.phase === 'ride' && atStopTrip" class="fixed inset-0 z-20 overflow-y-auto">
+      <RideCard
+        :trip="atStopTrip"
+        :lang="langAudience.lang"
+        :audience="langAudience.audience"
+        :status="rideNow"
+        :simulate="simGps"
+        @got-off="onGotOff"
+        @sim-next="simNextStop"
+      />
+    </div>
+    <div v-else-if="journey?.phase === 'arrived' && finalTrip" class="fixed inset-0 z-20 overflow-y-auto">
+      <ArrivalCard
+        :trip="finalTrip"
+        :lang="langAudience.lang"
+        :audience="langAudience.audience"
+        :primary-label="doneLabel"
+        @primary="finishTrip"
+      />
+    </div>
+    <div v-else-if="stopOnlyArrived && stopOnlyTrip" class="fixed inset-0 z-20 overflow-y-auto">
+      <ArrivalCard
+        :trip="stopOnlyTrip"
+        :lang="langAudience.lang"
+        :audience="langAudience.audience"
+        :primary-label="doneLabel"
+        @primary="finishTrip"
+      />
+    </div>
+
     <!-- 設定區：還沒開始時顯示 -->
     <section v-if="!running" class="space-y-4 p-4">
       <h1 class="text-xl font-bold">導航實驗</h1>
@@ -808,7 +1032,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
           </button>
         </div>
         <p class="text-sm text-white/70">
-          站名查 TDX 站牌資料、連鎖店（7-11、全家、麥當勞、海底撈…）查本站的開放資料快照，這兩種都不會把輸入送到第三方；地址和地標會送到公開的 OpenStreetMap 搜尋服務。搜連鎖店會要一次你的位置來排序最近的；不給也行，改以臺北車站為準。
+          站名查 TDX 站牌資料，連鎖店（7-11、全家、麥當勞、海底撈…）和地標、餐廳、學校查本站的開放資料快照，不會把輸入送到第三方；地址另外會送到公開的 OpenStreetMap 搜尋服務。結果用你現在的位置由近到遠排；不給位置也行，改以臺北車站為準。
         </p>
       </form>
 
@@ -818,8 +1042,8 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
       <section v-if="showBusPanel" ref="busPanel" class="scroll-mt-4 space-y-2" aria-label="搭公車去">
         <div class="flex items-start justify-between gap-3">
           <h2 class="text-xl font-bold">
-            去「{{ busTargetName }}」可以搭
-            <span class="block text-sm font-normal text-white/70">只列直達車，不含轉乘</span>
+            去「{{ busTargetName }}」{{ busOptions?.length ? '可以搭' : '' }}
+            <span v-if="busLoading || busOptions?.length" class="block text-sm font-normal text-white/70">{{ busIsTransfer ? '沒有直達車，以下要轉一次車' : '先列直達車；沒有直達才列轉一次車' }}</span>
           </h2>
           <button type="button" class="shrink-0 rounded-lg bg-white/20 px-3 py-2 text-base" @click="reselectDestination">重新選擇</button>
         </div>
@@ -827,7 +1051,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
         <p v-if="busNote" class="text-amber-200">{{ busNote }}</p>
         <button
           v-for="o in busOptions ?? []"
-          :key="`${o.route.routeName.zh}-${o.route.direction}`"
+          :key="busKey(o)"
           type="button"
           class="block w-full rounded-lg bg-white/10 p-3 text-left"
           :class="{ 'ring-2 ring-white': isBusPicked(o) }"
@@ -836,8 +1060,13 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
         >
           <div class="text-lg font-bold">{{ busLabel(o) }}</div>
           <div class="text-sm text-white/80">
-            走 {{ formatDistance(o.walkToBoardM) }}到「{{ o.board.name.zh }}」上車 → 坐 {{ o.stopCount }} 站 →
-            在「{{ o.alight.name.zh }}」下車，再走 {{ formatDistance(o.walkFromAlightM) }}
+            走 {{ formatDistance(o.walkToBoardM) }}到「{{ o.rides[0].board.name.zh }}」上車
+            <template v-for="(r, i) in o.rides" :key="i">
+              <template v-if="i > 0">
+                → 走 {{ formatDistance(o.transferWalkM) }}到「{{ r.board.name.zh }}」轉 {{ r.route.routeName.zh }}
+              </template>
+              → 坐 {{ r.stops.length - 1 }} 站 → 在「{{ r.alight.name.zh }}」下車</template
+            >，再走 {{ formatDistance(o.walkFromAlightM) }}
           </div>
         </button>
         <button
@@ -854,20 +1083,34 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
 
       <!-- 搜尋結果：地點、連鎖店在前（輸入目的地 A 就幫你找車），公車站牌在後（已經知道要搭哪班車） -->
       <template v-else>
-        <!-- 地點與地址（OpenStreetMap） -->
+        <!-- 地點與地址（後端 Overture 地標快照＋OpenStreetMap）：由近到遠 -->
         <section v-if="placeResults && placeResults.length" class="space-y-2" aria-label="地點與地址">
-          <h2 class="text-lg font-bold">地點與地址</h2>
+          <h2 class="text-lg font-bold">
+            地點與地址
+            <span class="text-sm font-normal text-white/70">（離{{ nearUser ? '你' : '臺北車站' }}由近到遠）</span>
+          </h2>
           <button
-            v-for="(p, i) in placeResults"
-            :key="`${p.name}-${i}`"
+            v-for="(p, i) in placeVisible"
+            :key="`${p.name}-${p.point[0]}-${p.point[1]}-${i}`"
             type="button"
             class="block w-full rounded-lg bg-white/10 p-3 text-left"
             :class="{ 'ring-2 ring-white': isPlacePicked(p) }"
             :aria-pressed="isPlacePicked(p)"
             @click="pickPlace(p)"
           >
-            <div class="text-lg font-bold">{{ p.name }}</div>
+            <div class="flex items-baseline justify-between gap-2">
+              <span class="text-lg font-bold">{{ p.name }}</span>
+              <span class="shrink-0 text-sm text-white/80">{{ formatDistance(p.distanceM) }}</span>
+            </div>
             <div v-if="p.detail" class="text-sm text-white/70">{{ p.detail }}</div>
+          </button>
+          <button
+            v-if="placeShown < placeResults.length"
+            type="button"
+            class="h-12 w-full rounded-lg bg-white/20 font-bold"
+            @click="placeShown += PLACE_PAGE"
+          >
+            再多看一些（還有 {{ placeResults.length - placeShown }} 個）
           </button>
         </section>
 
@@ -876,7 +1119,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
           <h2 class="text-lg font-bold">
             連鎖店
             <span class="text-sm font-normal text-white/70">
-              （{{ poiResults.length >= POI_LIMIT ? `最近的 ${POI_LIMIT} 家` : `共 ${poiResults.length} 家` }}，離{{ poiNearUser ? '你' : '臺北車站' }}由近到遠）
+              （{{ poiResults.length >= POI_LIMIT ? `最近的 ${POI_LIMIT} 家` : `共 ${poiResults.length} 家` }}，離{{ nearUser ? '你' : '臺北車站' }}由近到遠）
             </span>
           </h2>
           <button
@@ -908,7 +1151,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
         <section v-if="stopResults && stopResults.length" class="space-y-2" aria-label="公車站牌">
           <h2 class="text-lg font-bold">
             公車站牌
-            <span class="text-sm font-normal text-white/70">（已經知道要搭哪一班車時用）</span>
+            <span class="text-sm font-normal text-white/70">（已經知道要搭哪一班車時用；一樣符合的，離{{ nearUser ? '你' : '臺北車站' }}近的在前）</span>
           </h2>
           <div v-for="st in stopResults" :key="st.stationUid" class="rounded-lg bg-white/10 p-3">
             <div class="text-lg font-bold">
@@ -936,9 +1179,9 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
 
       <p v-if="stopResults || placeResults || poiResults" class="text-xs text-white/60">
         資料：公車站牌為 TDX 公車站位資料<template v-if="stopsUpdatedAt">（{{ stopsUpdatedAt.slice(0, 16).replace('T', ' ') }} 版）</template>；
-        連鎖店為 Overture Maps Foundation Places<template v-if="poiRelease">（{{ poiRelease }} 版）</template>
+        連鎖店與地標為 Overture Maps Foundation Places<template v-if="poiRelease">（{{ poiRelease }} 版）</template>
         （CDLA-Permissive-2.0／Apache-2.0／CC0-1.0），可能有已歇業或位置差幾十公尺的店；
-        地點為 © OpenStreetMap contributors。找不到時改搜站名或路名。
+        地址為 © OpenStreetMap contributors。找不到時改搜站名或路名。
       </p>
 
       <div class="rounded-lg bg-white/10 p-3">
@@ -961,7 +1204,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
       <p class="text-sm text-white/70">
         用真實定位，走到戶外；路線避開階梯、陡坡與小巷，會把你的座標送到公開的路徑服務。
       </p>
-      <button class="h-16 w-full rounded-xl bg-white text-lg font-bold text-[#30383D]" @click="begin">開始走</button>
+      <button class="h-16 w-full rounded-xl bg-white text-lg font-bold text-[#30383D]" @click="startTrip">開始走</button>
       <p v-if="permissionNote" class="text-amber-200">{{ permissionNote }}</p>
       <router-link class="block text-center underline" to="/lab/sensors">← 感測實驗</router-link>
     </section>
@@ -1007,6 +1250,12 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
       <section v-if="simGps" class="space-y-2 px-4 pb-4">
         <div class="text-center text-sm opacity-80">{{ simNote }}</div>
         <Joystick @change="onJoystick" />
+        <label class="flex items-center justify-center gap-2 text-sm">搖桿往上＝
+          <select v-model="joyFrame" class="rounded bg-white/20 px-2 py-1">
+            <option value="map">地圖上方（北）</option>
+            <option value="phone">手機面對的方向</option>
+          </select>
+        </label>
         <label class="flex items-center justify-center gap-2 text-sm">推到底的速度
           <select v-model.number="simSpeed" class="rounded bg-white/20 px-2 py-1">
             <option :value="1.4">步行 1.4 m/s</option>
@@ -1071,7 +1320,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
           <div>羅盤檢查 {{ view.headingCheck }}</div>
           <div>羅盤偏差 {{ view.headingOffsetDeg?.toFixed(0) ?? '—' }}°</div>
           <div>進度 {{ Math.round(view.progress * 100) }}%</div>
-          <div>下個轉彎 {{ view.nextTurn ? `${view.nextTurn.kind} ${view.nextTurn.distanceM.toFixed(0)}m` : '—' }}</div>
+          <div>下個轉彎 {{ view.nextTurn ? `${view.nextTurn.kind}${view.nextTurn.then ? `→${view.nextTurn.then}` : ''} ${view.nextTurn.distanceM.toFixed(0)}m` : '—' }}</div>
           <div class="col-span-2">
             GPS 行進方向 {{ gpsCourse === null ? '—（走 5 m 以上才有）' : `${gpsCourse.toFixed(0)}°` }}
             <template v-if="courseDiff !== null">・和羅盤差 {{ courseDiff }}°{{ courseDiff > 45 ? '（羅盤可能不準）' : '' }}</template>
@@ -1082,7 +1331,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
           </div>
           <div class="col-span-2">{{ wakeNote }}</div>
           <div v-if="routeInfo" class="col-span-2">
-            路線 {{ routeInfo.distanceM }} m・階梯 {{ routeInfo.stairsCount }} 段・
+            路線 {{ routeInfo.distanceM }} m・階梯 {{ routeInfo.stairsCount }} 段・過馬路 {{ routeInfo.crossCount ?? '—' }} 次・
             {{ routeInfo.maneuvers.filter((x) => x.street).map((x) => x.street).join(' → ') || '無路名' }}
           </div>
           <div v-if="routeError" class="col-span-2 text-amber-200">{{ routeError }}</div>

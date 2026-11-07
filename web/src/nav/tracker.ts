@@ -3,7 +3,7 @@
  * 見 docs/arrow-nav/04-nav-logic.md#每次更新的計算。
  */
 import type { LatLon, ManeuverKind, RouteOption } from '@/lib/contract'
-import { turnPassM } from './config'
+import { crossPassM, turnPassM } from './config'
 import type { NavConfig } from './config'
 import { distanceM, lerpLatLon, projectToSegment } from './geo'
 
@@ -20,8 +20,11 @@ export interface TrackState {
   target: LatLon
   /** 路線上最接近目前位置的點 */
   nearest: LatLon
-  /** 下一個還沒通過的轉彎（不含 depart、straight、arrive），沒有時為 null */
-  nextTurn: { kind: ManeuverKind; distanceM: number; index: number } | null
+  /**
+   * 下一個還沒通過的轉彎（不含 depart、straight、arrive），沒有時為 null。
+   * cross（過馬路）多兩個欄位：then＝過完要轉的方向；startM＝離開始過馬路的地方還有多遠（已經在過就是 0）
+   */
+  nextTurn: { kind: ManeuverKind; distanceM: number; index: number; then?: ManeuverKind | null; startM?: number } | null
 }
 
 export interface Tracker {
@@ -47,7 +50,15 @@ export function createTracker(
 
   const turns = route.maneuvers
     .filter((m) => isTurn(m.kind) && m.atIndex >= 0 && m.atIndex < g.length)
-    .map((m) => ({ kind: m.kind, index: m.atIndex, alongM: cum[m.atIndex]!, point: g[m.atIndex]! }))
+    .map((m) => ({
+      kind: m.kind,
+      index: m.atIndex,
+      alongM: cum[m.atIndex]!,
+      point: g[m.atIndex]!,
+      cross: m.kind === 'cross',
+      then: m.then ?? null,
+      startAlongM: cum[Math.max(0, Math.min(m.fromIndex ?? m.atIndex, m.atIndex))]!,
+    }))
     .sort((a, b) => a.alongM - b.alongM)
 
   function pointAt(alongM: number): LatLon {
@@ -104,11 +115,13 @@ export function createTracker(
       // 2. 通過轉彎：投影已到（或超過）轉彎點，或人離轉彎點 turnPassM 以內。
       //    GPS 已過轉角、投影還在轉角前時，目標點才不會落在背後叫人向後轉。
       //    只看搜尋視窗內的轉彎，避免折返路線上「之後才會經過」的轉角剛好在旁邊。
+      //    過馬路的「對面」用比較小的範圍，站在這一側路邊不會被當成已經過了。
       const passM = turnPassM(accuracyM)
+      const crossM = crossPassM(accuracyM)
       while (passed < turns.length) {
         const t = turns[passed]!
         const reached = t.alongM <= lastAlong + 1e-6
-        const near = t.alongM - lastAlong <= cfg.searchAheadM && distanceM(p, t.point) <= passM
+        const near = t.alongM - lastAlong <= cfg.searchAheadM && distanceM(p, t.point) <= (t.cross ? crossM : passM)
         if (!reached && !near) break
         lastAlong = Math.max(lastAlong, t.alongM)
         passed++
@@ -127,7 +140,14 @@ export function createTracker(
         distToEndM: distanceM(p, end),
         target: pointAt(targetAlong),
         nearest: best.point,
-        nextTurn: next ? { kind: next.kind, distanceM: next.alongM - alongM, index: next.index } : null,
+        nextTurn: next
+          ? {
+              kind: next.kind,
+              distanceM: next.alongM - alongM,
+              index: next.index,
+              ...(next.cross ? { then: next.then, startM: Math.max(0, next.startAlongM - alongM) } : {}),
+            }
+          : null,
       }
     },
   }

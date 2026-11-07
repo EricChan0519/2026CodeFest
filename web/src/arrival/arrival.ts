@@ -18,7 +18,7 @@ export interface ArrivalTrip {
   alight?: Name
 }
 
-const SPEECH_LANGS: Record<Lang, string> = {
+export const SPEECH_LANGS: Record<Lang, string> = {
   'zh-TW': 'zh-TW',
   en: 'en-US',
   th: 'th-TH',

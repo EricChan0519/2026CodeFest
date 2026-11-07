@@ -6,8 +6,9 @@
  * 放在 web/public/lab/stop_index.json，第一次搜尋才下載（約 460 KB gzip）。
  * 正式流程用自己後端的 GET /api/stations/search（api.search），不是這個檔案。
  */
-import type { Station } from '@/lib/contract'
+import type { LatLon, Station } from '@/lib/contract'
 import type { RoutePattern } from '@/lib/directBus'
+import { distanceM } from '@/nav/geo'
 
 export const STOP_INDEX_URL = '/lab/stop_index.json'
 
@@ -59,16 +60,19 @@ function score(key: string, zh: string, needles: string[]): number {
   return best
 }
 
-/** 站名含關鍵字的站位；同名的不同站位（兩個方向）都列出，不合併 */
-export function searchStops(index: StopIndex, q: string, limit = 20): Station[] {
+/**
+ * 站名含關鍵字的站位；同名的不同站位（兩個方向）都列出，不合併。
+ * 先比站名像不像（完全相同 > 開頭相同 > 包含），一樣像的依離 near 的距離由近到遠（2026-11-07 回報：沒有照距離排）。
+ */
+export function searchStops(index: StopIndex, q: string, limit = 20, near: LatLon | null = null): Station[] {
   const needles = queryVariants(q)
   if (needles.length === 0) return []
-  const hits: { s: Station; score: number; i: number }[] = []
+  const hits: { s: Station; score: number; d: number; i: number }[] = []
   index.stations.forEach((s, i) => {
     const sc = score(index.keys[i]!, normalizeQuery(s.name.zh), needles)
-    if (sc > 0) hits.push({ s, score: sc, i })
+    if (sc > 0) hits.push({ s, score: sc, d: near ? distanceM(near, [s.lat, s.lon]) : 0, i })
   })
-  hits.sort((a, b) => b.score - a.score || a.i - b.i)
+  hits.sort((a, b) => b.score - a.score || a.d - b.d || a.i - b.i)
   return hits.slice(0, limit).map((h) => h.s)
 }
 

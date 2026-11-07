@@ -84,4 +84,9 @@ describe('planDirectBus', () => {
     const options = planDirectBus([A, near], [pattern(0, ['A', 'N'])], [25.0, 121.503], [25.001, 121.503])
     expect(options).toEqual([])
   })
+
+  it('lists every stop from boarding to alighting for the ride screen', () => {
+    const [o] = planDirectBus(stations, [pattern(0, ['A', 'B', 'C'])], from, to)
+    expect(o.stops.map((s) => s.stationUid)).toEqual(['A', 'B', 'C'])
+  })
 })
