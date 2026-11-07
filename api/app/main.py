@@ -6,12 +6,16 @@
 使用者座標只放 POST body，不寫進 log（ADR-0005）。
 """
 import os
+from functools import lru_cache
+from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.errors import install_error_handlers
+from app.errors import ApiError, install_error_handlers
 from app.schemas import NearbyRequest
+from app.stations import StationIndex
 
 app = FastAPI(title="Arrow Nav API")
 install_error_handlers(app)
@@ -32,11 +36,29 @@ app.add_middleware(
 VERSION = os.environ.get("APP_VERSION") or os.environ.get("K_REVISION", "local")
 
 
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+
+
+@lru_cache
+def get_station_index() -> StationIndex:
+    return StationIndex.load(Path(os.environ.get("STOP_INDEX_PATH", DATA_DIR / "stop_index.json")))
+
+
+Index = Annotated[StationIndex, Depends(get_station_index)]
+
+
 @app.get("/api/health")
-def health():
-    return {"status": "ok", "version": VERSION, "stopIndexUpdatedAt": None}
+def health(idx: Index):
+    return {"status": "ok", "version": VERSION, "stopIndexUpdatedAt": idx.updated_at}
 
 
 @app.post("/api/stations/nearby")
-def stations_nearby(req: NearbyRequest):
-    return {"stations": [], "source": None}
+def stations_nearby(req: NearbyRequest, idx: Index):
+    return {"stations": idx.nearby(req.lat, req.lon, req.radiusM), "source": idx.source}
+
+
+@app.get("/api/stations/search")
+def stations_search(idx: Index, q: Annotated[str, Query(max_length=50)]):
+    if not q.strip():
+        raise ApiError("VALIDATION_ERROR", 422)
+    return {"stations": idx.search(q), "source": idx.source}
