@@ -1,4 +1,5 @@
-"""Measure a route (or one point) against snapshots: stairs, crossing types, street lamps, CCTV, police offices.
+"""Measure a route (or one point) against snapshots: stairs, crossing types, street lamps, CCTV, police offices,
+convenience stores and storefronts.
 
 lit_ratio is lamp density, not measured brightness. Camera positions come from address matching and are
 accurate to tens of metres, and say nothing about what a camera can see. Missing snapshots give None,
@@ -10,7 +11,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from app.engine import EngineRoute, LatLon
+from app.engine import EdgeInfo, EngineRoute, LatLon
 from app import elevation
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
@@ -22,7 +23,13 @@ CAMERA_BUFFER_M = 50.0
 POLICE_BUFFER_M = 150.0
 # scripts/build_safety_points.py reports how many camera addresses it could place; below this we say "unknown".
 MIN_CAMERA_COVERAGE = 0.5
+# Store coordinates are Overture place points (the shop itself, usually set back from the walkway).
+STORE_BUFFER_M = 40.0
 LIT_SAMPLE_EVERY_M = 20.0
+# Valhalla edge "use" values that mean a small or empty way: alleys, driveways, farm tracks, hill paths.
+QUIET_USES = frozenset({"alley", "driveway", "parking_aisle", "track", "path", "service_road", "culdesac",
+                        "mountain_bike", "bridleway", "drive_through"})
+MAIN_ROAD_CLASSES = frozenset({"motorway", "trunk", "primary", "secondary", "tertiary"})
 # Same grid as scripts/build_lamp_grid.py.
 LAMP_CELL_LAT = 0.00027
 LAMP_CELL_LON = 0.0003
@@ -42,6 +49,11 @@ class Metrics:
     max_grade_pct: float | None = None
     cameras: int | None = None
     police_nearby: int | None = None
+    # 路線模式「安全」用（store_points.json、trace_attributes）；沒有資料是 None
+    stores: int | None = None               # 路線 STORE_BUFFER_M 內的便利商店數
+    shop_ratio: float | None = None         # 每 20 公尺取一點，附近有店面的比例
+    quiet_ratio: float | None = None        # 走在小巷、私人車道、產業道路、山徑的長度比例
+    main_road_ratio: float | None = None    # 走在主要道路（含旁邊人行道）的長度比例
 
 
 def cell_of(lat: float, lon: float) -> str:
@@ -190,6 +202,58 @@ def _load_safety() -> _Safety | None:
     return _Safety(cameras if enough else None, police, updated_at if isinstance(updated_at, str) else None)
 
 
+@dataclass(frozen=True)
+class _Stores:
+    convenience: dict
+    shop_cells: frozenset[str]
+    updated_at: str | None
+
+
+@lru_cache(maxsize=1)
+def _load_stores() -> _Stores | None:
+    data = _read_json("store_points.json")
+    if data is None:
+        return None
+    try:
+        convenience: dict = {}
+        for lat, lon in data["convenience"]:
+            convenience.setdefault(_index_key(lat, lon), []).append((float(lat), float(lon)))
+        cells = frozenset(str(c) for c in data["shopCells"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    updated_at = data.get("updatedAt")
+    return _Stores(convenience, cells, updated_at if isinstance(updated_at, str) else None)
+
+
+def anchor_points(lat_min: float, lat_max: float, lon_min: float, lon_max: float) -> list[tuple[float, float, str]]:
+    """Police offices and convenience stores inside a box, as (lat, lon, "police" | "store").
+
+    Route modes use them as via points to find walks that pass by somewhere staffed."""
+    out: list[tuple[float, float, str]] = []
+    i_low, j_low = _index_key(lat_min, lon_min)
+    i_high, j_high = _index_key(lat_max, lon_max)
+    safety, stores = _load_safety(), _load_stores()
+    for i in range(i_low, i_high + 1):
+        for j in range(j_low, j_high + 1):
+            for lat, lon, _name in (safety.police.get((i, j), ()) if safety else ()):
+                out.append((lat, lon, "police"))
+            for lat, lon in (stores.convenience.get((i, j), ()) if stores else ()):
+                out.append((lat, lon, "store"))
+    return [p for p in out if lat_min <= p[0] <= lat_max and lon_min <= p[1] <= lon_max]
+
+
+def edge_ratios(edges: list[EdgeInfo] | None) -> tuple[float | None, float | None]:
+    """(quiet_ratio, main_road_ratio) by length. Crossings count as part of whatever road they cross."""
+    if not edges:
+        return None, None
+    total = sum(e.length_m for e in edges)
+    if total <= 0:
+        return None, None
+    quiet = sum(e.length_m for e in edges if e.use in QUIET_USES)
+    main = sum(e.length_m for e in edges if e.road_class in MAIN_ROAD_CLASSES and e.use not in QUIET_USES)
+    return round(quiet / total, 2), round(main / total, 2)
+
+
 def _samples(geometry: list[LatLon]) -> list[LatLon]:
     if not geometry:
         return []
@@ -234,6 +298,7 @@ def measure(route: EngineRoute) -> Metrics:
     distance = sum(math.hypot(*_to_metres(a, b)) for a, b in zip(route.geometry, route.geometry[1:]))
     safety = _load_safety()
     cameras = safety.cameras if safety else None
+    stores = _load_stores()
     return Metrics(
         steps=sum(m.kind == "stairs" for m in route.maneuvers),
         climb_m=climb_m(heights),
@@ -244,6 +309,8 @@ def measure(route: EngineRoute) -> Metrics:
         unknown_crossings=counts["unknown"] if counts else None,
         cameras=len(_near_points(route.geometry, cameras, CAMERA_BUFFER_M)) if cameras is not None else None,
         police_nearby=len(_near_points(route.geometry, safety.police, POLICE_BUFFER_M)) if safety else None,
+        stores=len(_near_points(route.geometry, stores.convenience, STORE_BUFFER_M)) if stores else None,
+        shop_ratio=_lit_ratio(route.geometry, stores.shop_cells) if stores else None,
     )
 
 
@@ -287,8 +354,11 @@ def nearby(lat: float, lon: float, radius_m: float = CAMERA_BUFFER_M, police_rad
 
 
 def source_updated_at() -> dict[str, str | None]:
-    """updatedAt of the snapshots that are loaded, keyed "lamps" and "safety"."""
+    """updatedAt of the snapshots that are loaded, keyed "lamps", "safety" and "stores"."""
     out: dict[str, str | None] = {}
+    stores = _load_stores()
+    if stores:
+        out["stores"] = stores.updated_at
     lamp = _read_json("lamp_grid.json")
     if lamp is not None and _load_lamp_cells() is not None:
         out["lamps"] = lamp.get("updatedAt") if isinstance(lamp.get("updatedAt"), str) else None

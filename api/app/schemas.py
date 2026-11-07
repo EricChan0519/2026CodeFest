@@ -41,3 +41,7 @@ class RoutesRequest(BaseModel):
     audience: Literal["elder", "child", "visitor"]
     candidate: CandidateId | None = None
     simulate: Literal["night"] | None = None
+    # 使用者選的路線模式；有值時不看對象規則表（route_modes.py），也忽略 candidate
+    mode: Literal["fast", "safe", "gentle"] | None = None
+    # 走到一半重新規劃：不另外找繞行路線（經過點），回得比較快
+    quick: bool = False

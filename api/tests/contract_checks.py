@@ -1,5 +1,7 @@
-IDS = {"fastest", "fewer_steps_hills", "fewer_steps_hills_bright", "fewer_unsignalized", "fewer_unsignalized_bright", "bright"}
-REASONS = {"fastest", "fewer_steps", "flatter", "gentler_slope", "brighter", "fewer_unsignalized_crossings", "extra_distance"}
+IDS = {"fastest", "fewer_steps_hills", "fewer_steps_hills_bright", "fewer_unsignalized", "fewer_unsignalized_bright", "bright",
+       "safe", "gentle"}
+REASONS = {"fastest", "fewer_steps", "flatter", "gentler_slope", "brighter", "fewer_unsignalized_crossings", "extra_distance",
+           "more_cameras", "near_police", "more_stores", "more_shops", "fewer_alleys", "main_roads", "extra_time"}
 KINDS = {"depart", "straight", "slight_left", "slight_right", "left", "right", "uturn", "stairs", "arrive"}
 BEARINGS = {"E", "W", "S", "N", "SE", "NE", "SW", "NW", None}
 
@@ -28,6 +30,13 @@ def check_routes(body):
             assert {"distanceM", "durationS", "steps", "climbM", "unsignalizedCrossings"} <= r["diff"].keys()
         if r["id"] == "fastest":
             assert r["diff"] is None
+        if r.get("edges") is not None:
+            assert all(len(e) == 4 and 0 <= e[0] <= e[1] < len(geometry) for e in r["edges"])
+    if "mode" in context:
+        assert context["mode"] in {"fast", "safe", "gentle"} and context["maxTimeRatio"] == 1.2
+        fastest = next(r for r in routes if r["id"] == "fastest")
+        assert all(r["durationS"] <= fastest["durationS"] * context["maxTimeRatio"] + 1 for r in routes)
+        assert len(routes) <= 2 and (len(routes) == 1 or routes[1]["id"] == "fastest")
 
 
 def check_stations(body, nearby):

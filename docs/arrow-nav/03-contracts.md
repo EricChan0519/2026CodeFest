@@ -358,6 +358,32 @@ export interface SensorSource {
 | `notes` | `no_better_route`、`simulated_night` |
 | `sources` | 只列這次回應用到的資料；前端關於頁另列全部 |
 
+### 路線模式：`POST /api/routes` 加 `mode`（2026-11-07 23:30）
+
+主畫面的「路線模式」選單（快速／安全／平緩）用這個。有 `mode` 時**不看對象規則表、忽略 `candidate`**；`audience` 只決定走路速度（長者 3.5 km/h）。算法見 [02 的路線模式](02-route-candidates.md#路線模式使用者選)。
+
+```json
+{ "from": {"lat": 25.1175, "lon": 121.531}, "to": {"lat": 25.107, "lon": 121.524}, "audience": "visitor",
+  "candidate": null, "simulate": null, "mode": "safe", "quick": false }
+```
+
+| 欄位 | 說明 |
+|---|---|
+| `mode` | `fast`、`safe`、`gentle` |
+| `quick` | `true`：走到一半重新規劃，不另外找經過點的繞行路線，回得比較快。預設 `false` |
+
+回應和上面相同，另外：
+
+| 欄位 | 說明 |
+|---|---|
+| `context.mode`、`context.maxTimeRatio` | 使用者選的模式；`1.2`＝任何一條路的 `durationS` 都不超過最快路線的 1.2 倍 |
+| `routes` | `fast`：一條 `fastest`。`safe`／`gentle`：推薦的路（`id` 是 `safe` 或 `gentle`）＋`fastest`；沒有量得到的改善時只有 `fastest`，`notes` 加 `no_better_route` |
+| `routes[].edges` | `[[begin, end, use, roadClass], ...]`：路段種類（Valhalla `trace_attributes`），`begin`、`end` 是 `geometry` 的索引。前端用來判斷過馬路；問不到是 `null` |
+| `routes[].metrics` 新欄位 | `stores`（40 公尺內便利商店數）、`shopRatio`（沿路有店面的比例）、`quietRatio`（走在小巷、私人車道、產業道路、山徑的長度比例）、`mainRoadRatio`（走在主要道路的長度比例）。後兩個只有路線模式算 |
+| `routes[].diff` 新欄位 | `litRatio`、`cameras`、`policeNearby`、`stores`、`shopRatio`、`mainRoadRatio` 是**多了**多少；`quietRatio` 是**少了**多少。一律「正數＝比較好」 |
+| `reasons` 新代碼 | `more_cameras`、`near_police`、`more_stores`、`more_shops`、`fewer_alleys`、`main_roads`、`extra_time`（多走 30 秒以上，且有其他原因） |
+| `sources` | 有便利商店快照時加 `Overture Maps Places（便利商店、店面）` |
+
 ## 前端 mock
 
 API 負責人提供下列檔案，前端用 `VITE_API_MOCK=1` 切換。標「改版」的由 API-A 在 **18:30 前**補上或更新：
@@ -378,3 +404,5 @@ web/src/mocks/routes-two-turns.json   改版：fastest，先左轉再右轉，NA
 |---|---|
 | `?reset=1` | 清除 localStorage 和導航狀態 |
 | `?demo=1` | 模擬行走，用 `web/public/demo/` 的內建路線，不需要連線 |
+| `?night=1` | 主畫面：路線模式用 `simulate: "night"`（安全模式的路燈權重變高），「怎麼去」標示「模擬晚上」 |
+| `?setup=1` | 主畫面：重新選語言、年紀、路線模式 |

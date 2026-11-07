@@ -138,7 +138,7 @@ const streets = computed(() => nav.routeInfo.value?.maneuvers.filter((x) => x.st
       <div v-if="nav.routeInfo.value" class="wide">
         <dt>路線</dt>
         <dd>
-          {{ nav.routeInfo.value.distanceM }} m・階梯 {{ nav.routeInfo.value.stairsCount }} 段・過馬路 {{ nav.routeInfo.value.crossCount ?? '—' }} 次・{{ streets }}
+          {{ nav.legMode.value }}→{{ nav.routeInfo.value.id }}（{{ nav.routeInfo.value.reasons.join('、') }}）・{{ nav.routeInfo.value.distanceM }} m・{{ Math.round(nav.routeInfo.value.durationS / 60) }} 分・階梯 {{ nav.routeInfo.value.stairsCount }} 段・過馬路 {{ nav.routeInfo.value.crossCount ?? '—' }} 次・{{ streets }}
         </dd>
       </div>
       <div v-if="nav.routeError.value" class="wide warn"><dt>錯誤</dt><dd>{{ nav.routeError.value }}</dd></div>

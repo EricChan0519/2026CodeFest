@@ -33,15 +33,29 @@ class EngineRoute:
     duration_s: float
     geometry: list[LatLon]                  # 已解碼，不是 polyline 字串
     maneuvers: list[Maneuver]
+    shape: str | None = None                # 引擎原始的 polyline，只給 edges() 用，不回給前端
+
+@dataclass(frozen=True)
+class EdgeInfo:
+    """路線上的一段路（Valhalla trace_attributes）。begin、end 是 geometry 的索引。"""
+    begin: int
+    end: int
+    use: str | None                         # road、footway、sidewalk、alley、pedestrian_crossing…
+    road_class: str | None                  # primary、secondary、tertiary、residential、service_other…
+    length_m: float
 
 class RouteNotFound(Exception): ...         # A 轉成 404 ROUTE_NOT_FOUND
 class RoutingUnavailable(Exception): ...    # A 轉成 503 ROUTING_UNAVAILABLE
 
 class RoutingEngine(Protocol):
     async def route(self, origin: LatLon, dest: LatLon,
-                    costing: PedestrianCosting, alternates: int = 0) -> list[EngineRoute]:
+                    costing: PedestrianCosting, alternates: int = 0,
+                    via: list[LatLon] | None = None) -> list[EngineRoute]:
         """第一筆是主路線，之後是 alternates。至少回一筆，否則丟 RouteNotFound。
-        alternates 只是上限：Valhalla 可能回得比要求少（短路線常只有主路線），呼叫端不可假設筆數。"""
+        alternates 只是上限：Valhalla 可能回得比要求少（短路線常只有主路線），呼叫端不可假設筆數。
+        via：路線要經過的點（不停留、不分段）；有 via 時引擎不回 alternates。"""
+    async def edges(self, route: EngineRoute) -> list[EdgeInfo] | None:
+        """這條路線每一段是什麼路（給路線模式量測小巷比例、給前端判斷過馬路）。不丟例外，拿不到回 None。"""
     async def ping(self) -> bool:
         """/api/health?deep=1 使用。不丟例外，失敗回 False。"""
 
