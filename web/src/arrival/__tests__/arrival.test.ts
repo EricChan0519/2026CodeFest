@@ -186,3 +186,35 @@ describe('arrivalFromStation', () => {
     expect(JSON.stringify(query)).not.toMatch(/25\.04|121\.51|TPE/)
   })
 })
+
+describe('alighting stop', () => {
+  const withStop: ArrivalTrip = { ...trip, alight: { zh: '板橋車站', en: 'Banqiao Station' } }
+
+  it('tells where to get off on screen and in speech', () => {
+    const a = buildArrival(withStop, 'zh-TW', 'visitor')
+    expect(a.getOff).toBe('在 板橋車站 下車')
+    expect(a.spoken).toBe('到了。等 307 號，往板橋方向，在 板橋車站 下車')
+    expect(buildArrival(withStop, 'en', 'visitor').getOff).toBe('Get off at Banqiao Station')
+    expect(buildArrival(trip, 'zh-TW', 'visitor').getOff).toBeNull()
+  })
+
+  it('puts the alighting stop on the show-someone card in Chinese', () => {
+    const card = askCard(withStop, 'th')!
+    expect(card.getOff).toBe('我要在 板橋車站 下車')
+    expect(card.own).toContain('ลงที่ Banqiao Station')
+    expect(askCard(trip, 'th')!.getOff).toBeNull()
+  })
+
+  it('carries the alighting stop through the URL', () => {
+    const loc = arrivalLocation(withStop, 'zh-TW', 'elder')
+    expect(loc.query.alightZh).toBe('板橋車站')
+    expect(tripFromQuery(loc.query).trip.alight).toEqual({ zh: '板橋車站', en: 'Banqiao Station' })
+  })
+
+  it('arrivalFromStation accepts the planner alight station', () => {
+    const station = { name: { zh: '臺北車站(鄭州)', en: null } }
+    const route = { routeName: { zh: '307', en: '307' }, headsign: { zh: '往板橋', en: null } }
+    const loc = arrivalFromStation(station, route, 'zh-TW', 'visitor', { name: { zh: '板橋車站', en: null } })
+    expect(loc.query.alightZh).toBe('板橋車站')
+  })
+})

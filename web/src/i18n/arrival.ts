@@ -12,6 +12,8 @@ export interface ArrivalStrings {
   /** {bus}、{to} */
   waitFor: string
   waitForNoDirection: string
+  /** 下車站，{stop} 是站名 */
+  getOffAt: string
   /** 問句：zh-TW 給旁人看，其他語言是給手機主人看的翻譯 */
   ask: string
   askNoDirection: string
@@ -30,6 +32,7 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     direction: '往{to}',
     waitFor: '等 {bus}，往{to}方向',
     waitForNoDirection: '等 {bus}',
+    getOffAt: '在 {stop} 下車',
     ask: '我要搭 {bus}，往{to}。請問是這班車嗎？',
     askNoDirection: '我要搭 {bus}。請問是這班車嗎？',
     showOthers: '給別人看',
@@ -45,6 +48,7 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     direction: 'To {to}',
     waitFor: 'Wait for bus {bus}, to {to}',
     waitForNoDirection: 'Wait for bus {bus}',
+    getOffAt: 'Get off at {stop}',
     ask: 'I want bus {bus}, to {to}. Is this the right bus?',
     askNoDirection: 'I want bus {bus}. Is this the right bus?',
     showOthers: 'Show someone',
@@ -60,6 +64,7 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     direction: 'ไป {to}',
     waitFor: 'รอรถเมล์สาย {bus} ไป {to}',
     waitForNoDirection: 'รอรถเมล์สาย {bus}',
+    getOffAt: 'ลงที่ {stop}',
     ask: 'ฉันจะขึ้นรถเมล์สาย {bus} ไป {to} ใช่คันนี้ไหม',
     askNoDirection: 'ฉันจะขึ้นรถเมล์สาย {bus} ใช่คันนี้ไหม',
     showOthers: 'ให้คนอื่นดู',
@@ -75,6 +80,7 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     direction: 'Đi {to}',
     waitFor: 'Đợi xe buýt {bus}, đi {to}',
     waitForNoDirection: 'Đợi xe buýt {bus}',
+    getOffAt: 'Xuống ở {stop}',
     ask: 'Tôi muốn đi xe buýt {bus}, đến {to}. Có phải xe này không?',
     askNoDirection: 'Tôi muốn đi xe buýt {bus}. Có phải xe này không?',
     showOthers: 'Cho người khác xem',
@@ -90,6 +96,7 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     direction: 'Ke {to}',
     waitFor: 'Tunggu bus {bus}, ke {to}',
     waitForNoDirection: 'Tunggu bus {bus}',
+    getOffAt: 'Turun di {stop}',
     ask: 'Saya mau naik bus {bus}, ke {to}. Apakah ini busnya?',
     askNoDirection: 'Saya mau naik bus {bus}. Apakah ini busnya?',
     showOthers: 'Tunjukkan ke orang lain',
@@ -105,6 +112,7 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     direction: 'ទៅ {to}',
     waitFor: 'រង់ចាំឡានក្រុង {bus} ទៅ {to}',
     waitForNoDirection: 'រង់ចាំឡានក្រុង {bus}',
+    getOffAt: 'ចុះនៅ {stop}',
     ask: 'ខ្ញុំចង់ជិះឡានក្រុង {bus} ទៅ {to}។ តើឡាននេះត្រូវទេ?',
     askNoDirection: 'ខ្ញុំចង់ជិះឡានក្រុង {bus}។ តើឡាននេះត្រូវទេ?',
     showOthers: 'បង្ហាញអ្នកដទៃ',
@@ -120,6 +128,7 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     direction: '{to} 行き',
     waitFor: '{bus} 番バス、{to} 行きを待ちましょう',
     waitForNoDirection: '{bus} 番バスを待ちましょう',
+    getOffAt: '{stop} で降ります',
     ask: '{bus} 番バスで {to} へ行きたいです。このバスで合っていますか？',
     askNoDirection: '{bus} 番バスに乗りたいです。このバスで合っていますか？',
     showOthers: '人に見せる',
@@ -135,6 +144,7 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     direction: '{to} 방면',
     waitFor: '{bus}번 버스, {to} 방면을 기다리세요',
     waitForNoDirection: '{bus}번 버스를 기다리세요',
+    getOffAt: '{stop}에서 내리세요',
     ask: '{bus}번 버스로 {to}에 가려고 해요. 이 버스가 맞나요?',
     askNoDirection: '{bus}번 버스를 타려고 해요. 이 버스가 맞나요?',
     showOthers: '다른 사람에게 보여주기',
