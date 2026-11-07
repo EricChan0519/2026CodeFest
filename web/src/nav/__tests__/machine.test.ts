@@ -143,6 +143,16 @@ describe('machine: off route', () => {
     expect(m.getView().state).toBe('navigating')
   })
 
+  it('reroutes after three fixes 25 m from the route with 5 m accuracy', () => {
+    const { m, effects, pos } = setup()
+    m.start()
+    m.onPosition(pos(0, 10, 5))
+    for (let i = 0; i < 3; i++) m.onPosition(pos(25, 12 + i, 5))
+    expect(m.getView().state).toBe('rerouting')
+    expect(effects).toHaveLength(1)
+    expect(effects[0]!.type).toBe('fetchRoute')
+  })
+
   it('three consecutive off-route fixes reroute exactly once (cooldown)', () => {
     const { m, effects, pos, advance } = setup()
     m.start()

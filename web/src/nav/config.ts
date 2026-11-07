@@ -36,8 +36,11 @@ export type NavConfig = typeof NAV_CONFIG
 /** 抵達範圍：max(15, accuracy) */
 export const arriveRadiusM = (accuracyM: number): number => Math.max(15, accuracyM)
 
-/** 偏離距離：max(30, 1.5 × accuracy) */
-export const offRouteM = (accuracyM: number): number => Math.max(30, 1.5 * accuracyM)
+/**
+ * 偏離距離：max(15, 2 × accuracy)。
+ * 馬路對面人行道約在 20–30 公尺，30 公尺偵測不到走到對向（2026-11-07 實測）。
+ */
+export const offRouteM = (accuracyM: number): number => Math.max(15, 2 * accuracyM)
 
 /**
  * 離轉彎點多近就算通過：max(8, 0.5 × accuracy)。

@@ -162,7 +162,7 @@ current += delta
 | `declinationDeg` | −4.7 | 磁偏角（待實測） |
 | `arriveRadiusM` | `max(15, accuracyM)` | 抵達範圍 |
 | `arriveHits` | 2 | 連續幾次才算抵達 |
-| `offRouteM` | `max(30, 1.5 × accuracyM)` | 偏離距離 |
+| `offRouteM` | `max(15, 2 × accuracyM)` | 偏離距離 |
 | `offRouteHits` | 3 | 連續幾次才算偏離 |
 | `rerouteCooldownS` | 20 | 重新規劃的最短間隔 |
 | `weakAccuracyM` | 50 | 精度差於此值算訊號弱 |

@@ -18,9 +18,10 @@ describe('NAV_CONFIG', () => {
     expect(arriveRadiusM(30)).toBe(30)
   })
 
-  it('off-route distance is max(30, 1.5 x accuracy)', () => {
-    expect(offRouteM(5)).toBe(30)
-    expect(offRouteM(30)).toBe(45)
+  it('off-route distance is max(15, 2 x accuracy)', () => {
+    expect(offRouteM(5)).toBe(15)
+    expect(offRouteM(10)).toBe(20)
+    expect(offRouteM(30)).toBe(60)
   })
 
   it('turn pass distance is max(8, 0.5 x accuracy)', () => {
