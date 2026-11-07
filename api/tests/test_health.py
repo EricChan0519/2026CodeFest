@@ -22,7 +22,7 @@ def test_version_reads_environment(monkeypatch):
 
 def test_deep(client, fake_engine, station_index):
     response = client.get("/api/health?deep=1")
-    assert response.status_code == 200 and response.json()["checks"] == {"routing": True, "stopIndex": True}
+    assert response.status_code == 200 and response.json()["checks"] == {"routing": True, "stopIndex": True, "elevation": False}
     fake_engine.mode = "down"
     response = client.get("/api/health?deep=1")
     assert response.status_code == 503 and response.json()["checks"]["routing"] is False

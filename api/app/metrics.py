@@ -9,6 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from app.engine import EngineRoute, LatLon
+from app import elevation
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 
@@ -30,6 +31,7 @@ class Metrics:
     unsignalized_crossings: int | None
     signal_crossings: int | None
     unknown_crossings: int | None
+    max_grade_pct: float | None = None
 
 
 def cell_of(lat: float, lon: float) -> str:
@@ -37,9 +39,39 @@ def cell_of(lat: float, lon: float) -> str:
 
 
 def climb_m(heights: list[float] | None) -> float | None:
-    if heights is None:
+    if not heights:
         return None
-    return sum(max(0, b - a) for a, b in zip(heights, heights[1:]))
+    low = heights[0]
+    total = 0.0
+    for height in heights[1:]:
+        if height < low:
+            low = height
+        elif height >= low + 1:
+            total += height - low
+            low = height
+    return round(total, 1)
+
+
+def max_grade_pct(heights: list[float] | None, distance_m: float) -> float | None:
+    if not heights or len(heights) < 2 or distance_m <= 0:
+        return None
+    if distance_m < 40:
+        return round(abs(heights[-1] - heights[0]) / distance_m * 100, 1)
+    # Regular 20 m samples, followed by a possibly shorter final segment.
+    distances = [min(i * LIT_SAMPLE_EVERY_M, distance_m) for i in range(len(heights) - 1)] + [distance_m]
+    grades = []
+    start = 0
+    for i, d in enumerate(distances):
+        if d < 40:
+            continue
+        target = d - 40
+        while start + 1 < i and distances[start + 1] < target:
+            start += 1
+        span = distances[start + 1] - distances[start]
+        fraction = (target - distances[start]) / span if span else 0
+        old = heights[start] + fraction * (heights[start + 1] - heights[start])
+        grades.append(abs(heights[i] - old) / 40 * 100)
+    return round(max(grades), 1) if grades else None
 
 
 def _read_json(name: str) -> dict | None:
@@ -148,9 +180,14 @@ def measure(route: EngineRoute) -> Metrics:
     index = _load_crossings()
     cells = _load_lamp_cells()
     counts = _count_crossings(route.geometry, index) if index is not None else None
+    samples = _samples(route.geometry)
+    heights = [elevation.height(*point) for point in samples]
+    heights = heights if heights and all(h is not None for h in heights) else None
+    distance = sum(math.hypot(*_to_metres(a, b)) for a, b in zip(route.geometry, route.geometry[1:]))
     return Metrics(
         steps=sum(m.kind == "stairs" for m in route.maneuvers),
-        climb_m=None,
+        climb_m=climb_m(heights),
+        max_grade_pct=max_grade_pct(heights, distance),
         lit_ratio=_lit_ratio(route.geometry, cells) if cells is not None else None,
         unsignalized_crossings=counts["unsignalized"] if counts else None,
         signal_crossings=counts["signal"] if counts else None,

@@ -1,5 +1,5 @@
 IDS = {"fastest", "fewer_steps_hills", "fewer_steps_hills_bright", "fewer_unsignalized", "fewer_unsignalized_bright", "bright"}
-REASONS = {"fastest", "fewer_steps", "flatter", "brighter", "fewer_unsignalized_crossings", "extra_distance"}
+REASONS = {"fastest", "fewer_steps", "flatter", "gentler_slope", "brighter", "fewer_unsignalized_crossings", "extra_distance"}
 KINDS = {"depart", "straight", "slight_left", "slight_right", "left", "right", "uturn", "stairs", "arrive"}
 BEARINGS = {"E", "W", "S", "N", "SE", "NE", "SW", "NW", None}
 
