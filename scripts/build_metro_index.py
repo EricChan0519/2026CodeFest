@@ -3,7 +3,7 @@
 格式見 docs/arrow-nav/03-contracts.md「公車＋捷運規劃」；前端型別在 web/src/lib/metroIndex.ts。
 TDX 的欄位名稱只出現在這支腳本。
 
-端點（/api/basic/v2/Rail/Metro/{X}/TRTC）：
+端點（/api/basic/v2/Rail/Metro/{X}/{業者}，業者是 TRTC 臺北捷運，加上 NTMC 新北捷運的環狀線）：
 - 必要：Station、StationOfLine、Line（欄位已由 NYCU TDX 套件原始碼確認）
 - 選用：StationOfRoute、S2STravelTime、LineTransfer、StationExit、Frequency（欄位待用金鑰實測）
   讀不到或欄位不符時用預設值，並把欄位名稱寫進 defaults，關於頁和 README 據此說明。
@@ -30,7 +30,12 @@ except ModuleNotFoundError:
     from tdx import tdx_get
 
 ROOT = Path(__file__).resolve().parents[1]
-OPERATOR = "TRTC"
+# 臺北捷運（TRTC）是必要的；環狀線由新北捷運（NTMC）營運，抓不到時只少環狀線
+OPERATORS = (("TRTC", True), ("NTMC", False))
+# 只收捷運路線；NTMC 底下的淡海、安坑輕軌不收
+ALLOWED_LINES = {"BR", "R", "G", "O", "BL", "Y"}
+# 名稱不同、同名比對抓不到的轉乘站（LineTransfer 讀不到時才用）
+EXTRA_TRANSFERS = (("Y15", "BL08"),)  # 新埔民生 ↔ 新埔
 
 DEFAULT_RUN_S = 120
 DEFAULT_HEADWAY_S = 360
@@ -183,6 +188,7 @@ def build_metro_index(*, stations, lines, station_of_line, station_of_route, s2s
     defaults: set[str] = set()
 
     sequences, used_line_fallback = _sequences(station_of_line, station_of_route)
+    sequences = [(line, ids) for line, ids in sequences if line in ALLOWED_LINES]
     if used_line_fallback:
         # 支線接點是 BRANCH_JUNCTION 寫死的，不是 TDX 給的
         defaults.add("branches")
@@ -258,6 +264,9 @@ def build_metro_index(*, stations, lines, station_of_line, station_of_route, s2s
                 if a["stationId"] != z["stationId"] and a["name"]["zh"] and a["name"]["zh"] == z["name"]["zh"] \
                         and _distance_m(coords[a["stationId"]], coords[z["stationId"]]) <= SAME_NAME_TRANSFER_M:
                     pairs[(a["stationId"], z["stationId"])] = DEFAULT_TRANSFER_S
+        for a, z in EXTRA_TRANSFERS:
+            if a in used and z in used:
+                pairs[(a, z)] = pairs[(z, a)] = DEFAULT_TRANSFER_S
     out_transfers = [{"from": a, "to": z, "walkS": w} for (a, z), w in sorted(pairs.items())]
 
     return {"updatedAt": updated_at, "defaults": sorted(defaults), "lines": out_lines, "stations": out_stations,
@@ -300,8 +309,8 @@ def check_metro_index(d: dict) -> list[str]:
     return errors
 
 
-async def _fetch(kind: str, required: bool):
-    path = f"/v2/Rail/Metro/{kind}/{OPERATOR}"
+async def _fetch(kind: str, operator: str, required: bool):
+    path = f"/v2/Rail/Metro/{kind}/{operator}"
     for attempt in range(6):
         try:
             return await tdx_get(path, {"$format": "JSON"})
@@ -313,7 +322,7 @@ async def _fetch(kind: str, required: bool):
                 continue
             if required:
                 raise
-            print(f"  {kind}：HTTP {status}，改用預設值")
+            print(f"  {operator} {kind}：HTTP {status}，略過")
             return None
 
 
@@ -323,14 +332,19 @@ def main():
     parser.add_argument("--copy", default="web/public/lab/metro_index.json", help="再複製一份給前端；空字串表示不複製")
     args = parser.parse_args()
 
+    kinds = (("Station", True), ("StationOfLine", True), ("Line", True), ("StationOfRoute", False),
+             ("S2STravelTime", False), ("LineTransfer", False), ("StationExit", False), ("Frequency", False))
+
     async def fetch():
-        got = {}
+        """每個端點把各業者的資料串在一起；全部業者都抓不到就是 None（用預設值）。"""
+        got = {kind: None for kind, _ in kinds}
         # 依序抓，避免同時打 TDX 觸發 429
-        for kind, required in (("Station", True), ("StationOfLine", True), ("Line", True), ("StationOfRoute", False),
-                               ("S2STravelTime", False), ("LineTransfer", False), ("StationExit", False),
-                               ("Frequency", False)):
-            got[kind] = await _fetch(kind, required)
-            await asyncio.sleep(0.5)
+        for operator, operator_required in OPERATORS:
+            for kind, kind_required in kinds:
+                rows = await _fetch(kind, operator, operator_required and kind_required)
+                if rows is not None:
+                    got[kind] = (got[kind] or []) + rows
+                await asyncio.sleep(0.5)
         return got
 
     raw = asyncio.run(fetch())

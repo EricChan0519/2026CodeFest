@@ -160,3 +160,29 @@ def test_stations_not_on_any_pattern_are_dropped():
     stations = STATIONS + [{"StationID": "Y01", "StationName": name("某站", None), "StationPosition": pos(25.0, 121.5)}]
     ids = {s["stationId"] for s in build(stations=stations)["stations"]}
     assert "Y01" not in ids
+
+
+def test_circular_line_from_second_operator_is_kept_and_light_rail_dropped():
+    stations = STATIONS + [
+        {"StationID": "Y15", "StationName": name("新埔民生", "Xinpu Minsheng"), "StationPosition": pos(25.0232, 121.4685)},
+        {"StationID": "Y16", "StationName": name("板橋", "Banqiao"), "StationPosition": pos(25.0141, 121.4637)},
+        {"StationID": "BL07", "StationName": name("板橋", "Banqiao"), "StationPosition": pos(25.0141, 121.4625)},
+        {"StationID": "BL08", "StationName": name("新埔", "Xinpu"), "StationPosition": pos(25.0234, 121.4683)},
+        {"StationID": "V01", "StationName": name("紅樹林", "Hongshulin"), "StationPosition": pos(25.1546, 121.4593)},
+        {"StationID": "V02", "StationName": name("竿蓁林", "Ganzhenlin"), "StationPosition": pos(25.1574, 121.4567)},
+    ]
+    sol = STATION_OF_LINE + [
+        {"LineID": "BL", "Stations": [{"Sequence": 1, "StationID": "BL07"}, {"Sequence": 2, "StationID": "BL08"}]},
+        {"LineID": "Y", "Stations": [{"Sequence": 1, "StationID": "Y15"}, {"Sequence": 2, "StationID": "Y16"}]},
+        {"LineID": "V", "Stations": [{"Sequence": 1, "StationID": "V01"}, {"Sequence": 2, "StationID": "V02"}]},
+    ]
+    lines = LINES + [{"LineID": "Y", "LineName": name("環狀線", "Circular Line")},
+                     {"LineID": "V", "LineName": name("淡海輕軌", "Danhai LRT")}]
+    data = build(stations=stations, station_of_line=sol, lines=lines, transfers=None)
+    assert b.check_metro_index(data) == []
+    assert {l["lineId"] for l in data["lines"]} == {"BL", "R", "Y"}
+    assert {"V01", "V02"}.isdisjoint({s["stationId"] for s in data["stations"]})
+    assert {"from": "Y16", "to": "BL07", "walkS": b.DEFAULT_TRANSFER_S} in data["transfers"]
+    # 名稱不同的轉乘站（新埔民生 ↔ 新埔）靠 EXTRA_TRANSFERS
+    assert {"from": "Y15", "to": "BL08", "walkS": b.DEFAULT_TRANSFER_S} in data["transfers"]
+    assert {"from": "BL08", "to": "Y15", "walkS": b.DEFAULT_TRANSFER_S} in data["transfers"]
