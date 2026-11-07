@@ -17,12 +17,19 @@ export type ManeuverKind =
   | 'uturn'
   | 'stairs'
   | 'arrive'
+  /** 過馬路（前端由 Valhalla trace_attributes 補上，見 lib/walkRoute.ts 的 applyCrossings） */
+  | 'cross'
 
 export interface Maneuver {
   kind: ManeuverKind
+  /** cross：馬路對面（過完的地方）；其他：轉彎點 */
   atIndex: number
   distanceToNextM: number
   street: string | null
+  /** cross 才有：開始過馬路的地方（斑馬線起點） */
+  fromIndex?: number
+  /** cross 才有：過完馬路接著要轉的方向，例如 right＝「過完馬路再右轉」；直走是 null */
+  then?: ManeuverKind | null
 }
 
 export interface Metrics {
@@ -36,6 +43,31 @@ export interface Metrics {
   cameras?: number | null
   /** 路線 150 公尺內的派出所數 */
   policeNearby?: number | null
+}
+
+/** POST /api/landmarks/search：地標、餐廳、學校…（Overture Maps Places 快照，不含連鎖店） */
+export interface PlaceSearchRequest {
+  q: string
+  /** 使用者位置，只用來依距離排序；放 body 不放網址（ADR-0005） */
+  lat?: number
+  lon?: number
+  limit?: number
+}
+
+export interface PlaceSearchItem {
+  name: string
+  lat: number
+  lon: number
+  address: string | null
+  /** 中文類別，例如「餐廳」「國小」「運動場館」 */
+  category: string
+  /** 有給位置才有 */
+  distanceM: number | null
+}
+
+export interface PlaceSearchResponse {
+  places: PlaceSearchItem[]
+  source: { name: string; release: string | null; license: string | null; updatedAt: string | null }
 }
 
 export interface AroundRequest {

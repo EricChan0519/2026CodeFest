@@ -20,8 +20,10 @@ export type HapticPattern = 'turn' | 'arrive' | 'warn'
 
 export interface Cue {
   key: CueKey
-  /** turn_ahead 才有：left、right、slight_left、slight_right、uturn、stairs */
+  /** turn_ahead 才有：left、right、slight_left、slight_right、uturn、stairs、cross（過馬路） */
   turn?: ManeuverKind
+  /** turn 是 cross 時：過完馬路要轉的方向（「過完馬路再右轉」），直走是 null */
+  then?: ManeuverKind | null
   haptic: HapticPattern | null
   /** 重要提示打斷目前的語音 */
   interrupt: boolean
@@ -86,11 +88,13 @@ export function createAnnouncer(opts: { cfg?: NavConfig; now?: () => number } = 
       }
 
       if (view.state === 'navigating') {
-        // 轉彎前 announceBeforeTurnM 內，每個轉彎只提示一次
+        // 轉彎前 announceBeforeTurnM 內，每個轉彎只提示一次。過馬路用「離開始過馬路的地方」算，走到路邊前就提示
         const t = view.nextTurn
-        if (t && t.kind !== 'arrive' && t.distanceM <= cfg.announceBeforeTurnM && !turnsDone.has(t.index)) {
+        if (t && t.kind !== 'arrive' && (t.startM ?? t.distanceM) <= cfg.announceBeforeTurnM && !turnsDone.has(t.index)) {
           turnsDone.add(t.index)
-          push({ key: 'turn_ahead', turn: t.kind, haptic: 'turn', interrupt: true, speak: true }, `turn_ahead:${t.index}`)
+          const cue: Cue = { key: 'turn_ahead', turn: t.kind, haptic: 'turn', interrupt: true, speak: true }
+          if (t.kind === 'cross') cue.then = t.then ?? null
+          push(cue, `turn_ahead:${t.index}`)
         }
         // 需要向後轉（剛變成向後轉時提示，不要每次更新都說）
         if (view.direction === 'turn_around' && prevDirection !== 'turn_around') {

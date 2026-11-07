@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { LatLon, Station } from '@/lib/contract'
 import type { RoutePattern } from '../directBus'
-import { planBus, planTransferBus } from '../transferBus'
+import { estimateBusMin, isWorthRiding, planBus, planTransferBus } from '../transferBus'
 
 // 沿經線排的站位，緯度每 0.001 度約 111 公尺
 const route = (name: string, stopUid: string) => ({
@@ -96,4 +96,34 @@ describe('planBus', () => {
     expect(withDirect.every((p) => p.rides.length === 1)).toBe(true)
     expect(withDirect[0].transferWalkM).toBe(0)
   })
+
+  it('never suggests "ride 1 stop, transfer, ride 1 stop" for a 290 m trip (2026-11-07 回報)', () => {
+    // 臺北車站實測：直接走 290 公尺；搭法要走 80 + 10 + 140 公尺、坐 1 站轉 1 站
+    const S1 = station('S1', 25.0007, ['2'], '鄭州')
+    const X = station('X', 25.004, ['2'], '行政院')
+    const X2 = station('X2', 25.0041, ['5'], '行政院')
+    const S3 = station('S3', 25.0013, ['5'], '公園')
+    const from2: LatLon = [25.0, 121.5]
+    const to2: LatLon = [25.0026, 121.5]
+    const plans = planBus([S1, X, X2, S3], [pattern('2', ['S1', 'X']), pattern('5', ['X2', 'S3'])], from2, to2)
+    expect(plans).toEqual([])
+  })
+
+  it('drops a direct bus that is slower than walking even if it saves some steps', () => {
+    // 直接走約 670 公尺（10 分鐘）；繞路的車要走 2 × 110 公尺 + 等車 5 分 + 坐 3 站 ≈ 13 分 → 不比較快
+    const P = station('P', 25.001, ['慢'])
+    const M1 = station('M1', 25.002, ['慢'], '繞1', 121.51)
+    const M2 = station('M2', 25.004, ['慢'], '繞2', 121.51)
+    const Q = station('Q', 25.005, ['慢'])
+    expect(planBus([P, M1, M2, Q], [pattern('慢', ['P', 'M1', 'M2', 'Q'])], [25.0, 121.5], [25.006, 121.5])).toEqual([])
+  })
+
+  it('keeps a bus that is clearly worth it', () => {
+    const plans = planBus(stations, [red, blue], from, to)
+    expect(plans).toHaveLength(1)
+    const directM = 3000
+    expect(isWorthRiding(plans[0]!, directM)).toBe(true)
+    expect(estimateBusMin(plans[0]!)).toBeLessThan(directM / 67)
+  })
 })
+

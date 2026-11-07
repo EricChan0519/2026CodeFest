@@ -170,17 +170,45 @@ export interface BusPlan {
   stopCount: number
 }
 
-/** 先找直達車；沒有直達才找轉一次車 */
+/**
+ * 值不值得搭：估計的時間要比直接走過去短，而且至少少走 MIN_WALK_SAVED_M。
+ * 2026-11-07 實測：目的地只有 290 公尺，卻列出「坐 1 站 → 轉車 → 坐 1 站」，
+ * 走路只少 60 公尺、加上等兩次車反而慢很多。這種不划算的搭法不列。
+ */
+/** 步行速度（公尺／分鐘），和 walkRoute 的 walking_speed 4 km/h 一致 */
+export const WALK_M_PER_MIN = 67
+/** 每上一次車平均要等幾分鐘 */
+export const WAIT_MIN_PER_BOARDING = 5
+/** 坐一站約幾分鐘（含停靠） */
+export const MIN_PER_STOP = 1.5
+/** 至少要少走這麼多公尺才建議搭車 */
+export const MIN_WALK_SAVED_M = 300
+
+export function estimateBusMin(plan: Pick<BusPlan, 'rides' | 'walkToBoardM' | 'transferWalkM' | 'walkFromAlightM' | 'stopCount'>): number {
+  const walkM = plan.walkToBoardM + plan.transferWalkM + plan.walkFromAlightM
+  return walkM / WALK_M_PER_MIN + plan.rides.length * WAIT_MIN_PER_BOARDING + plan.stopCount * MIN_PER_STOP
+}
+
+export function isWorthRiding(plan: BusPlan, directM: number): boolean {
+  const walkM = plan.walkToBoardM + plan.transferWalkM + plan.walkFromAlightM
+  return directM - walkM >= MIN_WALK_SAVED_M && estimateBusMin(plan) < directM / WALK_M_PER_MIN
+}
+
+/** 先找直達車；沒有直達才找轉一次車。不划算的搭法（不比走路快、或省不到幾步路）都不列 */
 export function planBus(stations: Station[], patterns: RoutePattern[], from: LatLon, to: LatLon): BusPlan[] {
-  const direct = planDirectBus(stations, patterns, from, to)
-  if (direct.length > 0) {
-    return direct.map((o) => ({
-      rides: [{ board: o.board, route: o.route, alight: o.alight, stops: o.stops }],
-      walkToBoardM: o.walkToBoardM,
-      transferWalkM: 0,
-      walkFromAlightM: o.walkFromAlightM,
-      stopCount: o.stopCount,
-    }))
-  }
-  return planTransferBus(stations, patterns, from, to)
+  const directM = distanceM(from, to)
+  // 走路比 MIN_WALK_SAVED_M 還近，怎麼搭都省不到路
+  if (directM < MIN_WALK_SAVED_M) return []
+  const direct: BusPlan[] = planDirectBus(stations, patterns, from, to).map((o) => ({
+    rides: [{ board: o.board, route: o.route, alight: o.alight, stops: o.stops }],
+    walkToBoardM: o.walkToBoardM,
+    transferWalkM: 0,
+    walkFromAlightM: o.walkFromAlightM,
+    stopCount: o.stopCount,
+  }))
+  const worthDirect = direct.filter((o) => isWorthRiding(o, directM))
+  if (worthDirect.length > 0) return worthDirect
+  // 有直達車但不划算時，轉車只會更不划算
+  if (direct.length > 0) return []
+  return planTransferBus(stations, patterns, from, to).filter((o) => isWorthRiding(o, directM))
 }
