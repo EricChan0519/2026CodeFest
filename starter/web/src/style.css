@@ -343,3 +343,9 @@ h1 + .option-list, h1 + .search-entry, h1 + .search-field, h1 + .route-card, h1 
 /* 開始帶路：按鈕上移到畫面中段、字加大 */
 .route-actions { margin-top: 0; padding-top: 32px; }
 .start-guide { min-height: 76px; font-size: calc(26px * var(--fs)); font-weight: 700; letter-spacing: .04em; }
+
+/* 後端資料：載入中／重試 */
+.list-status { margin: 8px 0 0; padding: 20px 16px; border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); font-size: calc(20px * var(--fs)); font-weight: 700; color: var(--text-3); text-align: center; }
+.stat { flex-wrap: wrap; }
+.stat > div { flex: 1; min-width: 0; }
+.stat-retry { margin-left: auto; }

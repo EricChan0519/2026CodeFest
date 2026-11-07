@@ -66,6 +66,20 @@ const rows: Record<string, string[]> = {
   '公尺': ['m','เมตร','m','m','ម៉ែត្រ','m','m'],
   '約': ['About ','ประมาณ ','Khoảng ','Sekitar ','ប្រហែល ','約','약 '],
   '分鐘': [' min',' นาที',' phút',' menit',' នាទី','分','분'],
+  '公車': ['Bus','รถเมล์','Xe buýt','Bus','ឡានក្រុង','バス','버스'],
+  '圓山捷運站': ['Yuanshan MRT Station','สถานี MRT Yuanshan','Ga MRT Yuanshan','Stasiun MRT Yuanshan','ស្ថានីយ MRT Yuanshan','圓山駅','위안산역'],
+  '載入中': ['Loading…','กำลังโหลด…','Đang tải…','Memuat…','កំពុងផ្ទុក…','読み込み中…','불러오는 중…'],
+  '無法連線，請確認網路': ['Cannot connect. Check your network.','เชื่อมต่อไม่ได้ ตรวจสอบเครือข่าย','Không kết nối được. Kiểm tra mạng.','Tidak dapat terhubung. Periksa jaringan.','មិនអាចភ្ជាប់បាន។ សូមពិនិត្យបណ្ដាញ។','接続できません。通信環境を確認してください。','연결할 수 없어요. 네트워크를 확인하세요.'],
+  '再試一次': ['Try again','ลองอีกครั้ง','Thử lại','Coba lagi','ព្យាយាមម្ដងទៀត','もう一度','다시 시도'],
+  '附近沒有公車站牌': ['No bus stops nearby','ไม่มีป้ายรถเมล์ใกล้เคียง','Không có trạm xe buýt gần đây','Tidak ada halte bus di dekat sini','មិនមានចំណតឡានក្រុងនៅជិត','近くにバス停がありません','근처에 버스 정류장이 없어요'],
+  '找不到可以走的路線': ['No walking route found','ไม่พบเส้นทางเดิน','Không tìm thấy đường đi bộ','Rute jalan kaki tidak ditemukan','រកមិនឃើញផ្លូវដើរ','歩行ルートが見つかりません','도보 경로를 찾지 못했어요'],
+  '繼續直走': ['Keep going straight','เดินตรงไป','Tiếp tục đi thẳng','Terus lurus','បន្តដើរត្រង់','そのまま直進','계속 직진하세요'],
+  '稍微向左': ['Bear left','เบี่ยงซ้ายเล็กน้อย','Chếch sang trái','Agak ke kiri','បត់ឆ្វេងបន្តិច','やや左へ','약간 왼쪽으로'],
+  '稍微向右': ['Bear right','เบี่ยงขวาเล็กน้อย','Chếch sang phải','Agak ke kanan','បត់ស្ដាំបន្តិច','やや右へ','약간 오른쪽으로'],
+  '向左轉': ['Turn left','เลี้ยวซ้าย','Rẽ trái','Belok kiri','បត់ឆ្វេង','左に曲がる','왼쪽으로 도세요'],
+  '向右轉': ['Turn right','เลี้ยวขวา','Rẽ phải','Belok kanan','បត់ស្ដាំ','右に曲がる','오른쪽으로 도세요'],
+  '請向後轉': ['Please turn around','กรุณากลับหลัง','Hãy quay lại','Silakan berbalik','សូមបង្វិលក្រោយ','後ろを向いてください','뒤로 도세요'],
+  '前面有樓梯': ['Stairs ahead','ข้างหน้ามีบันได','Phía trước có cầu thang','Ada tangga di depan','មានជណ្ដើរនៅខាងមុខ','この先に階段があります','앞에 계단이 있어요'],
 }
 export function translate(language: string, text: string): string { const index = languages.indexOf(language as typeof languages[number]); return index > 0 ? rows[text]?.[index - 1] || text : text }
 export function locale(language: string): string { return ['zh-TW','en','th','vi','id','km','ja','ko'][Math.max(0, languages.indexOf(language as typeof languages[number]))]! }
