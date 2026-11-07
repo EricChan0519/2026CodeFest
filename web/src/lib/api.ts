@@ -80,8 +80,9 @@ const endpoints = {
   },
   translateQuery: async (q: string): Promise<TranslateQueryResponse> => {
     if (isMockApi()) return { lang: 'zh', queries: [], partial: false, segments: [] }
-    // 搜尋前要等它：後端沒回應就 3 秒放棄，改用原字串搜尋
-    return post<TranslateQueryResponse>('/api/translate/query', { q }, 3000)
+    // 搜尋前要等它。後端剛開機（Cloud Run 冷啟動、讀音表還在建）可能要好幾秒；
+    // 3 秒太短會逾時改用原字串搜尋，「즈산역」就查不到（2026-11-08）。超過 8 秒才放棄
+    return post<TranslateQueryResponse>('/api/translate/query', { q }, 8000)
   },
   translateNames: async (
     lang: ForeignLang,

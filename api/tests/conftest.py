@@ -1,7 +1,11 @@
+import os
 from datetime import datetime
 from pathlib import Path
 
 import pytest
+
+# 測試不要在背景先建真的讀音表（main.py 的 lifespan）
+os.environ.setdefault("SKIP_WARM_UP", "1")
 from fastapi.testclient import TestClient
 
 from app.adapters.fake import FakeEngine
