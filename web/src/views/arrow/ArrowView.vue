@@ -927,7 +927,11 @@ const hint = computed(() => {
 const destLine = computed(() => {
   const a = nav.active.value
   if (!a) return ''
-  if (a.station && a.stationRoute) return fill(S.value.walkToStop, { stop: nameOf(a.station.name), route: nameOf(a.stationRoute.routeName) })
+  if (a.station && a.stationRoute) {
+    // 捷運站加上進站口代號：「走到 台北車站 M3 搭 淡水信義線」
+    const stop = a.exit ? `${nameOf(a.station.name)} ${a.exit}` : nameOf(a.station.name)
+    return fill(S.value.walkToStop, { stop, route: nameOf(a.stationRoute.routeName) })
+  }
   return a.name
 })
 

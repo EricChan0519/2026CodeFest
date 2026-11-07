@@ -64,7 +64,7 @@ export function walkTarget(j: Journey): Destination | null {
     const d = { ...destinationFromStation(r.board, r.route), alight: r.alight }
     // 捷運帶到最近的出入口，不是車站中心點
     if (!r.boardPoint) return d
-    return { ...d, name: r.boardExit ? `${d.name} ${r.boardExit}` : d.name, points: [r.boardPoint] }
+    return { ...d, name: r.boardExit ? `${d.name} ${r.boardExit}` : d.name, points: [r.boardPoint], exit: r.boardExit }
   }
   if (j.phase === 'walk_to_dest') return destinationFromPlace(j.final)
   return null

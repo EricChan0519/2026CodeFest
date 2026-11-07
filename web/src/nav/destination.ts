@@ -15,6 +15,8 @@ export interface Destination {
   stationRoute?: StationRoute
   /** 直達車規劃算出的下車站（DirectBusOption.alight）；到站時交給 arrivalFromStation */
   alight?: Station
+  /** 捷運進站口代號（M3、1）；畫面在站名後面加上 */
+  exit?: string
 }
 
 /** 直達車規劃選好一班車：導航到上車站，下車站留著到站時顯示「在 ○○ 下車」 */
