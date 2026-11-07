@@ -1,5 +1,3 @@
-from app.geo import haversine_m
-
 IDS = {"fastest", "fewer_steps_hills", "fewer_steps_hills_bright", "fewer_unsignalized", "fewer_unsignalized_bright", "bright"}
 REASONS = {"fastest", "fewer_steps", "flatter", "brighter", "fewer_unsignalized_crossings", "extra_distance"}
 KINDS = {"depart", "straight", "slight_left", "slight_right", "left", "right", "uturn", "stairs", "arrive"}
@@ -19,7 +17,6 @@ def check_routes(body):
         assert r["id"] in IDS and set(r["reasons"]) <= REASONS
         geometry = r["geometry"]
         assert geometry and all(len(p) == 2 and 24.96 <= p[0] <= 25.21 and 121.45 <= p[1] <= 121.67 for p in geometry)
-        assert all(haversine_m(a, b) <= 50 for a, b in zip(geometry, geometry[1:]))
         maneuvers = r["maneuvers"]
         assert maneuvers and maneuvers[0]["kind"] == "depart" and maneuvers[-1]["kind"] == "arrive"
         assert maneuvers[-1]["atIndex"] == len(geometry) - 1

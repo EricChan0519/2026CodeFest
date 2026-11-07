@@ -68,6 +68,7 @@ def test_empty_result(client, fake_engine):
 
 from app.engine import EngineRoute, Maneuver, RouteNotFound, RoutingUnavailable
 from app.main import get_measure, get_routing_engine
+from app import metrics_stub, routes_service
 from app.metrics_stub import Metrics
 from app.route_rules import costing_for
 
@@ -139,7 +140,7 @@ def test_same_no_improvement_and_default_stub(client):
     engine.alternatives = [cand]
     install(engine, {id(fast): metrics(1), id(cand): metrics(1)})
     assert len(post_checked(client, audience="elder", simulate="night")["routes"]) == 1
-    app.dependency_overrides.pop(get_measure)
+    app.dependency_overrides[get_measure] = lambda: metrics_stub.measure  # 沒有量測資料
     body = post_checked(client, audience="elder", simulate="night")
     assert all(v is None for v in body["routes"][0]["metrics"].values())
     assert body["notes"] == ["no_better_route", "simulated_night"]
@@ -193,3 +194,26 @@ def test_same_geometry_with_improvement_and_empty_candidate(client):
     engine.alternatives = []
     body = post_checked(client, audience="elder")
     assert len(body["routes"]) == 1 and body["notes"] == ["no_better_route"]
+
+
+def test_sources_without_lamp_grid(client):
+    assert client.post("/api/routes", json=REQUEST).json()["sources"] == [{"name": "OpenStreetMap", "updatedAt": None}]
+
+
+def test_sources_with_osm_date_and_lamp_grid(client, monkeypatch, tmp_path):
+    grid = tmp_path / "lamp_grid.json"
+    grid.write_text('{"updatedAt": "2026-11-07", "cells": []}', encoding="utf-8")
+    monkeypatch.setenv("LAMP_GRID_PATH", str(grid))
+    monkeypatch.setenv("OSM_UPDATED_AT", "2026-11-06")
+    routes_service.lamp_grid_updated_at.cache_clear()
+    assert client.post("/api/routes", json=REQUEST).json()["sources"] == [
+        {"name": "OpenStreetMap", "updatedAt": "2026-11-06"},
+        {"name": "臺北市路燈位置分布圖", "updatedAt": "2026-11-07"}]
+
+
+def test_broken_lamp_grid_is_omitted(client, monkeypatch, tmp_path):
+    grid = tmp_path / "lamp_grid.json"
+    grid.write_text("not json", encoding="utf-8")
+    monkeypatch.setenv("LAMP_GRID_PATH", str(grid))
+    routes_service.lamp_grid_updated_at.cache_clear()
+    assert [s["name"] for s in client.post("/api/routes", json=REQUEST).json()["sources"]] == ["OpenStreetMap"]

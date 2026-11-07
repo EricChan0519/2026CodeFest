@@ -134,8 +134,10 @@ flowchart LR
 ### 部署（`api`）
 
 ```bash
-gcloud run deploy api --source api --region asia-east1 --allow-unauthenticated --max-instances 2 \n  --set-env-vars ROUTING_ENGINE=valhalla,ROUTING_URL=https://routing-239765207532.asia-east1.run.app,ROUTING_AUTH=iam
+gcloud run deploy api --source api --region asia-east1 --allow-unauthenticated --max-instances 2 \n  --set-env-vars ROUTING_ENGINE=valhalla,ROUTING_URL=https://routing-239765207532.asia-east1.run.app,ROUTING_AUTH=iam,OSM_UPDATED_AT=YYYY-MM-DD
 ```
+
+`OSM_UPDATED_AT` 填 `routing` 建圖用的 OSM 資料日期（B 提供）；沒設時 `sources` 的 OpenStreetMap `updatedAt` 是 `null`。路燈來源的日期讀 `api/data/lamp_grid.json` 的 `updatedAt`。
 
 `routing` 不開放公開呼叫；`api` 的服務帳號要有 `routing` 的 `roles/run.invoker`。
 

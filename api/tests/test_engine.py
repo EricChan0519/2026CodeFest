@@ -31,8 +31,11 @@ def test_factory_invalid(monkeypatch):
 
 @pytest.mark.parametrize("value", ["valhalla", "osrm"])
 def test_factory_lazy_missing_adapters(monkeypatch, value):
+    # 不管 B 的 adapter 是否存在：擋掉該模組，確認只有選到它時才 import
+    import sys
+    monkeypatch.setitem(sys.modules, f"app.adapters.{value}", None)
     monkeypatch.setenv("ROUTING_ENGINE", value)
-    with pytest.raises(ModuleNotFoundError, match=value):
+    with pytest.raises(ImportError):
         get_engine()
 
 

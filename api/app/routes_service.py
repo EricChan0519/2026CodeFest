@@ -1,8 +1,11 @@
 """路線計算：規則表選候選、比對、去重、繞路上限、原因代碼，並轉成 03 合約格式。"""
 import asyncio
+import json
 import logging
 import os
 from datetime import datetime
+from functools import lru_cache
+from pathlib import Path
 
 from app.engine import RouteNotFound, RoutingEngine, RoutingUnavailable
 from app.errors import ApiError
@@ -16,6 +19,29 @@ except ImportError:
 from app.schemas import RoutesRequest
 
 logger = logging.getLogger(__name__)
+
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+LAMP_SOURCE_NAME = "臺北市路燈位置分布圖"
+
+
+@lru_cache
+def lamp_grid_updated_at() -> str | None:
+    """只讀 B 產生的 lamp_grid.json 的 updatedAt（給 sources 用）；讀不到回 None。"""
+    path = Path(os.environ.get("LAMP_GRID_PATH") or DATA_DIR / "lamp_grid.json")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8")).get("updatedAt")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return value if isinstance(value, str) else None
+
+
+def route_sources() -> list[dict]:
+    """OpenStreetMap 日期由部署時的 OSM_UPDATED_AT 提供；有路燈快照時才列路燈資料。"""
+    sources = [{"name": "OpenStreetMap", "updatedAt": os.environ.get("OSM_UPDATED_AT") or None}]
+    lamp = lamp_grid_updated_at()
+    if lamp:
+        sources.append({"name": LAMP_SOURCE_NAME, "updatedAt": lamp})
+    return sources
 
 
 def route_to_dict(route, id, recommended, reasons, metrics, diff):
@@ -108,4 +134,4 @@ async def plan_routes(req: RoutesRequest, engine: RoutingEngine, now: datetime, 
         notes.append("simulated_night")
     return {"context": {"audience": req.audience, "period": period, "simulated": simulated},
             "routes": output, "notes": notes,
-            "sources": [{"name": "OpenStreetMap", "updatedAt": os.environ.get("OSM_UPDATED_AT")}]} 
+            "sources": route_sources()}
