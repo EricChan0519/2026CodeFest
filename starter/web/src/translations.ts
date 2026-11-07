@@ -90,6 +90,7 @@ const rows: Record<string, string[]> = {
   '抓不到方向，請拿著手機畫 8 字': ['No direction. Move your phone in a figure 8','ไม่พบทิศทาง หมุนโทรศัพท์เป็นเลข 8','Không xác định hướng. Xoay điện thoại hình số 8','Arah tidak terdeteksi. Gerakkan ponsel membentuk angka 8','រកទិសមិនឃើញ។ សូមគូរលេខ 8 ជាមួយទូរស័ព្ទ','方向が取れません。スマホで8の字を描いてください','방향을 못 찾아요. 휴대폰으로 8자를 그려 주세요'],
   '無法取得位置': ['Cannot get your location','ไม่สามารถหาตำแหน่งได้','Không lấy được vị trí','Tidak bisa mendapat lokasi','មិនអាចយកទីតាំងបាន','位置情報を取得できません','위치를 가져올 수 없어요'],
   '模擬': ['Simulated','จำลอง','Mô phỏng','Simulasi','ការក្លែងធ្វើ','シミュレーション','시뮬레이션'],
+  '正在找方向': ['Finding your direction','กำลังหาทิศทาง','Đang tìm hướng','Mencari arah','កំពុងរកទិស','方向を調べています','방향을 찾는 중'],
 }
 export function translate(language: string, text: string): string { const index = languages.indexOf(language as typeof languages[number]); return index > 0 ? rows[text]?.[index - 1] || text : text }
 export function locale(language: string): string { return ['zh-TW','en','th','vi','id','km','ja','ko'][Math.max(0, languages.indexOf(language as typeof languages[number]))]! }

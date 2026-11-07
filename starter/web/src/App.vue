@@ -156,6 +156,8 @@ const navText = computed<{ distance: string; instruction: string }>(() => {
     case 'arrived': return { distance: '', instruction: '到了！' }
   }
   if (v.headingLost) return { distance: meters(v.distanceM), instruction: '抓不到方向，請拿著手機畫 8 字' }
+  // 還沒有箭頭（剛開始、等第一筆定位或羅盤）：不要說「往這個方向走」
+  if (v.arrowDeg === null) return { distance: '', instruction: v.hasPosition ? '正在找方向' : '正在找你的位置' }
   if (v.direction === 'turn_around') return { distance: meters(v.distanceM), instruction: '請向後轉' }
   const turn = v.nextTurn
   if (turn) return { distance: meters(turn.distanceM), instruction: turn.distanceM <= TURN_SOON_M ? turnLabel[turn.kind] ?? '往這個方向走' : '往這個方向走' }
@@ -167,19 +169,28 @@ function speakCue(c: Cue) {
   if (c.speak && text) announce(text)
   else if (c.haptic && prefs.value.vibration && 'vibrate' in navigator) navigator.vibrate(c.haptic === 'turn' ? 150 : [100, 60, 100])
 }
-function stopNav() { navGen++; session?.stop(); session = null; if ('speechSynthesis' in window) window.speechSynthesis.cancel() }
-async function startNav() {
+function stopNav() { clearInterval(watchdog); watchdog = undefined; navGen++; session?.stop(); session = null; if ('speechSynthesis' in window) window.speechSynthesis.cancel() }
+/** 真實模式的感測器檢查：羅盤幾秒內沒資料（筆電）或 GPS 一直沒定位（室內），改用模擬，免得整段沒有箭頭 */
+const NO_COMPASS_MS = 3500
+const NO_FIX_MS = 8000
+let watchdog: ReturnType<typeof setInterval> | undefined
+function startNav() {
+  if (!planned.value?.route || !selected.value) return
+  go('nav')
+  void launchNav(origin.value.name !== '目前位置')
+}
+async function launchNav(simulate: boolean) {
   const route = planned.value?.route
   const dest = selected.value
   if (!route || !dest) return
   stopNav()
   const gen = navGen
   navView.value = null
-  simulating.value = origin.value.name !== '目前位置'
-  go('nav')
+  simulating.value = simulate
+  const startedAt = Date.now()
   const s = await startNavSession({
     route,
-    simulate: simulating.value,
+    simulate,
     replan: async from => (await planRoute({ lat: from[0], lon: from[1] }, dest, prefs.value.audience)).route,
     onView: v => {
       if (gen !== navGen) return
@@ -188,7 +199,17 @@ async function startNav() {
     },
     onCue: c => { if (gen === navGen) speakCue(c) },
   })
-  if (gen !== navGen) s.stop(); else session = s
+  if (gen !== navGen) { s.stop(); return }
+  session = s
+  if (!simulate) {
+    watchdog = setInterval(() => {
+      const v = navView.value
+      if (gen !== navGen || !v) return
+      const elapsed = Date.now() - startedAt
+      if (v.arrowDeg !== null) { clearInterval(watchdog); watchdog = undefined; return } // 感測器正常
+      if ((elapsed >= NO_COMPASS_MS && v.headingLost) || (elapsed >= NO_FIX_MS && !v.hasPosition)) void launchNav(true)
+    }, 500)
+  }
 }
 function exitNav() { stopNav(); confirmExit.value = false; go('home') }
 onUnmounted(stopNav)
