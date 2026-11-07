@@ -1,0 +1,14 @@
+[
+  {
+    "StopUID": "s1",
+    "Bearing": "E"
+  },
+  {
+    "StopUID": "s2",
+    "Bearing": "E"
+  },
+  {
+    "StopUID": "s3",
+    "Bearing": ""
+  }
+]

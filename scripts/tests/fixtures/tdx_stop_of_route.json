@@ -1,0 +1,136 @@
+[
+  {
+    "RouteUID": "r",
+    "RouteName": {
+      "Zh_tw": "1",
+      "En": ""
+    },
+    "Direction": 0,
+    "Stops": [
+      {
+        "StopUID": "s1",
+        "StationID": "1",
+        "StopName": {
+          "Zh_tw": "同名站",
+          "En": "Example"
+        },
+        "StopBoarding": 0,
+        "StopPosition": {
+          "PositionLat": 25.1,
+          "PositionLon": 121.5
+        }
+      },
+      {
+        "StopUID": "s2",
+        "StationID": "1",
+        "StopName": {
+          "Zh_tw": "同名站",
+          "En": ""
+        },
+        "StopBoarding": 1,
+        "StopPosition": {
+          "PositionLat": 25.102,
+          "PositionLon": 121.5
+        }
+      },
+      {
+        "StopUID": "s3",
+        "StationID": "2",
+        "StopName": {
+          "Zh_tw": "同名站",
+          "En": ""
+        },
+        "StopBoarding": 0,
+        "StopPosition": {
+          "PositionLat": 25.11,
+          "PositionLon": 121.5
+        }
+      },
+      {
+        "StopUID": "s4",
+        "StationID": "3",
+        "StopName": {
+          "Zh_tw": "同名站",
+          "En": "Example"
+        },
+        "StopBoarding": -1,
+        "StopPosition": {
+          "PositionLat": 25.12,
+          "PositionLon": 121.5
+        }
+      },
+      {
+        "StopUID": "s5",
+        "StationID": "",
+        "StopName": {
+          "Zh_tw": "同名站",
+          "En": "Example"
+        },
+        "StopBoarding": 0,
+        "StopPosition": {
+          "PositionLat": 25.13,
+          "PositionLon": 121.5
+        }
+      },
+      {
+        "StopUID": "s1",
+        "StationID": "1",
+        "StopName": {
+          "Zh_tw": "同名站",
+          "En": "Example"
+        },
+        "StopBoarding": 0,
+        "StopPosition": {
+          "PositionLat": 25.1,
+          "PositionLon": 121.5
+        }
+      }
+    ]
+  },
+  {
+    "RouteUID": "r",
+    "RouteName": {
+      "Zh_tw": "1",
+      "En": ""
+    },
+    "Direction": 1,
+    "Stops": [
+      {
+        "StopUID": "s1",
+        "StationID": "1",
+        "StopName": {
+          "Zh_tw": "同名站",
+          "En": "Example"
+        },
+        "StopBoarding": 0,
+        "StopPosition": {
+          "PositionLat": 25.1,
+          "PositionLon": 121.5
+        }
+      }
+    ]
+  },
+  {
+    "RouteUID": "r",
+    "RouteName": {
+      "Zh_tw": "1",
+      "En": ""
+    },
+    "Direction": 255,
+    "Stops": [
+      {
+        "StopUID": "s2",
+        "StationID": "1",
+        "StopName": {
+          "Zh_tw": "同名站",
+          "En": ""
+        },
+        "StopBoarding": 1,
+        "StopPosition": {
+          "PositionLat": 25.102,
+          "PositionLon": 121.5
+        }
+      }
+    ]
+  }
+]

@@ -1,0 +1,125 @@
+{
+  "updatedAt": "2026-11-07T15:00:00+08:00",
+  "stations": [
+    {
+      "stationUid": "TPE1001",
+      "name": {
+        "zh": "範例站",
+        "en": "Example Stop"
+      },
+      "bearing": "E",
+      "lat": 25.1,
+      "lon": 121.5,
+      "routes": [
+        {
+          "routeName": {
+            "zh": "307",
+            "en": "307"
+          },
+          "direction": 0,
+          "headsign": {
+            "zh": "往範例終點",
+            "en": "To Example Terminal"
+          },
+          "stopUid": "TPE5001"
+        }
+      ]
+    },
+    {
+      "stationUid": "TPE1002",
+      "name": {
+        "zh": "範例站",
+        "en": "Example Stop"
+      },
+      "bearing": "W",
+      "lat": 25.1003,
+      "lon": 121.5004,
+      "routes": [
+        {
+          "routeName": {
+            "zh": "307",
+            "en": "307"
+          },
+          "direction": 1,
+          "headsign": {
+            "zh": "往範例起點",
+            "en": "To Example Origin"
+          },
+          "stopUid": "TPE5002"
+        }
+      ]
+    },
+    {
+      "stationUid": "TPE1003",
+      "name": {
+        "zh": "其他站",
+        "en": null
+      },
+      "bearing": null,
+      "lat": 25.102,
+      "lon": 121.501,
+      "routes": [
+        {
+          "routeName": {
+            "zh": "小18",
+            "en": null
+          },
+          "direction": 255,
+          "headsign": {
+            "zh": null,
+            "en": null
+          },
+          "stopUid": "TPE5003"
+        }
+      ]
+    },
+    {
+      "stationUid": "TPE1004",
+      "name": {
+        "zh": "遠方站",
+        "en": "Far Stop"
+      },
+      "bearing": "N",
+      "lat": 25.2,
+      "lon": 121.6,
+      "routes": [
+        {
+          "routeName": {
+            "zh": "1",
+            "en": "1"
+          },
+          "direction": 0,
+          "headsign": {
+            "zh": "往甲",
+            "en": "To A"
+          },
+          "stopUid": "TPE5004"
+        }
+      ]
+    },
+    {
+      "stationUid": "TPE9999",
+      "name": {
+        "zh": "臺北測試",
+        "en": null
+      },
+      "bearing": "E",
+      "lat": 25.15,
+      "lon": 121.55,
+      "routes": [
+        {
+          "routeName": {
+            "zh": "307",
+            "en": "307"
+          },
+          "direction": 0,
+          "headsign": {
+            "zh": "往範例終點",
+            "en": "To Example Terminal"
+          },
+          "stopUid": "TPE5001"
+        }
+      ]
+    }
+  ]
+}
