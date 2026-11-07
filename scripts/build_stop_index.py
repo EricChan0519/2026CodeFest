@@ -6,6 +6,8 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import httpx
+
 try:
     from scripts.tdx import tdx_get
 except ModuleNotFoundError:
@@ -14,6 +16,7 @@ except ModuleNotFoundError:
 ROOT = Path(__file__).resolve().parents[1]
 VALID_BEARINGS = {"E", "W", "S", "N", "SE", "NE", "SW", "NW"}
 VALID_DIRECTIONS = {0, 1, 2, 10, 255}
+PAGE_SIZE = 5000
 
 
 def clean(value):
@@ -76,13 +79,23 @@ def build_index(stop_of_route: list, stops: list, routes: list, updated_at: str)
     return _build(stop_of_route, stops, routes, updated_at)[0]
 
 
-async def fetch_all(path):
+async def fetch_all(path, retries=10):
+    """依序分頁抓取；TDX 有頻率限制（實測每分鐘 5 次），遇到 429 就照 Retry-After 等待重試。"""
     result = []
     while True:
-        page = await tdx_get(path, {"$format": "JSON", "$top": 5000, "$skip": len(result)})
+        for attempt in range(retries):
+            try:
+                page = await tdx_get(path, {"$format": "JSON", "$top": PAGE_SIZE, "$skip": len(result)})
+                break
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 429 or attempt == retries - 1:
+                    raise
+                # TDX 限制每分鐘 5 次，依 Retry-After 等待
+                await asyncio.sleep(int(exc.response.headers.get("retry-after", 2 ** attempt)) + 1)
         result.extend(page)
-        if len(page) < 5000:
+        if len(page) < PAGE_SIZE:
             return result
+        await asyncio.sleep(0.5)
 
 
 def main():
@@ -90,7 +103,8 @@ def main():
     parser.add_argument("--out", default="api/data/stop_index.json")
     args = parser.parse_args()
     async def fetch():
-        return await asyncio.gather(*(fetch_all(f"/v2/Bus/{kind}/City/Taipei") for kind in ("StopOfRoute", "Stop", "Route")))
+        # 依序抓，避免同時打 TDX 觸發 429
+        return [await fetch_all(f"/v2/Bus/{kind}/City/Taipei") for kind in ("StopOfRoute", "Stop", "Route")]
     stop_of_route, stops, routes = asyncio.run(fetch())
     updated_at = datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds")
     data, excluded, missing = _build(stop_of_route, stops, routes, updated_at)
