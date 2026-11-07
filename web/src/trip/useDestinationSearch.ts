@@ -10,7 +10,7 @@ import type { LatLon, Station } from '@/lib/contract'
 import { searchPlaces } from '@/lib/geocode'
 import type { Place } from '@/lib/geocode'
 import type { Locator } from '@/lib/locator'
-import { fromOsm, mergePlaces, searchLandmarks } from '@/lib/placeSearch'
+import { fromOsm, mergePlaces, osmMatches, searchLandmarks } from '@/lib/placeSearch'
 import type { PlaceHit } from '@/lib/placeSearch'
 import { loadPoiIndex, searchPois } from '@/lib/poiSearch'
 import type { PoiHit, PoiIndex } from '@/lib/poiSearch'
@@ -65,7 +65,8 @@ export function useDestinationSearch(locator: Locator) {
     if (mySeq !== seq) return landOk
     stops.value = l.stops ? searchStops(l.stops, l.q, STOP_LIMIT, at) : []
     pois.value = l.pois ? searchPois(l.pois, l.q, { near: at, limit: POI_LIMIT }) : []
-    places.value = mergePlaces(l.q, [landmarks, l.osm.map(fromOsm)], at)
+    // OSM 會把「芝山捷運站」模糊配到別的捷運站：名稱裡沒有地名本身（芝山）的不要（同 NavLab）
+    places.value = mergePlaces(l.q, [landmarks, l.osm.filter((p) => osmMatches(l.q, p)).map(fromOsm)], at)
     nearUser.value = isUser
     near.value = at
     return landOk
