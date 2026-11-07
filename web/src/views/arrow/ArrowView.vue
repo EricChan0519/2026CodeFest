@@ -26,6 +26,7 @@ import type { Audience, Lang, LatLon, ManeuverKind, Station } from '@/lib/contra
 import { createLocator } from '@/lib/locator'
 import { estimateBusMin } from '@/lib/transferBus'
 import type { BusPlan } from '@/lib/transferBus'
+import type { PlanTab, TransitPlan } from '@/lib/transitPlan'
 import type { Cue } from '@/nav/announcer'
 import { easeRotation } from '@/nav/arrow'
 import { NAV_CONFIG } from '@/nav/config'
@@ -256,7 +257,7 @@ async function enterStep(s: StepName, from: Pose = cur) {
   steps[s] = 'in'
   await nextTick()
   // 搜尋：指著搜尋欄；怎麼去：公車已經算好就直接指著建議的第一班車（還在算的話，算好時由 watch 滑過去）
-  armRow = s === 'search' ? -1 : s === 'how' && !search.busLoading.value && search.busOptions.value.length ? 1 : 0
+  armRow = s === 'search' ? -1 : s === 'how' && !search.busLoading.value && howRows.value.length > 1 ? 1 : 0
   await play([{ p: from }, { p: pointPose(s, armRow, pointAngle(from.r)) }], dur(T_LIST), EASE_LIST)
   if (my !== seq) return
   busy.value = false
@@ -510,7 +511,8 @@ async function pickResult(i: number) {
     return
   }
   target.value = { name: r.name, point: r.point }
-  void search.planTo(r.point)
+  planTab.value = 'mixed'
+  void search.planTo(r.point, audience.value)
   await goStep('search', 'how')
 }
 
@@ -521,6 +523,41 @@ interface HowRow {
   detail: string
   right: string
   choice: TripChoice
+  /** 公車或捷運（決定圖示）；走路是 null */
+  mode: 'bus' | 'metro' | 'mixed' | null
+  /** 不能選（例如末班車已過），灰色顯示，note 說明原因 */
+  disabled?: boolean
+  note?: string
+}
+/** 怎麼去的分頁：最快（混搭）、只搭公車、只搭捷運 */
+const planTab = ref<PlanTab>('mixed')
+const PLAN_TABS: PlanTab[] = ['mixed', 'bus', 'metro']
+function tabLabel(t: PlanTab): string {
+  return t === 'mixed' ? S.value.tabFastest : t === 'bus' ? S.value.tabBus : S.value.tabMetro
+}
+function transitTitle(p: TransitPlan): string {
+  const names = p.rides.map((r) => nameOf(r.route.routeName))
+  return names.length > 1 ? `${names[0]} → ${fill(S.value.transferAt, { route: names.slice(1).join(' → ') })}` : names[0]!
+}
+function transitRow(p: TransitPlan, t: { name: string; point: LatLon }): HowRow {
+  const first = p.rides[0]!
+  const last = p.rides[p.rides.length - 1]!
+  const modes = new Set(p.rides.map((r) => r.mode))
+  return {
+    key: p.rides.map((r) => `${r.mode}:${r.route.routeName.zh}:${r.board.stationUid}`).join('>'),
+    title: transitTitle(p),
+    detail: fill(S.value.transitDetail, { stop: nameOf(first.board.name), alight: nameOf(last.alight.name) }) +
+      (first.route.headsign.zh ? ` · ${nameOf(first.route.headsign)}` : ''),
+    right: fill(S.value.aboutMin, { min: Math.max(1, Math.round(p.durationS / 60)) }),
+    choice: { kind: 'transit', plan: p, name: t.name, point: t.point },
+    mode: modes.size > 1 ? 'mixed' : first.mode,
+  }
+}
+function selectTab(t: PlanTab) {
+  if (busy.value || phase.value !== 'how' || planTab.value === t) return
+  planTab.value = t
+  armRow = howRows.value.length > 1 ? 1 : 0
+  void nextTick(onResize)
 }
 function busTitle(p: BusPlan): string {
   const names = p.rides.map((r) => nameOf(r.route.routeName))
@@ -530,12 +567,17 @@ const howRows = computed<HowRow[]>(() => {
   const t = target.value
   if (!t) return []
   const s = S.value
-  const walk: HowRow = {
+  const walk: Omit<HowRow, 'mode'> = {
     key: 'walk',
     title: s.walkThere,
     detail: '',
     right: search.walkMin.value ? fill(s.aboutMin, { min: search.walkMin.value }) : '',
     choice: { kind: 'walk', name: t.name, point: t.point },
+  }
+  const plans = search.transit.value
+  if (plans) {
+    // 走路列一直在第一列；「走路就到」的方案已經是這一列，不重複
+    return [{ ...walk, mode: null }, ...plans[planTab.value].filter((p) => p.rides.length > 0).map((p) => transitRow(p, t))]
   }
   const buses = search.busOptions.value.map<HowRow>((p) => {
     const first = p.rides[0]!
@@ -547,12 +589,21 @@ const howRows = computed<HowRow[]>(() => {
         (first.route.headsign.zh ? ` · ${nameOf(first.route.headsign)}` : ''),
       right: fill(s.aboutMin, { min: Math.max(1, Math.round(estimateBusMin(p))) }),
       choice: { kind: 'bus', plan: p, name: t.name, point: t.point },
+      mode: 'bus',
     }
   })
-  return [walk, ...buses]
+  return [{ ...walk, mode: null }, ...buses]
 })
 const howNote = computed(() => {
   if (search.busLoading.value) return S.value.busLoading
+  const plans = search.transit.value
+  if (plans) {
+    const rides = plans[planTab.value].filter((p) => p.rides.length > 0)
+    if (rides.length === 0 && planTab.value === 'bus') return S.value.noBusPlan
+    if (rides.length === 0 && planTab.value === 'metro') return S.value.noMetroPlan
+    if (rides.length === 0) return S.value.busNotWorth
+    return S.value.estimateNote
+  }
   switch (search.busNote.value) {
     case 'not_worth':
       return S.value.busNotWorth
@@ -569,7 +620,7 @@ const howNote = computed(() => {
 watch(
   () => search.busLoading.value,
   async (loading) => {
-    if (loading || phase.value !== 'how' || search.busOptions.value.length === 0) return
+    if (loading || phase.value !== 'how' || howRows.value.length <= 1) return
     await nextTick()
     if (!busy.value && armRow === 0) await moveArrow('how', 1)
   },
@@ -589,7 +640,7 @@ function back(from: 'how' | 'route') {
 
 function pickHow(i: number) {
   const r = howRows.value[i]
-  if (r && !busy.value && phase.value === 'how') void launch('how', i, r.choice)
+  if (r && !r.disabled && !busy.value && phase.value === 'how') void launch('how', i, r.choice)
 }
 
 function pickRoute(i: number) {
@@ -1180,17 +1231,40 @@ onBeforeUnmount(() => {
                 {{ S.howTitle }}<span class="step-sub">{{ target?.name }}</span>
               </h2>
             </div>
+            <div v-if="search.transit.value" class="tabs" role="tablist" :aria-label="S.howTitle">
+              <button
+                v-for="t in PLAN_TABS"
+                :key="t"
+                type="button"
+                role="tab"
+                class="tab"
+                :class="{ on: planTab === t }"
+                :aria-selected="planTab === t"
+                @click="selectTab(t)"
+              >
+                {{ tabLabel(t) }}
+              </button>
+            </div>
             <ul class="list" @scroll.passive="onResize">
               <li v-for="(r, i) in howRows" :key="r.key">
-                <button type="button" class="row tall" :class="{ picked: phase === 'how' && picked === i }" :data-i="i" @click="pickHow(i)">
+                <button
+                  type="button"
+                  class="row tall"
+                  :class="{ picked: phase === 'how' && picked === i, off: r.disabled }"
+                  :data-i="i"
+                  :aria-disabled="r.disabled || undefined"
+                  @click="pickHow(i)"
+                >
                   <span class="sweep" aria-hidden="true" />
-                  <span class="row-ico" :class="r.choice.kind === 'bus' ? 'k-stop' : 'k-walk'" aria-hidden="true">
-                    <svg v-if="r.choice.kind === 'bus'" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="13" rx="2.5" /><path d="M6 11h12M9 16v3M15 16v3M9 7h6" /></svg>
+                  <span class="row-ico" :class="r.mode ? 'k-stop' : 'k-walk'" aria-hidden="true">
+                    <svg v-if="r.mode === 'metro'" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="14" rx="4" /><path d="M6 11h12M9.5 7h5M8 21l2-4M16 21l-2-4" /><circle cx="9" cy="14" r=".8" /><circle cx="15" cy="14" r=".8" /></svg>
+                    <svg v-else-if="r.mode" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="13" rx="2.5" /><path d="M6 11h12M9 16v3M15 16v3M9 7h6" /></svg>
                     <svg v-else viewBox="0 0 24 24"><circle cx="13" cy="4.5" r="1.8" /><path d="M10 21l2-6 3 3v3M9 12l1.5-4.5L14 9l2 3M12 15l-1.5-7.5" /></svg>
                   </span>
                   <span class="row-text">
                     <span class="row-main">{{ r.title }}</span>
                     <span v-if="r.detail" class="row-sub">{{ r.detail }}</span>
+                    <span v-if="r.note" class="row-sub row-warn">{{ r.note }}</span>
                   </span>
                   <span v-if="r.right" class="row-right">{{ r.right }}</span>
                 </button>
@@ -1761,6 +1835,46 @@ onBeforeUnmount(() => {
   border-color: rgb(147 212 223 / 0.75);
 }
 .row:focus-visible {
+  outline: 3px solid var(--arc);
+  outline-offset: 2px;
+}
+/* 不能選的列（末班車已過）：反灰，不會亮起 */
+.row.off {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.row.off:active {
+  background: var(--glass);
+}
+.row-sub.row-warn {
+  color: var(--note-warn);
+  font-weight: 700;
+}
+/* 怎麼去的分頁：最快／只搭公車／只搭捷運 */
+.tabs {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+.tab {
+  flex: 1;
+  min-height: calc(40px * var(--fs));
+  padding: 0 6px;
+  border-radius: 12px;
+  background: var(--glass);
+  border: 1px solid var(--glass-edge);
+  color: var(--ink-2);
+  font-size: calc(15px * var(--fs));
+  font-weight: 700;
+  cursor: pointer;
+}
+.tab.on {
+  background: rgb(147 212 223 / 0.24);
+  border-color: rgb(147 212 223 / 0.75);
+  color: var(--ink);
+}
+.tab:focus-visible {
   outline: 3px solid var(--arc);
   outline-offset: 2px;
 }

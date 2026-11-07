@@ -94,3 +94,24 @@ export function checkMetroIndex(d: MetroIndex): string[] {
 
   return errors
 }
+
+export const METRO_INDEX_URL = '/lab/metro_index.json'
+let cached: Promise<MetroIndex | null> | null = null
+
+/**
+ * 第一次規劃時才下載捷運快照（約 60 KB）。讀不到或格式不對時回傳 null：
+ * 規劃器只用公車，畫面上「只搭捷運」分頁顯示沒有路線，不會整個失敗。
+ */
+export function loadMetroIndex(): Promise<MetroIndex | null> {
+  if (!cached) {
+    cached = fetch(METRO_INDEX_URL)
+      .then((res) => (res.ok ? (res.json() as Promise<MetroIndex>) : null))
+      .then((data) => (data && checkMetroIndex(data).length === 0 ? data : null))
+      .catch(() => null)
+      .then((data) => {
+        if (!data) cached = null
+        return data
+      })
+  }
+  return cached
+}

@@ -110,7 +110,8 @@ function nearestAccess(pl: Platform, p: LatLon): { m: number; point: LatLon; exi
   let best = { m: Infinity, point: [pl.lat, pl.lon] as LatLon, exit: undefined as string | undefined }
   for (const e of exits) {
     const m = distanceM(p, [e.lat, e.lon])
-    if (m < best.m) best = { m, point: [e.lat, e.lon], exit: e.name }
+    // 出口名稱 TDX 是「台北車站M3」，畫面和語音用代號（M3、1）比較短，也不分語言
+    if (m < best.m) best = { m, point: [e.lat, e.lon], exit: e.exitId }
   }
   return best
 }

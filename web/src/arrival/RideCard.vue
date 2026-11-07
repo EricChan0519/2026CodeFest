@@ -31,10 +31,16 @@ onMounted(() => say(ride.value.getOff))
 <template>
   <main class="flex min-h-full flex-col bg-[#356C77] px-4 pb-6 pt-8 text-white" :lang="lang" aria-live="polite">
     <div class="flex flex-1 flex-col items-center justify-center text-center">
-      <p v-if="ride.routeBig" class="break-all text-[clamp(4.5rem,26vw,8rem)] font-bold leading-none">{{ ride.routeBig }}</p>
+      <span v-if="ride.lineColor" class="mb-4 block h-3 w-24 rounded-full ring-2 ring-white" :style="{ backgroundColor: ride.lineColor }" aria-hidden="true" />
+      <p
+        v-if="ride.routeBig"
+        class="break-all font-bold leading-none"
+        :class="trip.mode === 'metro' ? 'text-[clamp(2.75rem,14vw,4.5rem)]' : 'text-[clamp(4.5rem,26vw,8rem)]'"
+      >{{ ride.routeBig }}</p>
       <p v-if="ride.routeSub" class="mt-2 text-3xl font-bold">{{ ride.routeSub }}</p>
       <p v-if="ride.direction" class="mt-3 text-2xl font-bold">{{ ride.direction }}</p>
       <p v-if="ride.getOff" class="mt-6 text-3xl font-bold">{{ ride.getOff }}</p>
+      <p v-if="ride.exitVia" class="mt-2 text-2xl font-bold">{{ ride.exitVia }}</p>
       <p class="mt-4 text-2xl">{{ ride.stopsLeft }}</p>
       <p v-if="ride.cueText" class="mt-6 rounded-[20px] bg-gray-50 px-4 py-3 text-2xl font-bold text-[#356C77]" role="alert">
         {{ ride.cueText }}
@@ -49,7 +55,7 @@ onMounted(() => say(ride.value.getOff))
         {{ ride.labels.hearAgain }}
       </button>
       <button v-if="simulate" class="min-h-12 rounded-[20px] border border-dashed border-white/30 px-3 text-base" @click="emit('simNext')">
-        模擬：公車往前開一站
+        模擬：車子往前開一站
       </button>
     </div>
   </main>

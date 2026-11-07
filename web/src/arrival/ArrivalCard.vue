@@ -38,7 +38,12 @@ onMounted(() => {
       <h1 class="mt-3 text-3xl font-bold">{{ arrival.headline }}</h1>
 
       <template v-if="arrival.routeBig">
-        <p class="mt-6 break-all text-[clamp(5rem,30vw,9rem)] font-bold leading-none">{{ arrival.routeBig }}</p>
+        <span v-if="arrival.lineColor" class="mt-6 block h-3 w-24 rounded-full ring-2 ring-white" :style="{ backgroundColor: arrival.lineColor }" aria-hidden="true" />
+        <!-- 捷運路線名比公車號碼長（淡水信義線），字級縮小才不會斷成好幾行 -->
+        <p
+          class="mt-6 break-all font-bold leading-none"
+          :class="trip.mode === 'metro' ? 'text-[clamp(2.75rem,14vw,4.5rem)]' : 'text-[clamp(5rem,30vw,9rem)]'"
+        >{{ arrival.routeBig }}</p>
         <p v-if="arrival.routeSub" class="mt-2 text-4xl font-bold">{{ arrival.routeSub }}</p>
         <p v-if="arrival.direction" class="mt-4 text-3xl font-bold">{{ arrival.direction }}</p>
         <p v-if="arrival.getOff" class="mt-3 text-2xl font-bold">{{ arrival.getOff }}</p>

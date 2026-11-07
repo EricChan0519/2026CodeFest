@@ -31,6 +31,10 @@ export interface ArrivalStrings {
   /** {stop} 是下車站名 */
   nextStop: string
   getOffNow: string
+  /** 捷運站內換線時到站卡的大標 */
+  changeLine: string
+  /** 捷運出站口，{exit} 是出口名稱（M3、2） */
+  exitVia: string
 }
 
 export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
@@ -54,6 +58,8 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     stopsLeft: '還有 {n} 站',
     nextStop: '下一站 {stop}，準備下車',
     getOffNow: '到了，請在 {stop} 下車',
+    changeLine: '在這裡換線',
+    exitVia: '從 {exit} 出口出站',
   },
   en: {
     arrived: "You're here.",
@@ -75,6 +81,8 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     stopsLeft: '{n} stops to go',
     nextStop: 'Next stop {stop}, get ready to get off',
     getOffNow: 'This is {stop}. Get off here',
+    changeLine: 'Change lines here',
+    exitVia: 'Exit via {exit}',
   },
   th: {
     arrived: 'ถึงแล้ว',
@@ -96,6 +104,8 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     stopsLeft: 'อีก {n} ป้าย',
     nextStop: 'ป้ายหน้า {stop} เตรียมลง',
     getOffNow: 'ถึง {stop} แล้ว ลงที่นี่',
+    changeLine: 'เปลี่ยนสายที่นี่',
+    exitVia: 'ออกทางออก {exit}',
   },
   vi: {
     arrived: 'Đã đến nơi.',
@@ -117,6 +127,8 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     stopsLeft: 'Còn {n} trạm',
     nextStop: 'Trạm tới {stop}, chuẩn bị xuống',
     getOffNow: 'Đến {stop} rồi, xuống ở đây',
+    changeLine: 'Đổi tuyến tại đây',
+    exitVia: 'Ra cửa {exit}',
   },
   id: {
     arrived: 'Sudah sampai.',
@@ -138,6 +150,8 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     stopsLeft: '{n} halte lagi',
     nextStop: 'Halte berikutnya {stop}, siap turun',
     getOffNow: 'Sudah sampai {stop}, turun di sini',
+    changeLine: 'Ganti jalur di sini',
+    exitVia: 'Keluar lewat pintu {exit}',
   },
   km: {
     arrived: 'មកដល់ហើយ',
@@ -159,6 +173,8 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     stopsLeft: 'នៅសល់ {n} ចំណត',
     nextStop: 'ចំណតបន្ទាប់ {stop} ត្រៀមចុះ',
     getOffNow: 'ដល់ {stop} ហើយ ចុះនៅទីនេះ',
+    changeLine: 'ប្តូរខ្សែនៅទីនេះ',
+    exitVia: 'ចេញតាមច្រកចេញ {exit}',
   },
   ja: {
     arrived: '着きました。',
@@ -180,6 +196,8 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     stopsLeft: 'あと {n} 停留所',
     nextStop: '次は {stop}、降りる準備をしましょう',
     getOffNow: '{stop} に着きました。ここで降ります',
+    changeLine: 'ここで乗り換え',
+    exitVia: '{exit} 出口から出る',
   },
   ko: {
     arrived: '도착했어요.',
@@ -201,5 +219,7 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     stopsLeft: '{n}정거장 남았어요',
     nextStop: '다음 정류장 {stop}, 내릴 준비하세요',
     getOffNow: '{stop}에 도착했어요. 여기서 내리세요',
+    changeLine: '여기서 환승',
+    exitVia: '{exit} 출구로 나가기',
   },
 }
