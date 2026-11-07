@@ -1,7 +1,7 @@
 /**
- * 「怎麼去」的三個選項（走路、公車、捷運）各自要列哪個方案、能不能選。
+ * 「怎麼去」的選項（最佳、走路、公車、捷運）各自要列哪些方案、能不能選。
  *
- * - 公車：只搭公車的方案；捷運：有搭捷運的方案（只搭捷運，或公車接捷運的混搭）。
+ * - 最佳：公車、捷運、走路混搭；公車：只搭公車＋走路；捷運：只搭捷運＋走路。
  * - 附近沒有站（上車站離出發點、下車站離目的地都要在 NEAR_M 內）→ none（路線無公車／捷運）。
  * - 附近有站但現在都搭不到 → ended（末班車已過）或 not_started（首班車還沒開）。
  * - 能搭的方案裡，依使用者的路線模式挑最合適的一個（pickByMode）。
@@ -63,20 +63,32 @@ function isNear(p: TransitPlan, from: LatLon, to: LatLon): boolean {
   return distanceM(from, [first.board.lat, first.board.lon]) <= NEAR_M && distanceM(to, last.alightPoint ?? [last.alight.lat, last.alight.lon]) <= NEAR_M
 }
 
-export function pickOption(candidates: TransitPlan[], from: LatLon, to: LatLon, mode: RouteMode): HowOption {
+export interface HowList {
+  status: HowStatus
+  /** 現在搭得到的，依路線模式最合適的排第一，其餘依時間 */
+  ok: TransitPlan[]
+  /** 附近有站但現在搭不到的（末班車已過、首班車還沒開），依時間 */
+  unavailable: TransitPlan[]
+}
+
+/** 附近的方案分成搭得到、搭不到兩組；搭得到的依路線模式把最合適的排第一 */
+export function listOptions(candidates: TransitPlan[], from: LatLon, to: LatLon, mode: RouteMode): HowList {
   const near = candidates.filter((p) => p.rides.length > 0 && isNear(p, from, to))
-  if (near.length === 0) return { status: 'none', plan: null }
-  const ok = near.filter((p) => p.service === 'ok')
-  if (ok.length === 0) return { status: near.some((p) => p.service === 'ended') ? 'ended' : 'not_started', plan: null }
-  return { status: 'ok', plan: ok[pickByMode(ok.map(comparable), mode)]! }
+  const byTime = (a: TransitPlan, b: TransitPlan) => a.durationS - b.durationS
+  const ok = near.filter((p) => p.service === 'ok').sort(byTime)
+  const unavailable = near.filter((p) => p.service !== 'ok').sort(byTime)
+  const best = pickByMode(ok.map(comparable), mode)
+  if (best > 0) ok.unshift(...ok.splice(best, 1))
+  const status: HowStatus =
+    near.length === 0 ? 'none' : ok.length > 0 ? 'ok' : unavailable.some((p) => p.service === 'ended') ? 'ended' : 'not_started'
+  return { status, ok, unavailable }
 }
 
-/** 公車那一列的候選：只搭公車 */
-export function busCandidates(plans: Record<'mixed' | 'bus' | 'metro', TransitPlan[]>): TransitPlan[] {
-  return plans.bus
-}
+type Plans = Record<'mixed' | 'bus' | 'metro', TransitPlan[]>
 
-/** 捷運那一列的候選：只搭捷運，加上公車接捷運的混搭 */
-export function metroCandidates(plans: Record<'mixed' | 'bus' | 'metro', TransitPlan[]>): TransitPlan[] {
-  return [...plans.metro, ...plans.mixed.filter((p) => p.rides.some((r) => r.mode === 'metro'))]
-}
+/** 最佳的候選：公車、捷運混搭（走路另外由走路路線加進來） */
+export const bestCandidates = (plans: Plans): TransitPlan[] => plans.mixed
+/** 公車的候選：只搭公車 */
+export const busCandidates = (plans: Plans): TransitPlan[] => plans.bus
+/** 捷運的候選：只搭捷運 */
+export const metroCandidates = (plans: Plans): TransitPlan[] => plans.metro

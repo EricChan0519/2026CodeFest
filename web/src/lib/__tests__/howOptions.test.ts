@@ -3,7 +3,7 @@ import type { LatLon } from '../contract'
 import type { Station } from '../contract'
 import type { Ride } from '@/nav/journey'
 import type { TransitPlan } from '../transitPlan'
-import { metroCandidates, pickByMode, pickOption } from '../howOptions'
+import { bestCandidates, listOptions, metroCandidates, pickByMode } from '../howOptions'
 
 const FROM: LatLon = [25.0, 121.5]
 const TO: LatLon = [25.05, 121.5]
@@ -26,23 +26,30 @@ const plan = (rides: Ride[], durationS: number, walkS = 300, service: TransitPla
   service,
 })
 
-describe('pickOption', () => {
+describe('listOptions', () => {
   it('附近沒有站：none', () => {
     // 上車站離出發點約 3.3 公里
-    expect(pickOption([plan([ride('bus', 25.03, 25.05)], 900)], FROM, TO, 'fast').status).toBe('none')
-    expect(pickOption([], FROM, TO, 'fast').status).toBe('none')
+    expect(listOptions([plan([ride('bus', 25.03, 25.05)], 900)], FROM, TO, 'fast').status).toBe('none')
+    expect(listOptions([], FROM, TO, 'fast').status).toBe('none')
   })
-  it('附近有站但末班車已過：ended，不給方案', () => {
-    const o = pickOption([plan([ride('bus', 25.001, 25.049)], 900, 300, 'ended')], FROM, TO, 'fast')
-    expect(o).toEqual({ status: 'ended', plan: null })
+  it('附近有站但末班車已過：ended，方案放在搭不到那組', () => {
+    const p = plan([ride('bus', 25.001, 25.049)], 900, 300, 'ended')
+    expect(listOptions([p], FROM, TO, 'fast')).toEqual({ status: 'ended', ok: [], unavailable: [p] })
   })
-  it('有一班搭得到就能選，搭不到的不選', () => {
+  it('有一班搭得到就是 ok，搭不到的另外列', () => {
+    const gone = plan([ride('bus', 25.001, 25.049)], 900, 300, 'ended')
     const okPlan = plan([ride('bus', 25.001, 25.049)], 1500)
-    const o = pickOption([plan([ride('bus', 25.001, 25.049)], 900, 300, 'ended'), okPlan], FROM, TO, 'fast')
-    expect(o).toEqual({ status: 'ok', plan: okPlan })
+    expect(listOptions([gone, okPlan], FROM, TO, 'fast')).toEqual({ status: 'ok', ok: [okPlan], unavailable: [gone] })
   })
   it('首班車還沒開：not_started', () => {
-    expect(pickOption([plan([ride('metro', 25.001, 25.049)], 900, 300, 'not_started')], FROM, TO, 'fast').status).toBe('not_started')
+    expect(listOptions([plan([ride('metro', 25.001, 25.049)], 900, 300, 'not_started')], FROM, TO, 'fast').status).toBe('not_started')
+  })
+  it('依路線模式把最合適的排第一，其餘依時間', () => {
+    const quick = plan([ride('bus', 25.001, 25.02), ride('bus', 25.02, 25.049)], 1000, 600)
+    const easy = plan([ride('bus', 25.001, 25.049)], 1150, 120)
+    const slow = plan([ride('bus', 25.001, 25.049)], 1100, 500)
+    expect(listOptions([easy, slow, quick], FROM, TO, 'fast').ok).toEqual([quick, slow, easy])
+    expect(listOptions([easy, slow, quick], FROM, TO, 'gentle').ok).toEqual([easy, quick, slow])
   })
 })
 
@@ -65,12 +72,13 @@ describe('pickByMode', () => {
   })
 })
 
-describe('metroCandidates', () => {
-  it('只搭捷運＋有搭捷運的混搭，不含只搭公車和走路', () => {
+describe('candidates', () => {
+  it('捷運只用只搭捷運的方案，最佳用混搭', () => {
     const m = plan([ride('metro', 25.001, 25.049)], 900)
     const mix = plan([ride('bus', 25.001, 25.01), ride('metro', 25.01, 25.049)], 1000)
     const b = plan([ride('bus', 25.001, 25.049)], 900)
-    const walk = plan([], 3000)
-    expect(metroCandidates({ mixed: [walk, mix, b], bus: [b], metro: [m] })).toEqual([m, mix])
+    const plans = { mixed: [mix, b, m], bus: [b], metro: [m] }
+    expect(metroCandidates(plans)).toEqual([m])
+    expect(bestCandidates(plans)).toEqual([mix, b, m])
   })
 })

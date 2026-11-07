@@ -33,8 +33,10 @@ import type { StopGroup } from '@/lib/stopSearch'
 import { createLocator } from '@/lib/locator'
 import type { ModeRoute } from '@/lib/modeRoute'
 import { estimateBusMin } from '@/lib/transferBus'
-import { busCandidates, comparable, metroCandidates, pickByMode, pickOption } from '@/lib/howOptions'
-import type { HowStatus } from '@/lib/howOptions'
+import { bestCandidates, busCandidates, comparable, listOptions, metroCandidates, pickByMode } from '@/lib/howOptions'
+import type { Comparable, HowStatus } from '@/lib/howOptions'
+import type { BusPlan } from '@/lib/transferBus'
+import type { TransitPlan } from '@/lib/transitPlan'
 import type { Cue } from '@/nav/announcer'
 import { easeRotation } from '@/nav/arrow'
 import { NAV_CONFIG } from '@/nav/config'
@@ -314,9 +316,7 @@ async function enterStep(s: StepName, from: Pose = cur, easing = EASE_LIST) {
       ? -1
       : s === 'mode'
         ? MODE_ITEMS.indexOf(suggestedMode.value)
-        : s === 'how' && !search.busLoading.value
-          ? firstPickable()
-          : 0
+        : 0
   await play([{ p: from }, { p: pointPose(s, armRow, pointAngle(from.r)) }], dur(T_LIST), easing)
   if (my !== seq) return
   busy.value = false
@@ -587,25 +587,40 @@ async function pickResult(i: number) {
 }
 
 // ── 怎麼去／要搭哪一班 ───────────────────────────────
-interface HowRow {
+type HowKind = 'best' | 'walk' | 'bus' | 'metro'
+type PlanKind = 'walk' | 'bus' | 'metro' | 'mixed'
+/** 白色方框裡的一條路線 */
+interface PlanItem {
   key: string
   title: string
+  detail: string
   right: string
-  /** 公車或捷運（決定圖示）；走路沒有 */
-  mode?: 'bus' | 'metro' | null
+  kind: PlanKind
+  /** null：現在搭不到（末班車已過），反灰不能選 */
+  choice: TripChoice | null
+  /** 搭不到的原因（黃字） */
+  note?: string
+  cmp?: Comparable
+  /** 依路線模式最合適的那一條 */
+  recommended?: boolean
+}
+/** 怎麼去的一列：最佳、走路、公車、捷運 */
+interface HowRow {
+  key: HowKind
+  title: string
+  right: string
   /** 選不了：none 路線無公車／捷運、ended 末班車已過、not_started 首班車還沒開；loading 還在算 */
   status?: HowStatus | 'loading'
-  /** choice 是 null 時不能選 */
-  choice: TripChoice | null
-  /** 依路線模式挑推薦時用 */
-  cmp?: { durationS: number; walkS: number; rides: number }
+  /** 點了之後白色方框列出的路線，推薦的在最上面 */
+  items: PlanItem[]
 }
+const canPick = (r: HowRow) => r.items.some((it) => it.choice)
 /** 選不了時方框上的黃字 */
 function statusLabel(r: HowRow): string {
   const s = S.value
   switch (r.status) {
     case 'none':
-      return r.mode === 'metro' ? s.noMetroPlan : s.noBusPlan
+      return r.key === 'metro' ? s.noMetroPlan : s.noBusPlan
     case 'ended':
       return s.lastGone
     case 'not_started':
@@ -614,50 +629,77 @@ function statusLabel(r: HowRow): string {
       return ''
   }
 }
-/**
- * 箭頭要指的那一列：能選的裡面，依使用者的路線模式最合適的那個
- * （快速 → 最快；安全、平緩 → 不超過最快 1.2 倍時間內少走路、少轉車）。
- */
-function firstPickable(): number {
-  const rows = howRows.value
-  const idx = rows.map((r, i) => ({ r, i })).filter(({ r }) => r.choice && r.cmp)
-  const best = pickByMode(idx.map(({ r }) => r.cmp!), mode.value)
-  return best < 0 ? 0 : idx[best]!.i
-}
 /** 約幾分鐘（路線的時間；長者用 3.5 km/h 算） */
 const routeMin = (r: ModeRoute) => Math.max(1, Math.round(r.durationS / 60))
+const aboutMin = (sec: number) => fill(S.value.aboutMin, { min: Math.max(1, Math.round(sec / 60)) })
+
+function rideNames(names: string[]): string {
+  return names.length > 1 ? `${names[0]} → ${fill(S.value.transferAt, { route: names.slice(1).join(' → ') })}` : names[0]!
+}
+function transitItem(p: TransitPlan, t: { name: string; point: LatLon }): PlanItem {
+  const first = p.rides[0]!
+  const last = p.rides[p.rides.length - 1]!
+  const modes = new Set(p.rides.map((r) => r.mode))
+  const ok = p.service === 'ok'
+  return {
+    key: p.rides.map((r) => `${r.mode}:${r.route.routeName.zh}:${r.board.stationUid}`).join('>'),
+    title: rideNames(p.rides.map((r) => nameOf(r.route.routeName))),
+    detail:
+      fill(S.value.transitDetail, { stop: nameOf(first.board.name), alight: nameOf(last.alight.name) }) +
+      (first.route.headsign.zh ? ` · ${nameOf(first.route.headsign)}` : ''),
+    right: aboutMin(p.durationS),
+    kind: modes.size > 1 ? 'mixed' : first.mode,
+    choice: ok ? { kind: 'transit', plan: p, name: t.name, point: t.point } : null,
+    note: p.service === 'ended' ? S.value.lastGone : p.service === 'not_started' ? S.value.notStarted : undefined,
+    cmp: comparable(p),
+  }
+}
+/** 沒有捷運資料、只算得出舊的公車規劃時 */
+function busItem(p: BusPlan, t: { name: string; point: LatLon }): PlanItem {
+  const sec = Math.round(estimateBusMin(p) * 60)
+  const last = p.rides[p.rides.length - 1]!
+  return {
+    key: p.rides.map((r) => `${r.route.routeName.zh}-${r.route.direction}`).join('>'),
+    title: rideNames(p.rides.map((r) => nameOf(r.route.routeName))),
+    detail: fill(S.value.busDetail, { walk: listDistance(p.walkToBoardM), n: p.stopCount, stop: nameOf(last.alight.name) }),
+    right: aboutMin(sec),
+    kind: 'bus',
+    choice: { kind: 'bus', plan: p, name: t.name, point: t.point },
+    cmp: { durationS: sec, walkS: 0, rides: p.rides.length },
+  }
+}
 
 /**
- * 「怎麼去」只有幾個大選項，每個一列、只寫名稱和約幾分鐘（2026-11-08 回報：選項和小字太多）。
- * 走路：依使用者選的路線模式算好的那一條（routes[0]）；還在算時先用直線距離估時間。
+ * 走路的那一條：依使用者選的路線模式算好的路（routes[0]）；還在算時先用直線距離估時間。
  */
-const walkRows = computed<HowRow[]>(() => {
+const walkItem = computed<PlanItem | null>(() => {
   const t = target.value
-  if (!t) return []
+  if (!t) return null
   const s = S.value
   const plan = walkPlan.plan.value
   const route = plan?.routes[0]
   if (!plan || !route) {
-    return [
-      {
-        key: 'walk',
-        title: s.howWalk,
-        right: search.walkMin.value ? fill(s.aboutMin, { min: search.walkMin.value }) : '',
-        choice: { kind: 'walk', name: t.name, point: t.point },
-        cmp: search.walkMin.value ? { durationS: search.walkMin.value * 60, walkS: search.walkMin.value * 60, rides: 0 } : undefined,
-      },
-    ]
-  }
-  const isMode = route.id !== 'fastest'
-  return [
-    {
+    const min = search.walkMin.value
+    return {
       key: 'walk',
       title: s.howWalk,
-      right: fill(s.aboutMin, { min: routeMin(route) }),
-      choice: { kind: 'walk', name: t.name, point: t.point, route, from: plan.from, mode: isMode ? plan.mode : 'fast' },
-      cmp: { durationS: route.durationS, walkS: route.durationS, rides: 0 },
-    },
-  ]
+      detail: '',
+      right: min ? fill(s.aboutMin, { min }) : '',
+      kind: 'walk',
+      choice: { kind: 'walk', name: t.name, point: t.point },
+      cmp: min ? { durationS: min * 60, walkS: min * 60, rides: 0 } : undefined,
+    }
+  }
+  const isMode = route.id !== 'fastest'
+  return {
+    key: 'walk',
+    title: s.howWalk,
+    detail: [listDistance(route.distanceM), isMode ? fill(R.value.walkMode, { mode: R.value.modes[plan.mode] }) : ''].filter(Boolean).join(' · '),
+    right: fill(s.aboutMin, { min: routeMin(route) }),
+    kind: 'walk',
+    choice: { kind: 'walk', name: t.name, point: t.point, route, from: plan.from, mode: isMode ? plan.mode : 'fast' },
+    cmp: { durationS: route.durationS, walkS: route.durationS, rides: 0 },
+  }
 })
 /** 走路的說明只留要讓人知道的：後端連不上只能走最快的路、模擬晚上 */
 const routeNote = computed(() => {
@@ -667,57 +709,81 @@ const routeNote = computed(() => {
   const parts = [plan.fallback && plan.mode !== 'fast' ? r.fallback : '', plan.notes.includes('simulated_night') ? r.simNight : '']
   return parts.filter(Boolean).join(' · ')
 })
+
+/** 搭得到的依路線模式把最合適的排第一、標「推薦」，搭不到的放最後 */
+function ordered(ok: PlanItem[], unavailable: PlanItem[]): PlanItem[] {
+  const best = pickByMode(ok.map((it) => it.cmp ?? { durationS: Infinity, walkS: 0, rides: 0 }), mode.value)
+  const sorted = ok.map((it, i) => ({ it, i })).sort((a, b) => (a.it.cmp?.durationS ?? Infinity) - (b.it.cmp?.durationS ?? Infinity) || a.i - b.i).map(({ it }) => it)
+  const top = best >= 0 ? ok[best]! : sorted[0]
+  return [...(top ? [{ ...top, recommended: true }] : []), ...sorted.filter((it) => it !== top), ...unavailable]
+}
+
 /**
- * 怎麼去固定三列：走路、公車、捷運，只寫名稱和約幾分鐘。
- * 公車、捷運各列依路線模式最合適、現在搭得到的方案；附近沒有站或末班車已過時反黑、在方框上寫原因（不能選）。
+ * 怎麼去固定四列，只寫名稱和約幾分鐘：
+ * 最佳（公車、捷運、走路混搭）、走路（只走路）、公車（只搭公車＋走路）、捷運（只搭捷運＋走路）。
+ * 點一列打開白色方框，列出這種走法的路線（推薦的在最上面）再選一條出發。
+ * 公車、捷運附近沒有站或末班車已過時反黑、在方框上寫原因（不能選）。
  */
 const howRows = computed<HowRow[]>(() => {
   const t = target.value
-  if (!t) return []
+  const walk = walkItem.value
+  if (!t || !walk) return []
   const s = S.value
   const plans = search.transit.value
   const from = search.transitFrom.value
-  const ride = (m: 'bus' | 'metro'): HowRow => {
-    const key = m
-    const title = m === 'bus' ? s.howBus : s.howMetro
-    if (search.busLoading.value) return { key, title, right: '…', choice: null, mode: m, status: 'loading' }
+  const loading = search.busLoading.value
+  const rowOf = (key: HowKind, title: string, items: PlanItem[], status?: HowRow['status']): HowRow => ({
+    key,
+    title,
+    right: status === 'loading' ? '…' : (items.find((it) => it.choice)?.right ?? ''),
+    status,
+    items,
+  })
+  const rideRow = (key: 'bus' | 'metro'): HowRow => {
+    const title = key === 'bus' ? s.howBus : s.howMetro
+    if (loading) return rowOf(key, title, [], 'loading')
     if (plans && from) {
-      const o = pickOption(m === 'bus' ? busCandidates(plans) : metroCandidates(plans), from, t.point, mode.value)
-      if (o.status !== 'ok' || !o.plan) return { key, title, right: '', choice: null, mode: m, status: o.status }
-      return {
-        key,
-        title,
-        right: fill(s.aboutMin, { min: Math.max(1, Math.round(o.plan.durationS / 60)) }),
-        choice: { kind: 'transit', plan: o.plan, name: t.name, point: t.point },
-        mode: m,
-        cmp: comparable(o.plan),
-      }
+      const l = listOptions(key === 'bus' ? busCandidates(plans) : metroCandidates(plans), from, t.point, mode.value)
+      return rowOf(key, title, ordered(l.ok.map((p) => transitItem(p, t)), l.unavailable.map((p) => transitItem(p, t))), l.status === 'ok' ? undefined : l.status)
     }
-    // 沒有捷運資料、只算得出舊的公車規劃
-    const best = m === 'bus' ? search.busOptions.value.map((p) => ({ p, s: Math.round(estimateBusMin(p) * 60) })).sort((a, b) => a.s - b.s)[0] : undefined
-    if (!best) return { key, title, right: '', choice: null, mode: m, status: 'none' }
-    return {
-      key,
-      title,
-      right: fill(s.aboutMin, { min: Math.max(1, Math.round(best.s / 60)) }),
-      choice: { kind: 'bus', plan: best.p, name: t.name, point: t.point },
-      mode: m,
-      cmp: { durationS: best.s, walkS: 0, rides: best.p.rides.length },
-    }
+    const buses = key === 'bus' ? search.busOptions.value.map((p) => busItem(p, t)) : []
+    return rowOf(key, title, ordered(buses, []), buses.length ? undefined : 'none')
   }
-  return [...walkRows.value, ride('bus'), ride('metro')]
+  const busRow = rideRow('bus')
+  const metroRow = rideRow('metro')
+  let bestItems: PlanItem[]
+  if (plans && from) {
+    const l = listOptions(bestCandidates(plans), from, t.point, mode.value)
+    bestItems = ordered([walk, ...l.ok.map((p) => transitItem(p, t))], l.unavailable.map((p) => transitItem(p, t)))
+  } else {
+    bestItems = ordered([walk, ...busRow.items.filter((it) => it.choice)], [])
+  }
+  return [
+    rowOf('best', s.howBest, loading ? [] : bestItems, loading ? 'loading' : undefined),
+    rowOf('walk', s.howWalk, [walk]),
+    busRow,
+    metroRow,
+  ]
 })
-// 公車算好了：箭頭往下滑到建議的第一班車
-watch(
-  () => search.busLoading.value,
-  async (loading) => {
-    if (loading || phase.value !== 'how') return
-    const target = firstPickable()
-    if (target === 0) return
-    await nextTick()
-    if (!busy.value && armRow === 0) await moveArrow('how', target)
-  },
-)
+
+// ── 白色方框：這種走法的路線，選一條出發 ─────────────────
+const sheetIndex = ref<number | null>(null)
+const sheetRow = computed(() => (sheetIndex.value === null ? null : (howRows.value[sheetIndex.value] ?? null)))
+function closeSheet() {
+  sheetIndex.value = null
+}
+// 打開時把焦點放到第一條能選的路線（鍵盤、讀屏可以直接選）
+watch(sheetIndex, (i) => {
+  if (i === null) return
+  void nextTick(() => document.querySelector<HTMLElement>('.plan-item:not(.off), .plan-close')?.focus())
+})
+function pickPlan(it: PlanItem) {
+  const i = sheetIndex.value
+  if (i === null || !it.choice || busy.value || phase.value !== 'how') return
+  sheetIndex.value = null
+  // 要在點擊事件裡同步呼叫（iOS 才會給羅盤權限）
+  void launch('how', i, it.choice)
+}
 
 const routeRows = computed(() => stopGroup.value?.routes ?? [])
 /** 只有一個站位時才標朝哪個方向；合併了兩個方向時每條路線的「往哪裡」已經說清楚 */
@@ -729,6 +795,7 @@ const stationFacing = computed(() => {
 
 function back(from: 'how' | 'route') {
   if (busy.value || phase.value !== from) return
+  sheetIndex.value = null
   search.clearBus()
   walkPlan.clear()
   void goStep(from, 'search')
@@ -736,7 +803,8 @@ function back(from: 'how' | 'route') {
 
 function pickHow(i: number) {
   const r = howRows.value[i]
-  if (r?.choice && !busy.value && phase.value === 'how') void launch('how', i, r.choice)
+  if (!r || !canPick(r) || busy.value || phase.value !== 'how') return
+  sheetIndex.value = i
 }
 
 function pickRoute(i: number) {
@@ -1359,15 +1427,17 @@ onBeforeUnmount(() => {
                 <button
                   type="button"
                   class="row tall"
-                  :class="{ picked: phase === 'how' && picked === i, off: !r.choice && r.status !== 'loading' }"
+                  :class="{ picked: phase === 'how' && picked === i, off: !canPick(r) && r.status !== 'loading' }"
                   :data-i="i"
-                  :aria-disabled="!r.choice || undefined"
+                  :aria-disabled="!canPick(r) || undefined"
+                  aria-haspopup="dialog"
                   @click="pickHow(i)"
                 >
                   <span class="sweep" aria-hidden="true" />
-                  <span class="row-ico" :class="r.mode ? 'k-stop' : 'k-walk'" aria-hidden="true">
-                    <svg v-if="r.mode === 'metro'" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="14" rx="4" /><path d="M6 11h12M9.5 7h5M8 21l2-4M16 21l-2-4" /><circle cx="9" cy="14" r=".8" /><circle cx="15" cy="14" r=".8" /></svg>
-                    <svg v-else-if="r.mode" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="13" rx="2.5" /><path d="M6 11h12M9 16v3M15 16v3M9 7h6" /></svg>
+                  <span class="row-ico" :class="r.key === 'walk' ? 'k-walk' : 'k-stop'" aria-hidden="true">
+                    <svg v-if="r.key === 'metro'" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="14" rx="4" /><path d="M6 11h12M9.5 7h5M8 21l2-4M16 21l-2-4" /><circle cx="9" cy="14" r=".8" /><circle cx="15" cy="14" r=".8" /></svg>
+                    <svg v-else-if="r.key === 'bus'" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="13" rx="2.5" /><path d="M6 11h12M9 16v3M15 16v3M9 7h6" /></svg>
+                    <svg v-else-if="r.key === 'best'" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.2" /><circle cx="18" cy="6" r="2.2" /><path d="M8.2 18H15a3.5 3.5 0 0 0 0-7H9a3.5 3.5 0 0 1 0-7h6.8" /></svg>
                     <svg v-else viewBox="0 0 24 24"><circle cx="13" cy="4.5" r="1.8" /><path d="M10 21l2-6 3 3v3M9 12l1.5-4.5L14 9l2 3M12 15l-1.5-7.5" /></svg>
                   </span>
                   <span class="row-text">
@@ -1452,6 +1522,47 @@ onBeforeUnmount(() => {
     <p class="sr-only" aria-live="polite">{{ announce }}</p>
 
     <!-- 共用箭頭：外層管位置大小，內層箭頭管角度 -->
+    <!-- 選了怎麼去的一列：中間白色方框列出路線，後面的畫面模糊 -->
+    <Transition name="sheet">
+      <div v-if="sheetRow && phase === 'how'" class="plan-sheet" @click.self="closeSheet" @keydown.esc="closeSheet">
+        <div class="plan-card" role="dialog" aria-modal="true" aria-labelledby="h-plan">
+          <div class="plan-head">
+            <h3 id="h-plan" class="plan-h">{{ sheetRow.title }}<span class="plan-sub">{{ target?.name }}</span></h3>
+            <button type="button" class="plan-close" :aria-label="S.close" @click="closeSheet">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>
+          </div>
+          <ul class="plan-list">
+            <li v-for="it in sheetRow.items" :key="it.key">
+              <button
+                type="button"
+                class="plan-item"
+                :class="{ off: !it.choice, rec: it.recommended }"
+                :aria-disabled="!it.choice || undefined"
+                @click="pickPlan(it)"
+              >
+                <span class="plan-ico" :class="`p-${it.kind}`" aria-hidden="true">
+                  <svg v-if="it.kind === 'metro'" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="14" rx="4" /><path d="M6 11h12M9.5 7h5M8 21l2-4M16 21l-2-4" /><circle cx="9" cy="14" r=".8" /><circle cx="15" cy="14" r=".8" /></svg>
+                  <svg v-else-if="it.kind === 'bus'" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="13" rx="2.5" /><path d="M6 11h12M9 16v3M15 16v3M9 7h6" /></svg>
+                  <svg v-else-if="it.kind === 'mixed'" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.2" /><circle cx="18" cy="6" r="2.2" /><path d="M8.2 18H15a3.5 3.5 0 0 0 0-7H9a3.5 3.5 0 0 1 0-7h6.8" /></svg>
+                  <svg v-else viewBox="0 0 24 24"><circle cx="13" cy="4.5" r="1.8" /><path d="M10 21l2-6 3 3v3M9 12l1.5-4.5L14 9l2 3M12 15l-1.5-7.5" /></svg>
+                </span>
+                <span class="plan-text">
+                  <span class="plan-title">{{ it.title }}</span>
+                  <span v-if="it.detail" class="plan-detail">{{ it.detail }}</span>
+                  <span v-if="it.note" class="plan-note">{{ it.note }}</span>
+                </span>
+                <span class="plan-right">
+                  <span v-if="it.recommended" class="plan-rec">{{ S.recommended }}</span>
+                  <span v-if="it.right">{{ it.right }}</span>
+                </span>
+              </button>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </Transition>
+
     <div ref="hero" class="hero" aria-hidden="true">
       <div ref="heroArrow" class="hero-arrow">
         <ArrowMark :navigation="phase === 'launch' || phase === 'nav'" :hollow="hollow && (phase === 'nav' || phase === 'launch')" :done="done" />
@@ -1949,6 +2060,206 @@ onBeforeUnmount(() => {
 .row-right.row-warn {
   color: var(--note-warn);
   font-weight: 700;
+}
+
+/* 選了怎麼去的一列：後面模糊，中間白色方框列出路線 */
+.plan-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 24;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgb(6 18 22 / 0.45);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+.plan-card {
+  width: min(520px, 100%);
+  max-height: min(78vh, 640px);
+  display: flex;
+  flex-direction: column;
+  border-radius: 22px;
+  background: #fff;
+  color: #10242b;
+  box-shadow: 0 18px 50px rgb(0 0 0 / 0.35);
+  overflow: hidden;
+}
+.plan-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 12px 10px 20px;
+  border-bottom: 1px solid #e4ecee;
+}
+.plan-h {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: calc(20px * var(--fs));
+  font-weight: 800;
+}
+.plan-sub {
+  margin-left: 10px;
+  font-size: calc(15px * var(--fs));
+  font-weight: 600;
+  color: #5b7077;
+}
+.plan-close {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #3b5158;
+  cursor: pointer;
+}
+.plan-close svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+.plan-list {
+  list-style: none;
+  margin: 0;
+  padding: 10px 12px 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.plan-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1.5px solid #dfe8ea;
+  border-radius: 16px;
+  background: #f6fafa;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.plan-item:active {
+  background: #e6f1f2;
+}
+.plan-item.rec {
+  border-color: #3fa7b5;
+  background: #eaf6f7;
+}
+.plan-item.off {
+  background: #eef1f2;
+  border-color: transparent;
+  cursor: not-allowed;
+}
+.plan-item.off .plan-ico,
+.plan-item.off .plan-title,
+.plan-item.off .plan-detail,
+.plan-item.off .plan-right {
+  opacity: 0.5;
+}
+.plan-item:focus-visible,
+.plan-close:focus-visible {
+  outline: 3px solid #3fa7b5;
+  outline-offset: 2px;
+}
+.plan-ico {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #dceff1;
+  color: #1f7480;
+}
+.plan-ico.p-walk {
+  background: #e7ecee;
+  color: #3b5158;
+}
+.plan-ico svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.plan-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.plan-title {
+  font-size: calc(17px * var(--fs));
+  font-weight: 800;
+  line-height: 1.3;
+}
+.plan-detail {
+  font-size: calc(14px * var(--fs));
+  color: #5b7077;
+  line-height: 1.35;
+}
+.plan-note {
+  font-size: calc(14px * var(--fs));
+  font-weight: 800;
+  color: #b7791f;
+}
+.plan-right {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  font-size: calc(15px * var(--fs));
+  font-weight: 700;
+  color: #3b5158;
+  white-space: nowrap;
+}
+.plan-rec {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #1f7480;
+  color: #fff;
+  font-size: calc(12px * var(--fs));
+  font-weight: 800;
+}
+.sheet-enter-active,
+.sheet-leave-active {
+  transition: opacity 0.2s ease;
+}
+.sheet-enter-active .plan-card,
+.sheet-leave-active .plan-card {
+  transition: transform 0.2s ease;
+}
+.sheet-enter-from,
+.sheet-leave-to {
+  opacity: 0;
+}
+.sheet-enter-from .plan-card,
+.sheet-leave-to .plan-card {
+  transform: scale(0.96);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheet-enter-active,
+  .sheet-leave-active,
+  .sheet-enter-active .plan-card,
+  .sheet-leave-active .plan-card {
+    transition: none;
+  }
 }
 
 /* 搜尋欄：細一點，右端是放大鏡 */
