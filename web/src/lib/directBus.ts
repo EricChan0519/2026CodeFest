@@ -16,6 +16,11 @@ export interface RoutePattern {
   stops: string[]
   noBoard: number[]
   noAlight: number[]
+  /**
+   * 起點站首末班發車時間（秒，從 0 點起；營運日從 04:00 算，00:30 記成 24:30）。
+   * 來自 TDX Bus Schedule；沒有資料時不判斷末班車。
+   */
+  service?: { weekday: [number, number] | null; weekend: [number, number] | null }
 }
 
 export interface DirectBusOption {

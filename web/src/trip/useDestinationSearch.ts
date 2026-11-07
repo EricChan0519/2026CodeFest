@@ -8,7 +8,7 @@
  * 錯誤用代碼回傳，文字由畫面依語言決定。
  */
 import { ref, shallowRef } from 'vue'
-import type { ForeignLang, Lang, LatLon, Station } from '@/lib/contract'
+import type { Audience, ForeignLang, Lang, LatLon, Station } from '@/lib/contract'
 import { emptyLabels, isForeignQuery, localizeResults, poiNameForTranslation, translateForSearch } from '@/lib/foreignSearch'
 import type { QueryTranslation, ResultLabels } from '@/lib/foreignSearch'
 import { searchPlaces } from '@/lib/geocode'
@@ -22,6 +22,9 @@ import { loadStopIndex, searchStops } from '@/lib/stopSearch'
 import type { StopIndex } from '@/lib/stopSearch'
 import { planBus, WALK_M_PER_MIN } from '@/lib/transferBus'
 import type { BusPlan } from '@/lib/transferBus'
+import { loadMetroIndex } from '@/lib/metroIndex'
+import { planTransit } from '@/lib/transitPlan'
+import type { PlanTab, TransitPlan } from '@/lib/transitPlan'
 import { distanceM } from '@/nav/geo'
 
 export const TAIPEI_STATION: LatLon = [25.0478, 121.517]
@@ -55,6 +58,8 @@ export function useDestinationSearch(locator: Locator, uiLang: () => Lang = () =
   const stops = shallowRef<Station[]>([])
   /** 搜尋過了（區分「還沒搜尋」和「沒有結果」） */
   const searched = ref(false)
+  /** 目前結果是用哪個字串搜尋的（搜尋欄可能已經改了字） */
+  const searchedQuery = ref('')
   const errors = ref<SearchErrorCode[]>([])
   /** 結果是依使用者位置排的（否則是臺北車站） */
   const nearUser = ref(false)
@@ -94,6 +99,8 @@ export function useDestinationSearch(locator: Locator, uiLang: () => Lang = () =
         ...places.value.map((p) => p.name),
         ...pois.value.map((p) => poiNameForTranslation(p.name, p.brand)),
         ...stops.value.map((s) => s.name.zh),
+        // 主畫面把同名站位合併成一筆，名稱拿掉括號（捷運芝山站(福華) → 捷運芝山站）
+        ...stops.value.map((s) => s.name.zh.replace(/\s*(?:\(.*?\)|（.*?）)\s*/g, '').trim()),
       ],
       addresses: [...places.value.map((p) => p.address ?? ''), ...pois.value.map((p) => p.address)],
       categories: places.value.map((p) => p.category ?? ''),
@@ -126,6 +133,7 @@ export function useDestinationSearch(locator: Locator, uiLang: () => Lang = () =
     places.value = mergePlaces(l.q, [landmarks, l.osm.filter((p) => osmMatches(l.q, p)).map(fromOsm)], at)
     nearUser.value = isUser
     near.value = at
+    searchedQuery.value = l.q
     void refreshLabels(mySeq)
     return landOk
   }
@@ -211,6 +219,7 @@ export function useDestinationSearch(locator: Locator, uiLang: () => Lang = () =
     labels.value = emptyLabels()
     searching.value = false
     searched.value = false
+    searchedQuery.value = ''
     errors.value = []
     places.value = []
     pois.value = []
@@ -219,20 +228,27 @@ export function useDestinationSearch(locator: Locator, uiLang: () => Lang = () =
 
   // ── 怎麼去：選了地點 A 之後算公車 ─────────────────
   const busOptions = shallowRef<BusPlan[]>([])
+  /** 公車＋捷運規劃的三個分頁；還沒算或算不出來時是 null */
+  const transit = shallowRef<Record<PlanTab, TransitPlan[]> | null>(null)
+  /** 公車＋捷運規劃的出發點（使用者位置或 debug 位置） */
+  const transitFrom = shallowRef<LatLon | null>(null)
+  const debugTransitTime = ref<Date | null>(null)
+  const debugOrigin = ref<LatLon | null>(null)
   const busLoading = ref(false)
   const busNote = ref<BusNote>(null)
   /** 直接走過去約幾分鐘（直線距離估算）；拿不到位置時是 null */
   const walkMin = ref<number | null>(null)
   let busSeq = 0
 
-  async function planTo(target: LatLon) {
+  async function planTo(target: LatLon, audience: Audience = 'visitor') {
     const mySeq = ++busSeq
     busOptions.value = []
+    transit.value = null
     busNote.value = null
     walkMin.value = null
     busLoading.value = true
     try {
-      const [idx, user] = await Promise.all([loadStopIndex(), locator.current()])
+      const [idx, user, metro] = await Promise.all([loadStopIndex(), debugOrigin.value ? Promise.resolve(debugOrigin.value) : locator.current(), loadMetroIndex()])
       if (mySeq !== busSeq) return
       if (!user) {
         busNote.value = 'no_position'
@@ -243,8 +259,11 @@ export function useDestinationSearch(locator: Locator, uiLang: () => Lang = () =
         busNote.value = 'old_index'
         return
       }
+      transitFrom.value = user
       busOptions.value = planBus(idx.stations, idx.patterns, user, target)
-      if (busOptions.value.length === 0) busNote.value = 'not_worth'
+      transit.value = planTransit({ stations: idx.stations, patterns: idx.patterns }, metro, user, target, { audience, now: debugTransitTime.value ?? undefined })
+      const anyRide = transit.value.mixed.some((p) => p.rides.length > 0)
+      if (!anyRide) busNote.value = 'not_worth'
     } catch {
       if (mySeq === busSeq) busNote.value = 'failed'
     } finally {
@@ -255,6 +274,7 @@ export function useDestinationSearch(locator: Locator, uiLang: () => Lang = () =
   function clearBus() {
     busSeq++
     busOptions.value = []
+    transit.value = null
     busNote.value = null
     busLoading.value = false
     walkMin.value = null
@@ -263,6 +283,7 @@ export function useDestinationSearch(locator: Locator, uiLang: () => Lang = () =
   return {
     searching,
     searched,
+    searchedQuery,
     errors,
     places,
     pois,
@@ -279,6 +300,10 @@ export function useDestinationSearch(locator: Locator, uiLang: () => Lang = () =
     displayLang,
     relabel,
     busOptions,
+    transit,
+    transitFrom,
+    debugTransitTime,
+    debugOrigin,
     busLoading,
     busNote,
     walkMin,

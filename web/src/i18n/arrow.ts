@@ -31,6 +31,12 @@ export interface ArrowStrings {
   compass: Record<CompassKey, string>
   howTitle: string
   walkThere: string
+  /** 「怎麼去」的選項名稱：走路、公車 */
+  howWalk: string
+  howBus: string
+  /** 捷運、公車＋捷運（混搭） */
+  howMetro: string
+  howMixed: string
   /** {min} */
   aboutMin: string
   busLoading: string
@@ -41,6 +47,20 @@ export interface ArrowStrings {
   busDetail: string
   /** {route} */
   transferAt: string
+  /** 怎麼去的三個分頁 */
+  tabFastest: string
+  tabBus: string
+  tabMetro: string
+  /** 怎麼去：附近沒有公車／捷運時方框上的黃字 */
+  noBusPlan: string
+  noMetroPlan: string
+  /** {stop} 上車站、{alight} 下車站 */
+  transitDetail: string
+  /** 預估時間不是即時班表 */
+  estimateNote: string
+  /** 方案反灰時的原因 */
+  lastGone: string
+  notStarted: string
   routeTitle: string
   back: string
   change: string
@@ -113,6 +133,10 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     compass: { N: '北', NE: '東北', E: '東', SE: '東南', S: '南', SW: '西南', W: '西', NW: '西北' },
     howTitle: '怎麼去？',
     walkThere: '走路過去',
+    howWalk: '走路',
+    howBus: '公車',
+    howMetro: '捷運',
+    howMixed: '公車＋捷運',
     aboutMin: '約 {min} 分鐘',
     busLoading: '正在找可以搭的公車…',
     busNotWorth: '搭公車不會比較快，走過去就好',
@@ -120,6 +144,15 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     busFailed: '公車資料載入失敗，可以走過去',
     busDetail: '走 {walk}上車 · 坐 {n} 站 · 在 {stop} 下車',
     transferAt: '轉 {route}',
+    tabFastest: '最快',
+    tabBus: '只搭公車',
+    tabMetro: '只搭捷運',
+    noBusPlan: '路線無公車',
+    noMetroPlan: '路線無捷運',
+    transitDetail: '在 {stop} 上車 · 在 {alight} 下車',
+    estimateNote: '時間是預估的，不是即時班表',
+    lastGone: '末班車已過',
+    notStarted: '首班車還沒開',
     routeTitle: '要搭哪一班？',
     back: '返回',
     change: '更改語言和使用者',
@@ -187,6 +220,10 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     compass: { N: 'north', NE: 'northeast', E: 'east', SE: 'southeast', S: 'south', SW: 'southwest', W: 'west', NW: 'northwest' },
     howTitle: 'How to get there?',
     walkThere: 'Walk there',
+    howWalk: 'Walk',
+    howBus: 'Bus',
+    howMetro: 'MRT',
+    howMixed: 'Bus + MRT',
     aboutMin: 'About {min} min',
     busLoading: 'Looking for buses…',
     busNotWorth: 'A bus is not faster. Walking is best',
@@ -194,6 +231,15 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     busFailed: 'Bus data failed to load. You can walk there',
     busDetail: 'Walk {walk} to board · {n} stops · Get off at {stop}',
     transferAt: 'Change to {route}',
+    tabFastest: 'Fastest',
+    tabBus: 'Bus only',
+    tabMetro: 'MRT only',
+    noBusPlan: 'No bus on this route',
+    noMetroPlan: 'No MRT on this route',
+    transitDetail: 'Board at {stop} · Get off at {alight}',
+    estimateNote: 'Times are estimates, not live timetables',
+    lastGone: 'Last service has left',
+    notStarted: 'First service has not started',
     routeTitle: 'Which bus?',
     back: 'Back',
     change: 'Change language and user',
@@ -261,6 +307,10 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     compass: { N: 'เหนือ', NE: 'ตะวันออกเฉียงเหนือ', E: 'ตะวันออก', SE: 'ตะวันออกเฉียงใต้', S: 'ใต้', SW: 'ตะวันตกเฉียงใต้', W: 'ตะวันตก', NW: 'ตะวันตกเฉียงเหนือ' },
     howTitle: 'ไปอย่างไร?',
     walkThere: 'เดินไป',
+    howWalk: 'เดิน',
+    howBus: 'รถเมล์',
+    howMetro: 'MRT',
+    howMixed: 'รถเมล์ + MRT',
     aboutMin: 'ประมาณ {min} นาที',
     busLoading: 'กำลังหารถเมล์…',
     busNotWorth: 'นั่งรถเมล์ไม่เร็วกว่า เดินไปดีกว่า',
@@ -268,6 +318,15 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     busFailed: 'โหลดข้อมูลรถเมล์ไม่สำเร็จ เดินไปได้',
     busDetail: 'เดิน {walk} ขึ้นรถ · {n} ป้าย · ลงที่ {stop}',
     transferAt: 'ต่อสาย {route}',
+    tabFastest: 'เร็วที่สุด',
+    tabBus: 'รถเมล์เท่านั้น',
+    tabMetro: 'MRT เท่านั้น',
+    noBusPlan: 'ไม่มีรถเมล์ในเส้นทางนี้',
+    noMetroPlan: 'ไม่มี MRT ในเส้นทางนี้',
+    transitDetail: 'ขึ้นที่ {stop} · ลงที่ {alight}',
+    estimateNote: 'เวลาเป็นค่าประมาณ ไม่ใช่ตารางเวลาจริง',
+    lastGone: 'รถเที่ยวสุดท้ายออกไปแล้ว',
+    notStarted: 'รถเที่ยวแรกยังไม่ออก',
     routeTitle: 'จะขึ้นสายไหน?',
     back: 'กลับ',
     change: 'เปลี่ยนภาษาและผู้ใช้',
@@ -335,6 +394,10 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     compass: { N: 'bắc', NE: 'đông bắc', E: 'đông', SE: 'đông nam', S: 'nam', SW: 'tây nam', W: 'tây', NW: 'tây bắc' },
     howTitle: 'Đi bằng cách nào?',
     walkThere: 'Đi bộ',
+    howWalk: 'Đi bộ',
+    howBus: 'Xe buýt',
+    howMetro: 'Tàu điện MRT',
+    howMixed: 'Xe buýt + MRT',
     aboutMin: 'Khoảng {min} phút',
     busLoading: 'Đang tìm xe buýt…',
     busNotWorth: 'Đi xe buýt không nhanh hơn. Nên đi bộ',
@@ -342,6 +405,15 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     busFailed: 'Không tải được dữ liệu xe buýt. Bạn có thể đi bộ',
     busDetail: 'Đi bộ {walk} lên xe · {n} trạm · Xuống ở {stop}',
     transferAt: 'Đổi sang {route}',
+    tabFastest: 'Nhanh nhất',
+    tabBus: 'Chỉ xe buýt',
+    tabMetro: 'Chỉ MRT',
+    noBusPlan: 'Tuyến này không có xe buýt',
+    noMetroPlan: 'Tuyến này không có MRT',
+    transitDetail: 'Lên ở {stop} · Xuống ở {alight}',
+    estimateNote: 'Thời gian là ước tính, không phải lịch chạy thực tế',
+    lastGone: 'Chuyến cuối đã đi',
+    notStarted: 'Chuyến đầu chưa chạy',
     routeTitle: 'Đi tuyến nào?',
     back: 'Quay lại',
     change: 'Đổi ngôn ngữ và người dùng',
@@ -409,6 +481,10 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     compass: { N: 'utara', NE: 'timur laut', E: 'timur', SE: 'tenggara', S: 'selatan', SW: 'barat daya', W: 'barat', NW: 'barat laut' },
     howTitle: 'Naik apa ke sana?',
     walkThere: 'Jalan kaki',
+    howWalk: 'Jalan kaki',
+    howBus: 'Bus',
+    howMetro: 'MRT',
+    howMixed: 'Bus + MRT',
     aboutMin: 'Sekitar {min} menit',
     busLoading: 'Mencari bus…',
     busNotWorth: 'Naik bus tidak lebih cepat. Jalan kaki saja',
@@ -416,6 +492,15 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     busFailed: 'Data bus gagal dimuat. Anda bisa jalan kaki',
     busDetail: 'Jalan {walk} untuk naik · {n} halte · Turun di {stop}',
     transferAt: 'Pindah ke {route}',
+    tabFastest: 'Tercepat',
+    tabBus: 'Bus saja',
+    tabMetro: 'MRT saja',
+    noBusPlan: 'Tidak ada bus di rute ini',
+    noMetroPlan: 'Tidak ada MRT di rute ini',
+    transitDetail: 'Naik di {stop} · Turun di {alight}',
+    estimateNote: 'Waktu adalah perkiraan, bukan jadwal langsung',
+    lastGone: 'Layanan terakhir sudah lewat',
+    notStarted: 'Layanan pertama belum mulai',
     routeTitle: 'Naik bus yang mana?',
     back: 'Kembali',
     change: 'Ganti bahasa dan pengguna',
@@ -483,6 +568,10 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     compass: { N: 'ខាងជើង', NE: 'ឦសាន', E: 'ខាងកើត', SE: 'អាគ្នេយ៍', S: 'ខាងត្បូង', SW: 'និរតី', W: 'ខាងលិច', NW: 'ពាយព្យ' },
     howTitle: 'តើទៅដោយរបៀបណា?',
     walkThere: 'ដើរទៅ',
+    howWalk: 'ដើរ',
+    howBus: 'ឡានក្រុង',
+    howMetro: 'រថភ្លើង MRT',
+    howMixed: 'ឡានក្រុង + MRT',
     aboutMin: 'ប្រហែល {min} នាទី',
     busLoading: 'កំពុងរកឡានក្រុង…',
     busNotWorth: 'ជិះឡានក្រុងមិនលឿនជាងទេ ដើរទៅល្អជាង',
@@ -490,6 +579,15 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     busFailed: 'ផ្ទុកទិន្នន័យឡានក្រុងមិនបាន អាចដើរទៅបាន',
     busDetail: 'ដើរ {walk} ឡើងឡាន · {n} ចំណត · ចុះនៅ {stop}',
     transferAt: 'ប្តូរទៅ {route}',
+    tabFastest: 'លឿនបំផុត',
+    tabBus: 'តែឡានក្រុង',
+    tabMetro: 'តែ MRT',
+    noBusPlan: 'គ្មានឡានក្រុងតាមផ្លូវនេះ',
+    noMetroPlan: 'គ្មាន MRT តាមផ្លូវនេះ',
+    transitDetail: 'ឡើងនៅ {stop} · ចុះនៅ {alight}',
+    estimateNote: 'ពេលវេលាជាការប៉ាន់ស្មាន មិនមែនកាលវិភាគផ្ទាល់ទេ',
+    lastGone: 'ជើងចុងក្រោយបានចេញហើយ',
+    notStarted: 'ជើងដំបូងមិនទាន់ចេញ',
     routeTitle: 'តើជិះខ្សែណា?',
     back: 'ត្រឡប់',
     change: 'ប្តូរភាសា និងអ្នកប្រើ',
@@ -557,6 +655,10 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     compass: { N: '北', NE: '北東', E: '東', SE: '南東', S: '南', SW: '南西', W: '西', NW: '北西' },
     howTitle: 'どうやって行きますか？',
     walkThere: '歩いて行く',
+    howWalk: '徒歩',
+    howBus: 'バス',
+    howMetro: 'MRT',
+    howMixed: 'バス＋MRT',
     aboutMin: '約 {min} 分',
     busLoading: 'バスを探しています…',
     busNotWorth: 'バスは速くなりません。歩くのがおすすめです',
@@ -564,6 +666,15 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     busFailed: 'バスのデータを読み込めませんでした。歩いて行けます',
     busDetail: '{walk}歩いて乗車 · {n} 停留所 · {stop}で降車',
     transferAt: '{route}に乗り換え',
+    tabFastest: '最速',
+    tabBus: 'バスのみ',
+    tabMetro: 'MRTのみ',
+    noBusPlan: 'このルートにバスはありません',
+    noMetroPlan: 'このルートにMRTはありません',
+    transitDetail: '{stop} で乗車 · {alight} で降車',
+    estimateNote: '時間は目安で、リアルタイムの時刻表ではありません',
+    lastGone: '終電・終バスは出ました',
+    notStarted: '始発はまだです',
     routeTitle: 'どのバスに乗りますか？',
     back: '戻る',
     change: '言語と利用者を変更',
@@ -631,6 +742,10 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     compass: { N: '북', NE: '북동', E: '동', SE: '남동', S: '남', SW: '남서', W: '서', NW: '북서' },
     howTitle: '어떻게 갈까요?',
     walkThere: '걸어서 가기',
+    howWalk: '도보',
+    howBus: '버스',
+    howMetro: 'MRT',
+    howMixed: '버스 + MRT',
     aboutMin: '약 {min}분',
     busLoading: '탈 수 있는 버스를 찾는 중…',
     busNotWorth: '버스가 더 빠르지 않아요. 걸어가는 게 좋아요',
@@ -638,6 +753,15 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     busFailed: '버스 데이터를 불러오지 못했어요. 걸어갈 수 있어요',
     busDetail: '{walk} 걸어서 탑승 · {n}개 정류장 · {stop}에서 하차',
     transferAt: '{route}(으)로 환승',
+    tabFastest: '가장 빠름',
+    tabBus: '버스만',
+    tabMetro: 'MRT만',
+    noBusPlan: '이 경로에는 버스가 없어요',
+    noMetroPlan: '이 경로에는 MRT가 없어요',
+    transitDetail: '{stop}에서 승차 · {alight}에서 하차',
+    estimateNote: '시간은 예상치이며 실시간 시간표가 아닙니다',
+    lastGone: '막차가 끊겼습니다',
+    notStarted: '첫차가 아직 없습니다',
     routeTitle: '어느 버스를 타나요?',
     back: '뒤로',
     change: '언어와 사용자 변경',

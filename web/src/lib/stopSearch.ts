@@ -6,10 +6,11 @@
  * 放在 web/public/lab/stop_index.json，第一次搜尋才下載（約 460 KB gzip）。
  * 正式流程用自己後端的 GET /api/stations/search（api.search），不是這個檔案。
  */
-import type { LatLon, Station } from '@/lib/contract'
+import type { LatLon, Station, StationRoute } from '@/lib/contract'
 import type { RoutePattern } from '@/lib/directBus'
 import { distanceM } from '@/nav/geo'
 import { fuzzyScore, normalizeQuery, parseQuery } from '@/lib/fuzzy'
+import { baseName } from '@/lib/placeSearch'
 import type { ParsedQuery } from '@/lib/fuzzy'
 
 export { normalizeQuery }
@@ -75,6 +76,56 @@ export function searchStops(index: StopIndex, q: string, limit = 20, near: LatLo
   })
   hits.sort((a, b) => b.score - a.score || a.d - b.d || a.i - b.i)
   return hits.slice(0, limit).map((h) => h.s)
+}
+
+/** 同名站牌彼此這麼近就合併成一筆（路口兩側、對向的站牌通常在 100 公尺內） */
+export const SAME_STOP_M = 400
+
+/** 合併後的一筆站牌：每條路線記得自己停哪一個站位，導航時帶你走到那一側 */
+export interface StopGroup {
+  key: string
+  name: Station['name']
+  /** 列表上算距離用：離 near 最近的那個站位 */
+  lat: number
+  lon: number
+  stations: Station[]
+  routes: { route: StationRoute; station: Station }[]
+}
+
+const dropBrackets = (s: string) => s.replace(/\s*(?:\(.*?\)|（.*?）)\s*/g, '').trim()
+
+/**
+ * 同名而且相距 SAME_STOP_M 以內的站位（兩個方向、路口兩側）合併成一筆（2026-11-08 回報：列表太長、看不出差別）。
+ * 括號裡的路名不算（捷運芝山站(福華)、捷運芝山站(福國) 是同一筆「捷運芝山站」）。
+ * 路線依「路線＋往哪裡」去重，同一條路線同一方向在好幾個站位都停時，留離 near 最近的。保留 stations 原本的順序。
+ */
+export function groupStops(stations: Station[], near: LatLon | null): StopGroup[] {
+  const d = (s: Station) => (near ? distanceM(near, [s.lat, s.lon]) : 0)
+  const groups: Station[][] = []
+  for (const s of stations) {
+    const key = baseName(s.name.zh)
+    const g = groups.find((g) => baseName(g[0]!.name.zh) === key && g.some((m) => distanceM([m.lat, m.lon], [s.lat, s.lon]) <= SAME_STOP_M))
+    if (g) g.push(s)
+    else groups.push([s])
+  }
+  return groups.map((g) => {
+    const byNear = [...g].sort((a, b) => d(a) - d(b))
+    const seen = new Set<string>()
+    const routes: StopGroup['routes'] = []
+    for (const station of byNear) {
+      for (const route of station.routes) {
+        const k = `${route.routeName.zh}|${route.headsign.zh ?? ''}`
+        if (seen.has(k)) continue
+        seen.add(k)
+        routes.push({ route, station })
+      }
+    }
+    const first = byNear[0]!
+    // 合併了不同括號的站名時，顯示拿掉括號的名稱
+    const oneName = g.every((s) => s.name.zh === first.name.zh)
+    const name = oneName ? first.name : { zh: dropBrackets(first.name.zh), en: first.name.en ? dropBrackets(first.name.en) : null }
+    return { key: g.map((s) => s.stationUid).join('+'), name, lat: first.lat, lon: first.lon, stations: g, routes }
+  })
 }
 
 let cached: Promise<StopIndex> | null = null
