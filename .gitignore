@@ -1,0 +1,55 @@
+# Secrets: TDX / CWA keys and credentials stay out of the repo
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+*service-account*.json
+*-credentials.json
+key.properties
+
+# Local reference material and organizer documents
+reference/
+docs/source/
+dist/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Node / frontend
+node_modules/
+.vite/
+web/dist/
+*.local
+npm-debug.log*
+pnpm-debug.log*
+
+# Firebase
+.firebase/
+firebase-debug.log*
+
+# Flutter / Android / iOS
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+local.properties
+.gradle/
+*.apk
+*.aab
+Pods/
+ephemeral/
+
+# Editor / OS
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+desktop.ini
