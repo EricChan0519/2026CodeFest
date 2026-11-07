@@ -181,17 +181,20 @@ let fullH = 0 // 沒有鍵盤時的視窗高度（判斷鍵盤是否開著）
 const dur = (ms: number): number => (reducedMotion() ? 0 : ms)
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 /**
- * 箭頭頭部的兩撇都在尖端那側，筆畫重心在中心往尖端 11.1 單位（viewBox 76）。
- * logo 斜 45° 時只對齊外框中心會看起來偏右上；完全對齊重心又偏左下 → 取中間，往反方向挪 6 單位。
+ * logo 斜 45° 時，箭頭（含圓角筆畫）的外框寬 ≈ 箭頭方塊的 0.74。
+ * 依「一鍵成行」實際寬度決定箭頭比例：箭頭左右剛好對齊標語的頭尾，不會只蓋到第三個字。
  */
-const LOGO_CENTROID = 6
-function centroidShift(p: Pose): Pose {
-  const off = (LOGO_CENTROID / 76) * size * p.s * p.k
-  const a = (p.r * Math.PI) / 180
-  return { ...p, x: p.x - off * Math.sin(a), y: p.y + off * Math.cos(a) }
+const LOGO_SPAN = 0.74
+function logoK(): number {
+  const ghost = titleEl.value?.querySelector<HTMLElement>('.ask-ghost')
+  const slot = logoSlot.value
+  if (!ghost || !slot) return K_LOGO
+  // 最後一個字後面的字距不算
+  const textW = ghost.getBoundingClientRect().width - parseFloat(getComputedStyle(ghost).letterSpacing || '0')
+  const slotW = slot.getBoundingClientRect().width
+  return textW > 0 && slotW > 0 ? textW / (LOGO_SPAN * slotW) : K_LOGO
 }
-const logoBase = (r: number): Pose => poseAt(logoSlot.value!, size, r, K_LOGO)
-const logoPose = (r: number): Pose => centroidShift(logoBase(r))
+const logoPose = (r: number): Pose => poseAt(logoSlot.value!, size, r, logoK())
 const navPoseNow = (): Pose => poseAt(navSlot.value!, size, rot, K_NAV)
 /** 最接近 r、指向右的角度（不多轉） */
 const pointAngle = (r: number): number => Math.round((r - POINT_DEG) / 360) * 360 + POINT_DEG
@@ -1052,18 +1055,18 @@ function introFrames(end: Pose): Frame[] {
     const t = i / N
     const k = t <= PEAK ? 0.9 + (1 + LIFT - 0.9) * easeOutCubic(t / PEAK) : 1 + LIFT * spring(((t - PEAK) * T_INTRO) / 1000)
     const r = r0 + (r1 - r0) * easeInOutCubic(Math.min(1, t / ROT_END))
-    frames.push({ p: centroidShift({ ...end, s: end.s * k, r }), opacity: Math.min(1, t / 0.1), offset: t })
+    frames.push({ p: { ...end, s: end.s * k, r }, opacity: Math.min(1, t / 0.1), offset: t })
   }
-  frames[N] = { p: centroidShift(end), offset: 1 }
+  frames[N] = { p: end, offset: 1 }
   return frames
 }
 
 async function intro() {
   const my = ++seq
   await nextTick()
-  const end = logoBase(360 + LOGO_DEG)
+  const end = logoPose(360 + LOGO_DEG)
   if (reducedMotion()) {
-    setHero(centroidShift(end))
+    setHero(end)
     hero.value!.style.opacity = '1'
     phase.value = 'brand'
     return
