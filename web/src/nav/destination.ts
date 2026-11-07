@@ -13,6 +13,13 @@ export interface Destination {
   station?: Station
   /** 使用者在 P4 選的那筆路線和方向 */
   stationRoute?: StationRoute
+  /** 直達車規劃算出的下車站（DirectBusOption.alight）；到站時交給 arrivalFromStation */
+  alight?: Station
+}
+
+/** 直達車規劃選好一班車：導航到上車站，下車站留著到站時顯示「在 ○○ 下車」 */
+export function destinationFromBusOption(option: { board: Station; route: StationRoute; alight: Station }): Destination {
+  return { ...destinationFromStation(option.board, option.route), alight: option.alight }
 }
 
 /** 正式流程：P4 選好站位和那班車後，用這個建導航目的地。座標只用在導航，不會進網址 */

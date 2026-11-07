@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { arrivalFromStation, buildArrival, tripFromQuery } from '@/arrival/arrival'
 import type { Station, StationRoute } from '@/lib/contract'
 import { createAnnouncer } from '../announcer'
-import { DEFAULT_DESTINATION, createDestinationLock, destinationFromStation, nearestPoint } from '../destination'
+import {
+  DEFAULT_DESTINATION,
+  createDestinationLock,
+  destinationFromBusOption,
+  destinationFromStation,
+  nearestPoint,
+} from '../destination'
 import type { Destination } from '../destination'
 import { createNavMachine } from '../machine'
 import { STRAIGHT, pt } from '../__fixtures__/routes'
@@ -96,5 +102,26 @@ describe('arrival hand-off', () => {
     const loc = arrivalFromStation(d.station!, d.stationRoute!, 'zh-TW', 'visitor')
     const { trip, lang, audience } = tripFromQuery(loc.query)
     expect(buildArrival(trip, lang, audience).spoken).toBe('到了。等 307 號，往板橋方向')
+  })
+})
+
+describe('destinationFromBusOption', () => {
+  const board: Station = { stationUid: 'B', name: { zh: '上車站', en: 'Board' }, bearing: null, lat: 25.1, lon: 121.5, routes: [] }
+  const alight: Station = { stationUid: 'A', name: { zh: '下車站', en: 'Alight' }, bearing: null, lat: 25.2, lon: 121.6, routes: [] }
+  const route: StationRoute = {
+    routeName: { zh: '203', en: '203' },
+    direction: 0,
+    headsign: { zh: '往天母', en: 'To Tianmu' },
+    stopUid: 'S1',
+  }
+
+  it('navigates to the boarding stop and keeps the drop-off for arrival', () => {
+    const d = destinationFromBusOption({ board, route, alight })
+    expect(d.points).toEqual([[25.1, 121.5]])
+    expect(d.station).toBe(board)
+    expect(d.stationRoute).toBe(route)
+    expect(d.alight).toBe(alight)
+    const loc = arrivalFromStation(d.station!, d.stationRoute!, 'zh-TW', 'visitor', d.alight)
+    expect(loc.query.alightZh).toBe('下車站')
   })
 })

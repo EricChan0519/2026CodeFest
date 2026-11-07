@@ -21,6 +21,7 @@ import type { NavMachine, NavRoute, NavState, NavView, ResyncReason } from '@/na
 import {
   DEFAULT_DESTINATION,
   createDestinationLock,
+  destinationFromBusOption,
   destinationFromPlace,
   destinationFromStation,
 } from '@/nav/destination'
@@ -29,6 +30,8 @@ import { searchPlaces } from '@/lib/geocode'
 import type { Place } from '@/lib/geocode'
 import { formatDistance, loadPoiIndex, searchPois } from '@/lib/poiSearch'
 import type { PoiHit } from '@/lib/poiSearch'
+import { planDirectBus } from '@/lib/directBus'
+import type { DirectBusOption } from '@/lib/directBus'
 import { loadStopIndex, searchStops } from '@/lib/stopSearch'
 import { fetchWalkRoute } from '@/lib/walkRoute'
 import type { WalkRoute } from '@/lib/walkRoute'
@@ -88,6 +91,7 @@ async function search() {
   searching.value = true
   const seq = ++searchSeq
   searchError.value = ''
+  clearBusPlan()
   stopResults.value = null
   placeResults.value = null
   poiResults.value = null
@@ -135,8 +139,69 @@ const POI_LIMIT = 100
 const poiShown = ref(POI_PAGE)
 const poiVisible = computed(() => (poiResults.value ?? []).slice(0, poiShown.value))
 
+/**
+ * 選了地址（或店家）A 之後：用使用者位置和 A 算可以直達的公車，列在「搭公車去」。
+ * 選一班車 → 導航到上車站，到站時 /arrived 會顯示「在 ○○ 下車」。
+ * 沒選車就維持步行直接到 A。整個計算在裝置上做，不呼叫外部服務。
+ */
+const busOptions = ref<DirectBusOption[] | null>(null)
+const busLoading = ref(false)
+const busNote = ref('')
+const pickedBus = shallowRef<DirectBusOption | null>(null)
+const busTargetName = ref('')
+let busSeq = 0
+
+async function planBusTo(target: LatLon, name: string) {
+  const seq = ++busSeq
+  busTargetName.value = name
+  busOptions.value = null
+  pickedBus.value = null
+  busNote.value = ''
+  busLoading.value = true
+  try {
+    const [idx, user] = await Promise.all([loadStopIndex(), userPoint ? Promise.resolve(userPoint) : askUserPoint()])
+    if (seq !== busSeq) return
+    if (!user) {
+      busNote.value = '拿不到你的位置，無法列出搭公車的方法；可以直接走過去。'
+      return
+    }
+    if (idx.patterns.length === 0) {
+      busNote.value = '站牌資料沒有路線停靠順序（舊快照），無法列出搭公車的方法。'
+      return
+    }
+    busOptions.value = planDirectBus(idx.stations, idx.patterns, user, target)
+    if (busOptions.value.length === 0) busNote.value = '附近沒有直達的公車比直接走過去更省路，建議走過去。'
+  } catch (e) {
+    if (seq === busSeq) busNote.value = `公車資料載入失敗（${(e as Error).message}），可以直接走過去。`
+  } finally {
+    if (seq === busSeq) busLoading.value = false
+  }
+}
+
+function clearBusPlan() {
+  busSeq++
+  busOptions.value = null
+  pickedBus.value = null
+  busNote.value = ''
+  busLoading.value = false
+}
+
+function pickBus(o: DirectBusOption) {
+  pickedBus.value = o
+  destination.value = destinationFromBusOption(o)
+}
+
+function isBusPicked(o: DirectBusOption): boolean {
+  return pickedBus.value === o
+}
+
+function busLabel(o: DirectBusOption): string {
+  return `${o.route.routeName.zh}${o.route.headsign.zh ? ` ${o.route.headsign.zh}` : ''}`
+}
+
 function pickPoi(p: PoiHit) {
   destination.value = destinationFromPlace({ name: p.name, point: p.point })
+  void planBusTo(p.point, p.name)
 }
 
 function isPoiPicked(p: PoiHit): boolean {
@@ -146,10 +211,12 @@ function isPoiPicked(p: PoiHit): boolean {
 
 function pickPlace(p: Place) {
   destination.value = destinationFromPlace(p)
+  void planBusTo(p.point, p.name)
 }
 
 /** 選站牌時一定要同時選一班車，到站才知道要念哪一線 */
 function pickStopRoute(station: Station, route: StationRoute) {
+  clearBusPlan()
   destination.value = destinationFromStation(station, route)
 }
 
@@ -167,6 +234,7 @@ function routeLabel(r: StationRoute): string {
 }
 
 function useDemoStation() {
+  clearBusPlan()
   destination.value = DEFAULT_DESTINATION
 }
 
@@ -350,7 +418,7 @@ function goArrived() {
   const { station, stationRoute } = active
   if (!station || !stationRoute) return
   const { lang, audience } = tripFromQuery(currentRoute.query)
-  void router.push(arrivalFromStation(station, stationRoute, lang, audience))
+  void router.push(arrivalFromStation(station, stationRoute, lang, audience, active.alight))
 }
 
 function speakOrBuzz(cue: Cue) {
@@ -372,7 +440,9 @@ async function begin() {
   active = destination.value
   activeName.value = active.name
   activeIsStation.value = !!active.station
-  activeRoute.value = active.stationRoute ? `搭 ${routeLabel(active.stationRoute)}` : ''
+  activeRoute.value = active.stationRoute
+    ? `搭 ${routeLabel(active.stationRoute)}${active.alight ? `，在 ${active.alight.name.zh} 下車` : ''}`
+    : ''
   destinationPoint.value = null
   destLock = createDestinationLock(active)
   gpsCourse.value = null
@@ -786,6 +856,31 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
         </button>
       </section>
 
+      <!-- 搭公車去：選了地址或店家 A 之後，用 TDX 停靠順序在裝置上算直達車 -->
+      <section v-if="busLoading || busOptions || busNote" class="space-y-2" aria-label="搭公車去">
+        <h2 class="text-lg font-bold">
+          搭公車去{{ busTargetName }}
+          <span class="text-sm font-normal text-white/70">（只列直達車，不含轉乘；不選就走路過去）</span>
+        </h2>
+        <p v-if="busLoading" class="text-white/80">正在算可以搭的車…</p>
+        <p v-if="busNote" class="text-amber-200">{{ busNote }}</p>
+        <button
+          v-for="o in busOptions ?? []"
+          :key="`${o.route.routeName.zh}-${o.route.direction}`"
+          type="button"
+          class="block w-full rounded-lg bg-white/10 p-3 text-left"
+          :class="{ 'ring-2 ring-white': isBusPicked(o) }"
+          :aria-pressed="isBusPicked(o)"
+          @click="pickBus(o)"
+        >
+          <div class="text-lg font-bold">{{ busLabel(o) }}</div>
+          <div class="text-sm text-white/80">
+            走 {{ formatDistance(o.walkToBoardM) }}到「{{ o.board.name.zh }}」上車 → 坐 {{ o.stopCount }} 站 →
+            在「{{ o.alight.name.zh }}」下車，再走 {{ formatDistance(o.walkFromAlightM) }}
+          </div>
+        </button>
+      </section>
+
       <p v-if="stopResults || placeResults || poiResults" class="text-xs text-white/60">
         資料：公車站牌為 TDX 公車站位資料<template v-if="stopsUpdatedAt">（{{ stopsUpdatedAt.slice(0, 16).replace('T', ' ') }} 版）</template>；
         連鎖店為 Overture Maps Foundation Places<template v-if="poiRelease">（{{ poiRelease }} 版）</template>
@@ -797,6 +892,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
         <div class="text-sm text-white/70">目前的目的地</div>
         <div class="text-xl font-bold">{{ destination.name }}</div>
         <div v-if="destination.stationRoute" class="text-lg">搭 {{ routeLabel(destination.stationRoute) }}</div>
+        <div v-if="destination.alight" class="text-lg">在 {{ destination.alight.name.zh }} 下車</div>
         <button v-if="destination.stationRoute?.stopUid !== DEFAULT_DESTINATION.stationRoute?.stopUid" type="button" class="mt-1 text-sm underline" @click="useDemoStation">
           改回預設站牌「{{ DEFAULT_DESTINATION.name }}」{{ DEFAULT_DESTINATION.stationRoute ? routeLabel(DEFAULT_DESTINATION.stationRoute) : '' }}
         </button>
