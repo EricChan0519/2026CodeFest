@@ -4,7 +4,7 @@
  * 和實驗頁（/lab/nav）同一套工具：除錯地圖（點地圖瞬移）、模擬 GPS 搖桿、速度、重算失敗、手動朝向、重新定位、軌跡。
  * 地圖與搖桿只在打開時載入（Leaflet 不進主畫面的 bundle）。
  */
-import { computed, defineAsyncComponent, ref } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import type { Trip } from '@/trip/useTrip'
 import type { DestinationSearch } from '@/trip/useDestinationSearch'
 
@@ -13,6 +13,8 @@ const NavDebugMap = defineAsyncComponent(() => import('../lab/NavDebugMap.vue'))
 
 const props = defineProps<{ trip: Trip; search: DestinationSearch; canDemo: boolean }>()
 const emit = defineEmits<{ close: []; demo: []; timeChange: [] }>()
+/** 收合：只留右下角的小搖桿和按鈕，Demo 時不擋畫面 */
+const mini = defineModel<boolean>('mini', { default: false })
 
 const latitude = ref(String(props.search.debugOrigin.value?.[0] ?? 25.116056))
 const longitude = ref(String(props.search.debugOrigin.value?.[1] ?? 121.535444))
@@ -49,14 +51,27 @@ const transitTimeValue = computed(() => {
 })
 
 const nav = props.trip.nav
+
+// 收合的小地圖是「前方朝上」：搖桿往上也要是手機面對的方向，才和地圖一致。展開時恢復原本的設定
+let frameBeforeMini = nav.joyFrame.value
+watch(
+  mini,
+  (m) => {
+    if (m) {
+      frameBeforeMini = nav.joyFrame.value
+      nav.joyFrame.value = 'phone'
+    } else nav.joyFrame.value = frameBeforeMini
+  },
+  { immediate: true },
+)
 const view = computed(() => nav.view.value)
 const navigating = computed(() => nav.running.value && !!view.value)
 
 const SPEEDS = [
-  { v: 1.4, label: '步行' },
-  { v: 3, label: '3 m/s' },
   { v: 6, label: '6 m/s' },
   { v: 12, label: '12 m/s' },
+  { v: 15, label: '15 m/s' },
+  { v: 18, label: '18 m/s' },
 ]
 
 /** 切換模擬 GPS：導航中就用同一個目的地重新開始這一段 */
@@ -73,10 +88,39 @@ const streets = computed(() => nav.routeInfo.value?.maneuvers.filter((x) => x.st
 </script>
 
 <template>
+  <!-- 收合：Demo 用，底部一條小地圖＋搖桿，不擋中間的導航箭頭 -->
+  <div v-if="mini" class="dbg-mini" role="group" aria-label="除錯工具（收合）" lang="zh-TW">
+    <div v-if="navigating && view" class="dbg-mini-map">
+      <NavDebugMap
+        rotate
+        :live="nav.simHere.value"
+        :geometry="view.geometry"
+        :here="view.here"
+        :accuracy-m="view.accuracyM"
+        :target="view.targetPoint"
+        :nearest="view.nearestPoint"
+        :heading-deg="view.headingDeg"
+        :destination="nav.destinationPoint.value"
+        @pick="nav.simPick"
+      />
+    </div>
+    <Joystick v-if="navigating && nav.simGps.value" :size="112" @change="nav.onJoystick" />
+    <div class="dbg-mini-btns">
+      <button type="button" class="dbg-x dbg-x-sm" aria-label="展開除錯工具" @click="mini = false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6" /></svg>
+      </button>
+      <button type="button" class="dbg-x dbg-x-sm" aria-label="關閉除錯工具" @click="emit('close')">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+      </button>
+    </div>
+  </div>
   <!-- 不加遮罩：開著也要看得到上面的導航箭頭跟著搖桿轉 -->
-  <section class="dbg" role="dialog" aria-label="除錯工具" lang="zh-TW">
+  <section v-else class="dbg" role="dialog" aria-label="除錯工具" lang="zh-TW">
     <header class="dbg-head">
       <h2>除錯工具</h2>
+      <button type="button" class="dbg-x dbg-min" aria-label="收合除錯工具（只留搖桿）" @click="mini = true">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+      </button>
       <button type="button" class="dbg-x" aria-label="關閉除錯工具" @click="emit('close')">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
       </button>
@@ -85,6 +129,7 @@ const streets = computed(() => nav.routeInfo.value?.maneuvers.filter((x) => x.st
     <div v-if="navigating && view" class="dbg-row">
       <div class="dbg-map">
         <NavDebugMap
+          :live="nav.simHere.value"
           :geometry="view.geometry"
           :here="view.here"
           :accuracy-m="view.accuracyM"
@@ -230,6 +275,42 @@ const streets = computed(() => nav.routeInfo.value?.maneuvers.filter((x) => x.st
 .dbg-head h2 {
   font-size: 18px;
   font-weight: 700;
+  margin-right: auto;
+}
+.dbg-mini {
+  z-index: 40;
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(100px + env(safe-area-inset-bottom));
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-end;
+  gap: 6px;
+  color: #f1f3f4;
+}
+.dbg-mini-map {
+  flex: 1;
+  min-width: 0;
+  height: 128px;
+  overflow: hidden;
+  border-radius: 16px;
+  background: #30383d;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.35);
+}
+.dbg-mini-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dbg-x-sm {
+  width: 40px;
+  height: 40px;
+  background: rgb(23 27 29 / 0.7);
+}
+.dbg-x-sm svg {
+  width: 18px;
+  height: 18px;
 }
 .dbg-x {
   width: 48px;

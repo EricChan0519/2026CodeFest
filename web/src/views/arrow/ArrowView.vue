@@ -15,7 +15,7 @@
  * 4. 選好走法：像滑動解鎖一樣，箭頭推過那一列到右邊界，框淡出，箭頭放大滑回中央，接上真正的導航（trip/useTrip）。
  *    到上車站、坐車中、只到站牌時蓋上 ArrivalCard／RideCard；走到最後的目的地箭頭換成打勾。
  * 只動 transform/opacity：過場用 Web Animations，導航中用 rAF 平滑旋轉內層箭頭、轉到位就停。
- * 除錯工具：長按右上角 0.7 秒或 ?debug=1（地圖、模擬 GPS 搖桿、重算失敗、手動朝向、軌跡）。?demo=1 直接開模擬 GPS。
+ * 除錯工具：長按右上角 0.7 秒或 ?debug=1（地圖、模擬 GPS 搖桿、重算失敗、手動朝向、軌跡）。?demo=1 直接開模擬 GPS，除錯工具收合成底部小地圖＋搖桿（不擋箭頭）。
  */
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import ArrivalCard from '@/arrival/ArrivalCard.vue'
@@ -177,6 +177,8 @@ const navSlot = ref<HTMLElement>()
 const input = ref<HTMLInputElement>()
 const query = ref('')
 const debugOpen = ref(false)
+/** 除錯工具收合成小搖桿（Demo 用，不擋畫面）；?demo=1 預設收合 */
+const debugMini = ref(params.has('demo'))
 /** 「怎麼去」的目的地（地點、店家） */
 const target = ref<{ name: string; point: LatLon } | null>(null)
 /** 「要搭哪一班」的站牌（同名、相鄰的站位合併成一筆，每條路線記得自己的站位） */
@@ -946,6 +948,11 @@ async function flyToNav(my: number) {
   busy.value = false
   target_ = rot
   phase.value = 'nav'
+  // 模擬 GPS（Demo）：選完路線就直接開收合的除錯工具（小地圖＋搖桿），不用再長按右上角
+  if (nav.simGps.value) {
+    debugMini.value = true
+    debugOpen.value = true
+  }
   const d = nav.view.value?.arrowDeg
   if (d !== null && d !== undefined) track(d)
 }
@@ -1328,7 +1335,7 @@ function secretKey(e: MouseEvent) {
 }
 
 // 除錯面板打開時導航箭頭往上挪，面板不擋箭頭（才看得到搖桿的效果）
-watch(debugOpen, async () => {
+watch([debugOpen, debugMini], async () => {
   if (phase.value !== 'nav') return
   await nextTick()
   const from = { ...navPose, r: rot }
@@ -1379,7 +1386,7 @@ watch([rows, howRows, routeNote, searchNote, lang, age, mode, search.searching],
 onMounted(() => {
   document.title = '一箭成行'
   measure()
-  if (params.has('debug')) debugOpen.value = true
+  if (params.has('debug') || params.has('demo')) debugOpen.value = true
   window.addEventListener('resize', onResize)
   intro()
 })
@@ -1399,7 +1406,7 @@ onBeforeUnmount(() => {
   <div
     ref="root"
     class="av"
-    :class="[`is-${phase}`, `tone-${tone}`, { 'dbg-on': debugOpen, settled, waiting }]"
+    :class="[`is-${phase}`, `tone-${tone}`, { 'dbg-on': debugOpen && !debugMini, 'dbg-mini-on': debugOpen && debugMini, settled, waiting }]"
     :lang="lang"
     :style="{ '--fs': FONT_SCALE[age] }"
     @pointerdown.capture="skipIntro"
@@ -1752,7 +1759,7 @@ onBeforeUnmount(() => {
       @click="secretKey"
     />
 
-    <DebugSheet v-if="debugOpen" :trip="trip" :search="search" :can-demo="phase === 'search' && !busy" @close="debugOpen = false" @demo="demoTrip" @time-change="target && search.planTo(target.point, audience)" />
+    <DebugSheet v-if="debugOpen" v-show="!(debugMini && trip.card.value)" v-model:mini="debugMini" :trip="trip" :search="search" :can-demo="phase === 'search' && !busy" @close="debugOpen = false" @demo="demoTrip" @time-change="target && search.planTo(target.point, audience)" />
   </div>
 </template>
 
@@ -2665,6 +2672,10 @@ onBeforeUnmount(() => {
 }
 .dbg-on .nav-mid {
   padding-bottom: 300px;
+}
+/* 收合的除錯工具（底部小地圖＋搖桿約 128px）：箭頭往上讓位 */
+.dbg-mini-on .nav-mid {
+  padding-bottom: 150px;
 }
 .nav-slot {
   position: relative;

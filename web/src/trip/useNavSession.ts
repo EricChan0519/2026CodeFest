@@ -57,6 +57,8 @@ export interface LegRouting {
 
 export function useNavSession(opts: NavSessionOptions) {
   const view = shallowRef<NavView | null>(null)
+  /** 模擬 GPS 的即時位置：搖桿每 100 ms 更新（給除錯地圖畫順用；導航本身仍是每 500 ms 收一次位置） */
+  const simHere = shallowRef<LatLon | null>(null)
   const running = ref(false)
   const routeInfo = shallowRef<ModeRoute | null>(null)
   /** 這一段實際用的路線模式 */
@@ -71,7 +73,7 @@ export function useNavSession(opts: NavSessionOptions) {
   /** 搖桿「往上」：map＝地圖上方（北）；phone＝手機面對的方向 */
   const joyFrame = ref<'map' | 'phone'>('map')
   /** 搖桿推到底的速度（公尺／秒）；1.4 約等於步行 */
-  const simSpeed = ref(1.4)
+  const simSpeed = ref(15) // Demo 用：預設 15 m/s，走一段路不用推太久
   const simNote = ref('')
   /** 重新規劃一律失敗，用來測 back_to_route */
   const rerouteFails = ref(false)
@@ -322,6 +324,7 @@ export function useNavSession(opts: NavSessionOptions) {
     if (!manual || (joy.forward === 0 && joy.right === 0)) return
     const m = simSpeed.value * 0.1
     manual.step(joyForwardDeg(), joy.forward * m, joy.right * m, { emit: false })
+    simHere.value = manual.position
     const now = Date.now()
     if (now - lastJoyEmitAt >= 500) {
       lastJoyEmitAt = now
@@ -407,6 +410,7 @@ export function useNavSession(opts: NavSessionOptions) {
 
   return {
     view,
+    simHere,
     running,
     active,
     routeInfo,
