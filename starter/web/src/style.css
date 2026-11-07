@@ -373,3 +373,13 @@ h1 + .option-list, h1 + .search-entry, h1 + .search-field, h1 + .route-card, h1 
 }
 /* 距離也固定一行（「1200 公尺」約 5 個字寬），長者字級放大時不折行、不擠動箭頭 */
 .nav-instruction strong { font-size: min(calc(60px * var(--fs)), calc((min(100vw, 520px) - 2 * var(--gutter)) / 5)); white-space: nowrap; }
+
+/* 搜尋結果的頁數列固定在畫面下方：不論這一頁有幾筆、每筆幾行，頁數和上一頁／下一頁都不會上下移動 */
+.content > .pagination { margin-top: auto; padding-top: 16px; }
+/* 長者模式的搜尋結果：每一筆固定高度（名稱最多兩行、一律保留兩行空間；副標一行，太長用…），
+   每一頁高度都一樣 → 字級不會換頁就變，也不會因為某一頁比較長而捲動、把頁數列擠下去 */
+.large-type .search .place-info strong {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  line-height: 1.3; min-height: 2.6em;
+}
+.large-type .search .place-info small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

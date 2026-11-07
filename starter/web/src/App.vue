@@ -227,7 +227,8 @@ async function fitText() {
   }
   el.style.setProperty('--fs', String(lo))
 }
-watch(() => [page.value, welcomeStep.value, listPage.value, results.value.length, listState.value, nearbyState.value, routeState.value, query.value, prefs.value.audience, prefs.value.language, origin.value.name, selected.value?.id], fitText, { flush: 'post' })
+// 換頁（上一頁／下一頁）不重算字級：每次搜尋在第一頁（滿頁）算一次，換頁時字和頁數列都不動
+watch(() => [page.value, welcomeStep.value, results.value.length, listState.value, nearbyState.value, routeState.value, query.value, prefs.value.audience, prefs.value.language, origin.value.name, selected.value?.id], fitText, { flush: 'post' })
 // 進到首頁或搜尋頁時才定位、抓附近站牌（歡迎頁先不跳定位權限）
 watch(page, value => { if ((value === 'home' || value === 'search') && nearbyState.value === 'idle') loadNearby() }, { immediate: true })
 onMounted(() => {
@@ -291,7 +292,7 @@ onUnmounted(() => window.removeEventListener('resize', fitText))
         <button class="about-link" @click="previous = 'home'; go('about')"><AppIcon name="info" :size="20" />{{ t('關於這個服務') }}</button>
       </section>
 
-      <section v-else-if="page === 'search'" class="content">
+      <section v-else-if="page === 'search'" class="content search">
         <h1>{{ t(searchOrigin ? '從哪裡出發？' : '想去哪裡？') }}</h1>
         <label class="search-field"><AppIcon name="search" /><input v-model="query" autofocus enterkeyhint="search" @keydown.enter.prevent="runAddressSearch" :placeholder="t('輸入地址或地點')" :aria-label="t('搜尋地址或地點')"><button v-if="query" class="clear" :aria-label="t('清除搜尋')" @click="query = ''"><AppIcon name="x" :size="22" /></button></label>
         <div class="section-row"><h2>{{ t('搜尋結果') }}</h2><span class="muted">{{ results.length }}</span></div>
