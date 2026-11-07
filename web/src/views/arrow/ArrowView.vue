@@ -73,7 +73,8 @@ const T_PRESS = 280
 const T_FADE = 250
 const T_UNLOCK = 650
 const T_HOLD = 380
-const T_LAUNCH = 820
+const T_LAUNCH_PAUSE = 700 // 標語淡出後留一點時間，只看見箭頭
+const T_LAUNCH = 1200
 
 /** 語言名稱用各自的語言寫，看得懂自己的語言就能選 */
 const LANG_ITEMS: { id: Lang; label: string }[] = [
@@ -150,6 +151,7 @@ const phase = ref<Phase>('intro')
 const steps = reactive<Record<StepName, StepState>>({ lang: 'off', age: 'off', mode: 'off', search: 'off', how: 'off', route: 'off' })
 const picked = ref(-1) // 剛被點的那一列
 const busy = ref(false) // 過場中不收點擊
+const launchMoving = ref(false) // 移動時逐漸切成導航箭頭，抵達後不再換形狀
 const lift = ref(0) // 標語往上滑的距離
 const root = ref<HTMLElement>()
 const hero = ref<HTMLElement>()
@@ -753,13 +755,17 @@ async function launch(s: StepName, i: number, choice: TripChoice) {
   await flyToNav(my)
 }
 
-/** 箭頭放大滑回畫面中央，同時由指向右轉成指向正上方，接上導航 */
+/** 元件退場、背景變暗後，讓箭頭獨留片刻，再放大轉向中心接上導航 */
 async function flyToNav(my: number) {
+  launchMoving.value = false
   phase.value = 'launch'
   await nextTick()
+  await wait(dur(T_LAUNCH_PAUSE))
+  if (my !== seq) return
   rot = cur.r - POINT_DEG
   navPose = navPoseNow()
-  await play([{ p: cur }, { p: navPose }], dur(T_LAUNCH), 'cubic-bezier(0.45, 0, 0.1, 1)')
+  launchMoving.value = true
+  await play([{ p: cur }, { p: navPose }], dur(T_LAUNCH), 'cubic-bezier(0.42, 0, 0.25, 1)')
   if (my !== seq) return
   busy.value = false
   target_ = rot
@@ -1369,8 +1375,6 @@ onBeforeUnmount(() => {
       <p class="dock brand-text" aria-hidden="true">{{ BRAND }}</p>
     </div>
 
-    <RouterLink v-if="phase === 'search'" to="/about" class="about-link">{{ S.about }}</RouterLink>
-
     <!-- 導航：上方目的地與提示、中央箭頭（共用箭頭疊在 nav-slot 上）、下方距離與結束 -->
     <section class="nav" :inert="phase !== 'nav' || !!trip.card.value" :aria-label="S.end">
       <p class="dest">
@@ -1415,7 +1419,7 @@ onBeforeUnmount(() => {
     <!-- 共用箭頭：外層管位置大小，內層箭頭管角度 -->
     <div ref="hero" class="hero" aria-hidden="true">
       <div ref="heroArrow" class="hero-arrow">
-        <ArrowMark :navigation="phase === 'launch' || phase === 'nav'" :hollow="hollow && (phase === 'nav' || phase === 'launch')" :done="done" />
+        <ArrowMark :navigation="phase === 'nav' || (phase === 'launch' && launchMoving)" :hollow="hollow && phase === 'nav'" :done="done" />
       </div>
     </div>
 
@@ -1516,9 +1520,11 @@ onBeforeUnmount(() => {
 .is-nav.tone-idle {
   background-color: var(--idle);
 }
+.is-launch.tone-warn,
 .is-nav.tone-warn {
   background-color: var(--warn);
 }
+.is-launch.tone-arrived,
 .is-nav.tone-arrived {
   background-color: var(--arrived);
 }
@@ -2001,20 +2007,6 @@ onBeforeUnmount(() => {
   stroke-linecap: round;
 }
 
-.about-link {
-  position: absolute;
-  left: 50%;
-  bottom: calc(14px + env(safe-area-inset-bottom));
-  z-index: 5;
-  transform: translateX(-50%);
-  padding: 8px 12px;
-  font-size: 13px;
-  color: var(--ink-2);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  white-space: nowrap;
-}
-
 /* ── 導航 ─────────────────────────── */
 .nav {
   position: absolute;
@@ -2096,6 +2088,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 .nav-mid {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -2107,6 +2100,7 @@ onBeforeUnmount(() => {
 }
 .nav-slot {
   position: relative;
+  flex: none;
   width: var(--hero, 240px);
   height: var(--hero, 240px);
 }
@@ -2123,7 +2117,8 @@ onBeforeUnmount(() => {
     transform 0.2s ease;
 }
 .eta {
-  margin-top: 28px;
+  position: absolute;
+  top: calc(50% + var(--hero, 240px) / 2 + 28px);
   text-align: center;
   font-size: calc(26px * var(--fs));
   font-weight: 400;
@@ -2131,6 +2126,9 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
   opacity: 0;
   transition: opacity 0.45s ease;
+}
+.dbg-on .eta {
+  top: calc((100% - 300px) / 2 + var(--hero, 240px) / 2 + 28px);
 }
 .eta-minutes {
   margin-top: 8px;
