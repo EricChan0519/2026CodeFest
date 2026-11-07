@@ -27,6 +27,7 @@ def _build(stop_of_route, stops, routes, updated_at):
     stop_lookup = {s.get("StopUID"): s for s in stops}
     route_lookup = {r.get("RouteUID"): r for r in routes}
     groups = {}
+    sequences = []
     excluded = missing = 0
     for route in stop_of_route:
         uid = clean(route.get("RouteUID"))
@@ -39,7 +40,9 @@ def _build(stop_of_route, stops, routes, updated_at):
         en = clean(metadata.get(prefix + "StopNameEn")) if prefix else None
         headsign = {"zh": "往" + zh if zh else None, "en": "To " + en if en else None}
         route_name = route.get("RouteName") or {}
-        for stop in route.get("Stops") or []:
+        ordered = []
+        sequences.append(({"zh": clean(route_name.get("Zh_tw")), "en": clean(route_name.get("En"))}, direction, headsign, ordered))
+        for position_in_list, stop in enumerate(route.get("Stops") or []):
             if stop.get("StopBoarding") == -1:
                 excluded += 1
             stop_uid = clean(stop.get("StopUID"))
@@ -52,6 +55,8 @@ def _build(stop_of_route, stops, routes, updated_at):
             if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
                 continue
             station_id = str(station_id)
+            sequence = stop.get("StopSequence")
+            ordered.append((sequence if isinstance(sequence, (int, float)) else position_in_list, position_in_list, "TPE" + station_id, stop.get("StopBoarding")))
             name = stop.get("StopName") or {}
             group = groups.setdefault(station_id, {"name": {"zh": clean(name.get("Zh_tw")), "en": clean(name.get("En"))}, "points": {}, "routes": {}, "bearings": {}})
             group["points"].setdefault(stop_uid, (lat, lon))
@@ -72,7 +77,40 @@ def _build(stop_of_route, stops, routes, updated_at):
                          "lat": round(sum(p[0] for p in points) / len(points), 6),
                          "lon": round(sum(p[1] for p in points) / len(points), 6),
                          "routes": sorted(group["routes"].values(), key=lambda r: (r["routeName"]["zh"] or "", r["direction"], r["stopUid"] or ""))})
-    return {"updatedAt": updated_at, "stations": stations}, excluded, missing
+    return {"updatedAt": updated_at, "stations": stations, "patterns": _patterns(sequences, {s["stationUid"] for s in stations})}, excluded, missing
+
+
+def _patterns(sequences, known):
+    """每條路線、每個方向的停靠順序，給「搭哪一班直達車」用。
+
+    stops 是依 StopSequence 排好的 stationUid；同一站位連續出現時合併。
+    noBoard／noAlight 是 stops 的索引：StopBoarding 1 只能上車、-1 只能下車。
+    只能下車、且所在站位沒有可上車路線的站位不在 stations 裡，這裡也略過。
+    """
+    patterns, seen = [], set()
+    for route_name, direction, headsign, ordered in sequences:
+        stops, board, alight = [], [], []
+        for _, _, uid, boarding in sorted(ordered):
+            if uid not in known:
+                continue
+            can_board, can_alight = boarding != -1, boarding != 1
+            if stops and stops[-1] == uid:
+                board[-1] = board[-1] or can_board
+                alight[-1] = alight[-1] or can_alight
+                continue
+            stops.append(uid)
+            board.append(can_board)
+            alight.append(can_alight)
+        if len(stops) < 2:
+            continue
+        key = (route_name["zh"], direction, tuple(stops))
+        if key in seen:
+            continue
+        seen.add(key)
+        patterns.append({"routeName": route_name, "direction": direction, "headsign": headsign, "stops": stops,
+                         "noBoard": [i for i, ok in enumerate(board) if not ok],
+                         "noAlight": [i for i, ok in enumerate(alight) if not ok]})
+    return patterns
 
 
 def build_index(stop_of_route: list, stops: list, routes: list, updated_at: str) -> dict:

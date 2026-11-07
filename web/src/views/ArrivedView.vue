@@ -14,7 +14,8 @@ const card = computed(() => askCard(parsed.value.trip, parsed.value.lang))
 const showingCard = ref(false)
 
 const hearAgain = () => speakText(arrival.value.spoken, arrival.value.speechLang, arrival.value.rate)
-const readCard = () => card.value && speakText(card.value.zh, card.value.lang, 'slow')
+const readCard = () =>
+  card.value && speakText([card.value.zh, card.value.getOff].filter(Boolean).join(''), card.value.lang, 'slow')
 
 onMounted(hearAgain)
 </script>
@@ -36,6 +37,7 @@ onMounted(hearAgain)
         <p class="mt-6 break-all text-[clamp(5rem,30vw,9rem)] font-bold leading-none">{{ arrival.routeBig }}</p>
         <p v-if="arrival.routeSub" class="mt-2 text-4xl font-bold">{{ arrival.routeSub }}</p>
         <p v-if="arrival.direction" class="mt-4 text-3xl font-bold">{{ arrival.direction }}</p>
+        <p v-if="arrival.getOff" class="mt-3 text-2xl font-bold">{{ arrival.getOff }}</p>
       </template>
       <p v-if="arrival.station" class="mt-5 text-xl">{{ arrival.station }}</p>
     </div>
@@ -68,6 +70,7 @@ onMounted(hearAgain)
       <p class="text-lg text-gray-700">{{ arrival.labels.askHint }}</p>
       <div class="flex flex-1 flex-col justify-center py-6" lang="zh-TW">
         <p class="text-[clamp(2.25rem,10vw,3.5rem)] font-bold leading-snug">{{ card.zh }}</p>
+        <p v-if="card.getOff" class="mt-4 text-[clamp(1.75rem,8vw,2.5rem)] font-bold leading-snug">{{ card.getOff }}</p>
         <p v-if="card.station" class="mt-5 text-2xl text-gray-700">{{ card.station }}</p>
       </div>
       <p v-if="card.own" class="mb-4 border-t border-gray-200 pt-4 text-xl text-gray-700">{{ card.own }}</p>

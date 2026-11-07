@@ -14,6 +14,8 @@ export interface ArrivalTrip {
   station: Name
   route: Name
   headsign: Name
+  /** 下車站（直達車規劃算出來的）；沒有就不顯示 */
+  alight?: Name
 }
 
 const SPEECH_LANGS: Record<Lang, string> = {
@@ -59,6 +61,9 @@ export function buildArrival(trip: ArrivalTrip, lang: Lang, audience: Audience) 
     const separator = lang !== 'zh-TW' ? ' ' : headline.endsWith('！') ? '' : '。'
     spoken = `${headline}${separator}${waitFor}`
   }
+  const alightName = trip.alight ? displayName(trip.alight, lang) : null
+  const getOff = alightName ? fill(s.getOffAt, { stop: alightName }) : null
+  if (getOff) spoken += `${lang === 'zh-TW' ? '，' : ', '}${getOff}`
 
   return {
     headline,
@@ -67,6 +72,7 @@ export function buildArrival(trip: ArrivalTrip, lang: Lang, audience: Audience) 
     routeSub: lang !== 'zh-TW' && routeBig && trip.route.zh && trip.route.zh !== routeBig ? trip.route.zh : null,
     direction: to ? fill(s.direction, { to }) : null,
     station: displayName(trip.station, lang),
+    getOff,
     spoken,
     speechLang: SPEECH_LANGS[lang],
     rate: (audience === 'elder' ? 'slow' : 'normal') as 'slow' | 'normal',
@@ -96,12 +102,16 @@ export function askCard(trip: ArrivalTrip, lang: Lang) {
     const s = ARRIVAL_STRINGS[lang]
     const to = stripTo(localName(trip.headsign, lang))
     own = fill(to ? s.ask : s.askNoDirection, { bus: localName(trip.route, lang) ?? routeZh, to: to ?? '' })
+    const alightName = trip.alight ? displayName(trip.alight, lang) : null
+    if (alightName) own += ` ${fill(s.getOffAt, { stop: alightName })}`
   }
+  const alightZh = trip.alight ? trip.alight.zh || trip.alight.en : null
 
   return {
     zh: fill(toZh ? zhStrings.ask : zhStrings.askNoDirection, { bus: busZh, to: toZh ?? '' }),
     lang: 'zh-TW',
     station: stationZh ? `我在：${stationZh}` : null,
+    getOff: alightZh ? `我要在 ${alightZh} 下車` : null,
     own,
   }
 }
@@ -113,13 +123,15 @@ const QUERY_KEYS = {
   routeEn: ['route', 'en'],
   headsignZh: ['headsign', 'zh'],
   headsignEn: ['headsign', 'en'],
+  alightZh: ['alight', 'zh'],
+  alightEn: ['alight', 'en'],
 } as const
 
 /** 給 router.push：導航抵達時帶路線資訊到 /arrived。網址不放座標（ADR-0005） */
 export function arrivalLocation(trip: ArrivalTrip, lang: Lang, audience: Audience) {
   const query: Record<string, string> = { lang, audience }
   for (const [key, [part, field]] of Object.entries(QUERY_KEYS)) {
-    const value = trip[part][field]
+    const value = trip[part]?.[field]
     if (value) query[key] = value
   }
   return { path: '/arrived', query }
@@ -135,9 +147,11 @@ export function arrivalFromStation(
   stationRoute: Pick<StationRoute, 'routeName' | 'headsign'>,
   lang: Lang,
   audience: Audience,
+  /** 直達車規劃的下車站位（DirectBusOption.alight）；沒有就不帶 */
+  alightStation?: Pick<Station, 'name'>,
 ) {
   return arrivalLocation(
-    { station: station.name, route: stationRoute.routeName, headsign: stationRoute.headsign },
+    { station: station.name, route: stationRoute.routeName, headsign: stationRoute.headsign, alight: alightStation?.name },
     lang,
     audience,
   )
@@ -150,6 +164,7 @@ export function tripFromQuery(query: Record<string, unknown>) {
     route: { zh: text('routeZh') ?? '', en: text('routeEn') },
     headsign: { zh: text('headsignZh'), en: text('headsignEn') },
   }
+  if (text('alightZh') || text('alightEn')) trip.alight = { zh: text('alightZh'), en: text('alightEn') }
   return {
     trip,
     lang: LANGS.includes(query.lang as Lang) ? (query.lang as Lang) : ('zh-TW' as Lang),
