@@ -1,0 +1,13 @@
+# Spring Boot 4.x / Java 21 / Maven（講義範例）
+# application.properties: server.port=${PORT:8080}
+# 記得設定 CORS（web.app ↔ run.app 不同網域）
+FROM eclipse-temurin:21-jdk AS build
+WORKDIR /app
+COPY . .
+RUN ./mvnw -q package -DskipTests
+
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+COPY --from=build /app/target/*.jar app.jar
+ENV PORT=8080
+CMD ["java", "-jar", "app.jar"]
