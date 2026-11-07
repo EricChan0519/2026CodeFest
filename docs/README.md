@@ -17,6 +17,7 @@
 | [09-hackday-playbook.md](09-hackday-playbook.md) | 當天時間表、投影方式、2 分鐘 Demo 腳本、繳交檢查 | 比賽當天 |
 | [10-architecture.md](10-architecture.md) | 我們的系統架構與待決定事項（D1–D9） | 一直 |
 | [12-scoring-playbook.md](12-scoring-playbook.md) | **評分 → 實作對照**、上傳截止 11/8 09:00、初選輪桌／決選流程、發表腳本、最後檢查表 | 選題、寫計畫、收尾 |
+| [13-testing-guide.md](13-testing-guide.md) | **開發中怎麼測試**：電腦瀏覽器、手機瀏覽器（同 Wi-Fi／預覽頻道）、城市通 App 內 | 寫到一個段落要看畫面時 |
 | [templates/](templates/) | 可直接複製的樣板（見下） | 開工 |
 
 ## templates/
