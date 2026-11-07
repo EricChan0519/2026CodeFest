@@ -185,7 +185,7 @@ flowchart LR
 | ID | 內容 | 條件 |
 |---|---|---|
 | I1 | iOS 實機驗證，補 `Info.plist` 的用途說明 | 有 Mac 的隊友，其他都完成才做 |
-| I2 | `routing` 服務改成 IAM 保護，`api` 用 ID token 呼叫 | 階段 2 完成後 |
+| I2 | `routing` 服務改成 IAM 保護，`api` 用 ID token 呼叫 | 已提前完成（2026-11-07） |
 
 ## 完成的定義
 

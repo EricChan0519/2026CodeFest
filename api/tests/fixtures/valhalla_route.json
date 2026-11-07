@@ -1,0 +1,7 @@
+{"trip":{"status":0,"summary":{"length":0.25,"time":180.5},
+ "legs":[{"shape":"_izlhA~rlgdF_{geC~ywl@","maneuvers":[
+  {"type":1,"length":0.1,"begin_shape_index":0,"street_names":["中山北路"]},
+  {"type":15,"length":0.15,"begin_shape_index":1},
+  {"type":4,"length":0.0,"begin_shape_index":1}]}]},
+ "alternates":[{"trip":{"summary":{"length":0.3,"time":200.0},
+  "legs":[{"shape":"_izlhA~rlgdF","maneuvers":[{"type":4,"length":0.3,"begin_shape_index":0}]}]}}]}
