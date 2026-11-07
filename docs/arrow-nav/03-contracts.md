@@ -358,6 +358,147 @@ export interface SensorSource {
 | `notes` | `no_better_route`、`simulated_night` |
 | `sources` | 只列這次回應用到的資料；前端關於頁另列全部 |
 
+## 公車＋捷運規劃（手機端）
+
+**11/7 23:00 新增。** 輸入目的地後，在手機上同時規劃公車和捷運，提供三個分頁：**最快（混搭）**、**只搭公車**、**只搭捷運**。做法和現有的公車規劃（`directBus.ts`、`transferBus.ts`）一樣：用 TDX 開放資料的快照，在裝置上計算，不呼叫外部規劃服務，關掉網路也能規劃。
+
+- 目的地搜尋不變：沿用 `/api/places/search` 和 `web/src/lib/geocode.ts`（Nominatim）。Demo 只有我們自己用，Nominatim 由前端直接呼叫；README 要註明地址會送到 OSM Nominatim。
+- 每段步行都用箭頭導航，一路帶到目的地。搭車段沿用現有的「到站 → 上車了 → 坐車 → 下車了」。
+- 介面上的時間一律寫「約 N 分鐘（預估）」。這不是即時班表，不要寫成「幾點到」。
+
+### 捷運快照 `metro_index.json`
+
+由 `scripts/build_metro_index.py` 產生，放在 `api/data/metro_index.json`，副本放在 `web/public/lab/metro_index.json`，第一次規劃時才下載。TDX 的欄位名稱只會出現在這支腳本裡。
+
+```json
+{
+  "updatedAt": "2026-11-07T23:30:00+08:00",
+  "defaults": [],
+  "lines": [
+    { "lineId": "BL", "name": { "zh": "板南線", "en": "Bannan Line" }, "color": "#0070BD", "headwayS": 300 }
+  ],
+  "stations": [
+    {
+      "stationId": "BL12",
+      "name": { "zh": "台北車站", "en": "Taipei Main Station" },
+      "lat": 25.0463,
+      "lon": 121.5174,
+      "exits": [
+        { "exitId": "M3", "name": "M3", "lat": 25.0471, "lon": 121.5168, "elevator": true }
+      ]
+    }
+  ],
+  "patterns": [
+    {
+      "lineId": "BL",
+      "headsign": { "zh": "往南港展覽館", "en": "To Taipei Nangang Exhibition Center" },
+      "stops": ["BL01", "BL02", "BL03"],
+      "runS": [120, 110]
+    }
+  ],
+  "transfers": [
+    { "from": "BL12", "to": "R10", "walkS": 240 }
+  ]
+}
+```
+
+上面的數字和識別碼是格式範例。
+
+| 欄位 | 說明 |
+|---|---|
+| `defaults` | 哪些欄位因為 TDX 讀不到而用了預設值，例如 `["runS", "exits"]`。關於頁和 README 據此說明 |
+| `lines[].color` | 路線代表色，`#RRGGBB`，坐車卡用。TDX 沒有時由腳本補上官方色 |
+| `lines[].headwayS` | 平均班距（秒），用來估候車時間。TDX `Frequency` 讀不到時用 360 |
+| `stations[].stationId` | TDX `StationID`。同一個實體車站在不同路線有不同 id（台北車站是 `BL12` 和 `R10`），用 `transfers` 連起來 |
+| `stations[].exits` | 出口座標。走路段的目標是離起點或下一個目標最近的出口，不是車站中心點。沒有出口資料時是 `[]`，改用車站座標 |
+| `patterns` | 每條路線、每個方向一筆，兩個方向分開列。支線（小碧潭、新北投）各自一筆 |
+| `patterns[].runS` | 長度是 `stops.length - 1`；`runS[i]` 是 `stops[i]` 到 `stops[i+1]` 的行車加停站秒數。TDX `S2STravelTime` 讀不到時每站用 120 |
+| `transfers` | 站內換線，雙向各一筆；`walkS` 來自 TDX `LineTransfer`，讀不到時用 240 |
+
+TDX 端點是 `/api/basic/v2/Rail/Metro/{X}/TRTC`。`Station`、`StationOfLine`、`Line` 的欄位已從 NYCU TDX 套件原始碼確認；`S2STravelTime`、`LineTransfer`、`StationExit`、`Frequency` 的欄位**待用金鑰實測**，讀不到時用上表的預設值並寫進 `defaults`。
+
+### 型別變更（`web/src/nav/journey.ts`）
+
+```ts
+export type RideMode = 'bus' | 'metro'
+
+export interface Ride {
+  mode: RideMode                 // 新增；舊的公車規劃一律填 'bus'
+  board: Station
+  route: StationRoute
+  alight: Station
+  stops: Station[]
+  lineColor?: string             // 新增：捷運才有
+  stopTimesS?: number[]          // 新增：捷運才有，從上車站起算到 stops[i] 的累計秒數，stopTimesS[0] = 0
+  boardPoint?: LatLon            // 新增：走路段的目標（捷運是出口座標）；沒有時用 board 的座標
+  boardExit?: string             // 新增：捷運進站出口名稱，例如 "M3"
+  alightPoint?: LatLon           // 新增：下車後步行的起點（捷運是出口座標）
+  alightExit?: string            // 新增：捷運出站出口名稱
+}
+```
+
+- 捷運站轉成現有的 `Station` 形狀：`stationUid` 寫成 `metro:BL12`，`bearing` 是 `null`，`routes` 只放這一段用到的那一筆。那一筆的 `routeName` 是路線名稱，`headsign` 是 `patterns[].headsign`，`direction` 是 `255`，`stopUid` 是 `metro:BL12`。這樣到站卡、坐車卡不用分兩套。
+- `stopTimesS` 的長度和 `stops` 相同。
+
+### 規劃器（`web/src/lib/transitPlan.ts`）
+
+```ts
+export type PlanTab = 'mixed' | 'bus' | 'metro'
+
+export interface TransitPlan {
+  rides: Ride[]                  // [] 表示走路就到
+  durationS: number              // 預估總時間，用來排序
+  walkS: number
+  waitS: number
+  rideS: number
+  walkM: number                  // 全程步行公尺數（估算值，只用來顯示和排序）
+}
+
+export function planTransit(
+  bus: { stations: Station[]; patterns: RoutePattern[] },
+  metro: MetroIndex | null,      // null：捷運快照沒載入，metro 分頁是 []，mixed 只有公車
+  from: LatLon,
+  to: LatLon,
+  opts: { audience: Audience },
+): Record<PlanTab, TransitPlan[]>
+```
+
+| 規則 | 值 |
+|---|---|
+| 每個分頁最多幾筆 | 3，依 `durationS` 由小到大 |
+| 最多搭幾段車 | 3（捷運站內換線也算一段） |
+| 起點、終點最多走多遠 | 直線 800 公尺 |
+| 步行速度 | 長者 0.9 m/s；兒童、外籍人士 1.2 m/s。步行距離用直線 × 1.3 估算 |
+| 公車 | 每坐一站 60 秒；候車 480 秒 |
+| 捷運 | 行車用 `runS`；候車用 `headwayS / 2`；站內換線用 `transfers[].walkS` 再加下一班的候車 |
+| 公車 ↔ 捷運轉乘 | 公車站位離捷運出口（沒有出口時用車站座標）300 公尺內 |
+| 走路就到 | 距離不到 400 公尺，或直接走過去比最快的搭車方案還快時，`mixed` 第一筆放 `rides: []` |
+
+- `mixed` 是全部方案（含只搭公車、只搭捷運）裡最快的 3 筆；`bus`、`metro` 只含單一運具。
+- 某個分頁是 `[]` 時，畫面上顯示「沒有只搭捷運的路線」，那個分頁不能點。
+- 規劃器是純函式，不碰 DOM、不呼叫 API，用 Vitest 測試。
+
+### 行程狀態機的改變
+
+| 情境 | 行為 |
+|---|---|
+| 捷運站內換線 | `gotOff` 後，如果下一段的上車站和這一段的下車站有 `transfers` 關係，跳過走路段，直接進 `at_stop`。到站卡顯示「在台北車站換 淡水信義線 往象山」 |
+| 坐捷運 | 地下常常沒有 GPS，用 `stopTimesS` 和按下「上車了」之後經過的秒數推算到第幾站。剩一站時提醒「下一站下車」，並震動 `turn` |
+| 坐公車 | 不變，沿用 `rideStatus()` 用定位判斷 |
+| 下車 | 不論公車或捷運，都要使用者按「下車了」確認。到了預估的下車時間就提醒「請下車」，但不自動切換 |
+| 走去搭捷運 | 目標是 `boardPoint`（出口）；畫面提示「從 M3 出口進站」 |
+| 下捷運後走路 | 從 `alightPoint`（出口）開始導航；畫面提示「從 M3 出口出站」 |
+
+### 分工與時間
+
+| 誰 | 做什麼 | 完成時間 |
+|---|---|---|
+| API | 手寫小快照 `web/src/lib/__fixtures__/metro_index.mini.json`（板南線、淡水信義線在台北車站附近幾站，含一筆換線），前端先用 | 11/7 23:30 |
+| API | `scripts/build_metro_index.py`＋測試，產生正式快照 | 11/8 00:30 |
+| NAV | `transitPlan.ts`、`journey.ts` 的換線與捷運坐車，含測試 | 11/8 02:00 |
+| UI | 三個分頁、坐車卡的路線顏色和「往○○」、出入口提示、8 種語言的文字 | 11/8 02:30 |
+| 全員 | 串起來，用模擬行走跑一次「公車轉捷運」 | 11/8 03:00 |
+
 ## 前端 mock
 
 API 負責人提供下列檔案，前端用 `VITE_API_MOCK=1` 切換。標「改版」的由 API-A 在 **18:30 前**補上或更新：
