@@ -351,6 +351,8 @@ async function moveArrow(s: StepName, i: number) {
   if (my !== seq) return
   armRow = i
   busy.value = false
+  // 手機鍵盤收合或清單捲動可能發生在動畫途中；結束後重新量目前的位置。
+  onResize()
 }
 
 /**
@@ -586,6 +588,7 @@ async function submitSearch() {
   await kb
   const first = rows.value.findIndex((r) => r.type === 'hit')
   if (first >= 0 && !busy.value) await moveArrow('search', first)
+  if (phase.value === 'search' && !busy.value) onResize()
 }
 
 /** 外語搜尋的「也可能是…」：用那個中文重新搜尋 */
@@ -1423,7 +1426,7 @@ onBeforeUnmount(() => {
             <p>{{ fill(S.remaining, { d: distanceWords(remainingM, lang) }) }}</p>
             <p class="eta-minutes">{{ fill(S.aboutMin, { min: minutes ?? 1 }) }}</p>
           </template>
-          <p v-else>—</p>
+          <template v-else><p>—</p><p class="eta-minutes" aria-hidden="true">&nbsp;</p></template>
         </div>
       </div>
 
@@ -2146,18 +2149,16 @@ onBeforeUnmount(() => {
     transform 0.2s ease;
 }
 .eta {
-  position: absolute;
-  top: calc(50% + var(--hero, 240px) / 2 + 28px);
+  flex: none;
+  margin-top: 28px;
   text-align: center;
   font-size: calc(26px * var(--fs));
+  line-height: 1.25;
   font-weight: 400;
   letter-spacing: 0.06em;
   font-variant-numeric: tabular-nums;
   opacity: 0;
   transition: opacity 0.45s ease;
-}
-.dbg-on .eta {
-  top: calc((100% - 300px) / 2 + var(--hero, 240px) / 2 + 28px);
 }
 .eta-minutes {
   margin-top: 8px;
