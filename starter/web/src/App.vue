@@ -3,9 +3,9 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { languages, locale, translate } from './translations'
 import AppIcon from './components/AppIcon.vue'
 import CompassArrow from './components/CompassArrow.vue'
-import { requestCompassPermission } from './composables/useHeading'
 import type { ApiError } from './lib/api'
-import { FALLBACK_ORIGIN, currentPosition, formatDistance, nearbyPlaces, planRoute, searchAddress, searchPlaces, type LatLon, type NavStep, type Place, type PlannedRoute } from './lib/arrow-api'
+import { startNavSession, type Cue, type NavSession, type NavView } from './lib/nav-session'
+import { FALLBACK_ORIGIN, currentPosition, formatDistance, nearbyPlaces, planRoute, searchAddress, searchPlaces, type LatLon, type Place, type PlannedRoute } from './lib/arrow-api'
 
 type Page = 'welcome' | 'home' | 'search' | 'route' | 'nav' | 'arrived' | 'settings' | 'about' | 'origin'
 type Preferences = { audience: string; language: string; voice: boolean; vibration: boolean }
@@ -22,8 +22,6 @@ const query = ref('')
 const searchOrigin = ref(false)
 const listPage = ref(0)
 const confirmExit = ref(false)
-const navStep = ref(0)
-let timer: ReturnType<typeof setInterval> | undefined
 
 /* ── 起點：先用手機定位；拒絕、逾時或不在臺北市時，改用圓山捷運站 ── */
 const origin = ref<LatLon & { name: string }>({ ...FALLBACK_ORIGIN })
@@ -118,8 +116,6 @@ function placeLine(place: Place) { return [placeDistance(place), placeSub(place)
 function placeDistance(place: Place) { return place.distanceM == null ? '' : formatValue(formatDistance(place.distanceM)) }
 const audienceIcons = ['user', 'smile', 'globe', 'more']
 const categoryIcons: Record<string, string> = { '公共設施': 'building', '交通站點': 'train', '地址': 'home', '公車站牌': 'bus', '店家': 'store' }
-const steps = computed<NavStep[]>(() => planned.value?.steps ?? [])
-const step = computed(() => steps.value[navStep.value] ?? { angle: 0, distance: '', instruction: '' })
 function t(text: string) { return translate(prefs.value.language, text) }
 function formatValue(text: string) { return text.replace('公尺', t('公尺')).replace('約', t('約')).replace('分鐘', t('分鐘')) }
 /** 目的地是地址（不是地名）時，抵達頁不再重複顯示副標；目前資料都是站牌 */
@@ -132,19 +128,70 @@ function startSearch(forOrigin = false) { searchOrigin.value = forOrigin; query.
 function choose(place: Place) { if (searchOrigin.value) { origin.value = { name: place.name, lat: place.lat, lon: place.lon }; searchOrigin.value = false; go('route') } else { selected.value = place; routePrevious.value = 'search'; go('route') } }
 function openSettings() { previous.value = page.value; go('settings') }
 function announce(message: string) { if (prefs.value.voice && 'speechSynthesis' in window) { window.speechSynthesis.cancel(); const lang = locale(prefs.value.language); const voice = window.speechSynthesis.getVoices().find(v => v.lang.toLowerCase().split('-')[0] === lang.toLowerCase().split('-')[0]); if (voice) { const utterance = new SpeechSynthesisUtterance(t(message)); utterance.lang = lang; utterance.voice = voice; utterance.rate = prefs.value.audience === '長者' ? 0.8 : 1; window.speechSynthesis.speak(utterance) } } if (prefs.value.vibration && 'vibrate' in navigator) navigator.vibrate(120) }
-/**
- * 進度條：依「剩餘抵達時間」計算。
- * 模擬：整段路程 = steps.length × 5 秒；正式版改成 已走時間 /（已走時間 + 剩餘距離 ÷ 步行速度）。
- */
-const navProgress = ref(0)
-let demoDuration = 15000
-let navStartedAt = 0
-let progressTimer: ReturnType<typeof setInterval> | undefined
-function tickProgress() { navProgress.value = Math.min(1, (Date.now() - navStartedAt) / demoDuration) }
-function stopTimer() { if (timer) clearInterval(timer); timer = undefined; if (progressTimer) clearInterval(progressTimer); progressTimer = undefined; if ('speechSynthesis' in window) window.speechSynthesis.cancel() }
-function startNav() { if (!steps.value.length) return; requestCompassPermission(); navStep.value = 0; demoDuration = steps.value.length * 5000; navProgress.value = 0; navStartedAt = Date.now(); progressTimer = setInterval(tickProgress, 250); go('nav'); announce(steps.value[0]!.instruction); timer = setInterval(() => { if (navStep.value < steps.value.length - 1) { navStep.value++; announce(step.value.instruction) } else { stopTimer(); go('arrived'); announce('到了！') } }, 5000) }
-function exitNav() { stopTimer(); confirmExit.value = false; go('home') }
-onUnmounted(stopTimer)
+/* ── 導航：隊伍的導航引擎（web/src/nav）＋感測器（web/src/sensors） ──
+ * 有手機定位時用真實 GPS＋羅盤；沒有定位（桌機、投影 Demo）時沿著真實路線模擬行走，畫面左上角標「模擬」。 */
+const navView = ref<NavView | null>(null)
+const simulating = ref(false)
+let session: NavSession | null = null
+let navGen = 0
+/** 進度條＝沿路線已走的比例 */
+const navProgress = computed(() => navView.value?.progress ?? 0)
+/** 下一個轉彎在這個距離內，就改說「前面路口向○轉」 */
+const TURN_SOON_M = 30
+const turnLabel: Record<string, string> = { left: '前面路口向左轉', right: '前面路口向右轉', slight_left: '稍微向左', slight_right: '稍微向右', uturn: '請向後轉', stairs: '前面有樓梯' }
+/** 畫面上一句話拆成兩行、不顯示逗號（中文「，」、英文等的「. 」）；語音仍念整句 */
+function lines(text: string) { return text.split(/，|\.\s+/).map(x => x.trim()).filter(Boolean) }
+function meters(m: number | null | undefined) { return m == null ? '' : formatDistance(m) }
+/** 大字距離＋一句話，依引擎狀態決定 */
+const navText = computed<{ distance: string; instruction: string }>(() => {
+  const v = navView.value
+  if (!v) return { distance: '', instruction: '正在找路' }
+  switch (v.state) {
+    case 'locating': return { distance: '', instruction: '正在找你的位置' }
+    case 'routing': return { distance: '', instruction: '正在找路' }
+    case 'weak_signal': return { distance: meters(v.distanceM), instruction: '定位不太準，請到空曠一點的地方' }
+    case 'rerouting': return { distance: '', instruction: '走偏了，正在重新找路' }
+    case 'back_to_route': return { distance: meters(v.distanceM), instruction: '請回到剛才的路' }
+    case 'failed': return { distance: '', instruction: v.failReason === 'route_failed' ? '找不到可以走的路線' : '無法取得位置' }
+    case 'arrived': return { distance: '', instruction: '到了！' }
+  }
+  if (v.headingLost) return { distance: meters(v.distanceM), instruction: '抓不到方向，請拿著手機畫 8 字' }
+  if (v.direction === 'turn_around') return { distance: meters(v.distanceM), instruction: '請向後轉' }
+  const turn = v.nextTurn
+  if (turn) return { distance: meters(turn.distanceM), instruction: turn.distanceM <= TURN_SOON_M ? turnLabel[turn.kind] ?? '往這個方向走' : '往這個方向走' }
+  return { distance: meters(v.distanceM), instruction: (v.distanceM ?? 0) < 50 ? '快到了，繼續往前走' : '往這個方向走' }
+})
+/** 引擎的提示（Cue）→ 語音／震動；抵達那句由抵達頁自己念 */
+function speakCue(c: Cue) {
+  const text = c.key === 'start' ? '往這個方向走' : c.key === 'turn_ahead' ? (c.turn && turnLabel[c.turn]) || '往這個方向走' : c.key === 'turn_around' ? '請向後轉' : c.key === 'off_route' ? '走偏了，正在重新找路' : c.key === 'weak_signal' ? '定位不太準，請到空曠一點的地方' : ''
+  if (c.speak && text) announce(text)
+  else if (c.haptic && prefs.value.vibration && 'vibrate' in navigator) navigator.vibrate(c.haptic === 'turn' ? 150 : [100, 60, 100])
+}
+function stopNav() { navGen++; session?.stop(); session = null; if ('speechSynthesis' in window) window.speechSynthesis.cancel() }
+async function startNav() {
+  const route = planned.value?.route
+  const dest = selected.value
+  if (!route || !dest) return
+  stopNav()
+  const gen = navGen
+  navView.value = null
+  simulating.value = origin.value.name !== '目前位置'
+  go('nav')
+  const s = await startNavSession({
+    route,
+    simulate: simulating.value,
+    replan: async from => (await planRoute({ lat: from[0], lon: from[1] }, dest, prefs.value.audience)).route,
+    onView: v => {
+      if (gen !== navGen) return
+      navView.value = v
+      if (v.state === 'arrived') { stopNav(); go('arrived'); announce('到了！') }
+    },
+    onCue: c => { if (gen === navGen) speakCue(c) },
+  })
+  if (gen !== navGen) s.stop(); else session = s
+}
+function exitNav() { stopNav(); confirmExit.value = false; go('home') }
+onUnmounted(stopNav)
 
 /**
  * 長者模式：字級倍率 --fs 介於 1～2，自動取「這一頁不用捲動」的最大值（二分搜尋）。
@@ -170,7 +217,7 @@ async function fitText() {
   }
   el.style.setProperty('--fs', String(lo))
 }
-watch(() => [page.value, welcomeStep.value, navStep.value, listPage.value, results.value.length, listState.value, nearbyState.value, routeState.value, query.value, prefs.value.audience, prefs.value.language, origin.value.name, selected.value?.id], fitText, { flush: 'post' })
+watch(() => [page.value, welcomeStep.value, navText.value.instruction, listPage.value, results.value.length, listState.value, nearbyState.value, routeState.value, query.value, prefs.value.audience, prefs.value.language, origin.value.name, selected.value?.id], fitText, { flush: 'post' })
 // 進到首頁或搜尋頁時才定位、抓附近站牌（歡迎頁先不跳定位權限）
 watch(page, value => { if ((value === 'home' || value === 'search') && nearbyState.value === 'idle') loadNearby() }, { immediate: true })
 onMounted(() => {
@@ -295,6 +342,7 @@ onUnmounted(() => window.removeEventListener('resize', fitText))
 
     <section v-else-if="page === 'nav'" class="nav-screen">
       <div class="nav-top">
+        <span v-if="simulating" class="sim-badge">{{ t('模擬') }}</span>
         <div class="nav-tools">
           <button class="icon-button nav-round nav-end" :aria-label="t('結束導航')" @click="confirmExit = true"><AppIcon name="x" /></button>
           <button class="icon-button nav-round" :class="{ on: prefs.voice }" :aria-label="t('語音提示')" :aria-pressed="prefs.voice" @click="prefs.voice = !prefs.voice"><AppIcon :name="prefs.voice ? 'volume' : 'volume-off'" /></button>
@@ -303,8 +351,8 @@ onUnmounted(() => window.removeEventListener('resize', fitText))
         <!-- 進度 = 已走時間 / 預估總時間，跟著剩餘抵達時間連續變化 -->
         <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(navProgress * 100)"><span :style="{ width: `${navProgress * 100}%` }"></span></div>
       </div>
-      <div class="big-arrow"><CompassArrow :angle="step.angle" :step="navStep" /></div>
-      <div class="nav-instruction" aria-live="polite"><strong>{{ formatValue(step.distance) }}</strong><p>{{ t(step.instruction) }}</p></div>
+      <div class="big-arrow"><CompassArrow :rotation="navView?.arrowDeg != null ? navView.cssRotation : null" :hollow="navView?.hollowArrow ?? false" /></div>
+      <div class="nav-instruction" aria-live="polite"><strong v-if="navText.distance">{{ formatValue(navText.distance) }}</strong><p><span v-for="(line, i) in lines(t(navText.instruction))" :key="i" class="line">{{ line }}</span></p></div>
       <button class="secondary" @click="confirmExit = true"><AppIcon name="x" :size="22" />{{ t('結束導航') }}</button>
     </section>
 

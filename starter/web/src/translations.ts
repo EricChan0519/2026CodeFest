@@ -81,6 +81,15 @@ const rows: Record<string, string[]> = {
   '請向後轉': ['Please turn around','กรุณากลับหลัง','Hãy quay lại','Silakan berbalik','សូមបង្វិលក្រោយ','後ろを向いてください','뒤로 도세요'],
   '前面有樓梯': ['Stairs ahead','ข้างหน้ามีบันได','Phía trước có cầu thang','Ada tangga di depan','មានជណ្ដើរនៅខាងមុខ','この先に階段があります','앞에 계단이 있어요'],
   '用地址搜尋': ['Search as an address','ค้นหาเป็นที่อยู่','Tìm theo địa chỉ','Cari sebagai alamat','ស្វែងរកជាអាសយដ្ឋាន','住所で検索','주소로 검색'],
+  '正在找你的位置': ['Finding your location','กำลังหาตำแหน่งของคุณ','Đang tìm vị trí của bạn','Mencari lokasi Anda','កំពុងរកទីតាំងរបស់អ្នក','現在地を探しています','위치를 찾는 중'],
+  '正在找路': ['Finding the way','กำลังหาเส้นทาง','Đang tìm đường','Mencari jalan','កំពុងរកផ្លូវ','道を探しています','길을 찾는 중'],
+  '定位不太準，請到空曠一點的地方': ['Location is weak. Move to an open area','สัญญาณตำแหน่งอ่อน ไปที่โล่งกว่านี้','Định vị yếu. Hãy ra chỗ thoáng hơn','Lokasi lemah. Pindah ke area terbuka','ទីតាំងខ្សោយ។ សូមទៅកន្លែងទំនេរ','位置情報が弱いです。開けた場所へ','위치가 약해요. 트인 곳으로 가세요'],
+  '走偏了，正在重新找路': ['Off route. Finding a new way','ออกนอกเส้นทาง กำลังหาทางใหม่','Lệch đường. Đang tìm đường mới','Keluar rute. Mencari jalan baru','ចេញផ្លូវ។ កំពុងរកផ្លូវថ្មី','ルートを外れました。探し直しています','경로를 벗어났어요. 다시 찾는 중'],
+  '請回到剛才的路': ['Go back to the route','กลับไปที่เส้นทางเดิม','Quay lại đường cũ','Kembali ke rute','សូមត្រឡប់ទៅផ្លូវដើម','元の道に戻ってください','원래 길로 돌아가세요'],
+  '前面路口向右轉': ['Turn right at the next intersection','เลี้ยวขวาที่ทางแยกข้างหน้า','Rẽ phải ở ngã tư tới','Belok kanan di persimpangan berikutnya','បត់ស្ដាំនៅផ្លូវបំបែកខាងមុខ','次の交差点を右へ','다음 교차로에서 오른쪽'],
+  '抓不到方向，請拿著手機畫 8 字': ['No direction. Move your phone in a figure 8','ไม่พบทิศทาง หมุนโทรศัพท์เป็นเลข 8','Không xác định hướng. Xoay điện thoại hình số 8','Arah tidak terdeteksi. Gerakkan ponsel membentuk angka 8','រកទិសមិនឃើញ។ សូមគូរលេខ 8 ជាមួយទូរស័ព្ទ','方向が取れません。スマホで8の字を描いてください','방향을 못 찾아요. 휴대폰으로 8자를 그려 주세요'],
+  '無法取得位置': ['Cannot get your location','ไม่สามารถหาตำแหน่งได้','Không lấy được vị trí','Tidak bisa mendapat lokasi','មិនអាចយកទីតាំងបាន','位置情報を取得できません','위치를 가져올 수 없어요'],
+  '模擬': ['Simulated','จำลอง','Mô phỏng','Simulasi','ការក្លែងធ្វើ','シミュレーション','시뮬레이션'],
 }
 export function translate(language: string, text: string): string { const index = languages.indexOf(language as typeof languages[number]); return index > 0 ? rows[text]?.[index - 1] || text : text }
 export function locale(language: string): string { return ['zh-TW','en','th','vi','id','km','ja','ko'][Math.max(0, languages.indexOf(language as typeof languages[number]))]! }

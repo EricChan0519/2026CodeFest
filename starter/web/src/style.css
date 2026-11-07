@@ -356,3 +356,10 @@ h1 + .option-list, h1 + .search-entry, h1 + .search-field, h1 + .route-card, h1 
   border: 1px dashed var(--accent-line); border-radius: var(--radius); background: var(--accent-weak);
   color: var(--accent); font-size: calc(20px * var(--fs)); font-weight: 700;
 }
+
+/* 模擬導航標記（沒有定位時沿路線模擬行走；產品規格 01）。固定字級，不跟長者字級放大，避免壓到目的地名稱 */
+.sim-badge {
+  position: absolute; top: 14px; left: 0; padding: 4px 12px; border-radius: 999px;
+  background: var(--accent-weak); color: var(--accent); font-size: 18px; line-height: 1.4; font-weight: 700;
+}
+.nav-instruction p .line { display: block; }

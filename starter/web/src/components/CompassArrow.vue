@@ -1,66 +1,47 @@
 <script setup lang="ts">
 /**
- * 方向粗箭頭。
- * angle：要走的方向，相對於「開始這一步時面向的方向」（0 = 正前方，-90 = 左轉，90 = 右轉）。
- * 箭頭 = 要走的方向 − 使用者已經轉了多少，可 360° 轉動。
- * 例：下一步左轉 → 箭頭先指左；人往左轉 90° 後，箭頭回正指上方。
- * 沒有方位感測器（桌機、投影 Demo）時，模擬使用者跟著轉身，一樣看得到回正的過程。
+ * 方向粗箭頭，角度由導航引擎（web/src/nav）算好：
+ * rotation＝NavView.cssRotation（已加磁偏角、已平滑、走最短方向，可超過 360）；null 時不顯示箭頭。
+ * 下一步左轉 → 箭頭先指左；人往左轉後，羅盤（或模擬的行進方向）跟著變，箭頭回正指上方。
+ * 每一幀往目標角度趨近（easeRotation），不用 CSS transition（感測頻率低時會一格一格跳、而且更慢）。
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { useHeading } from '@/composables/useHeading'
+import { onBeforeUnmount, ref, watch } from 'vue'
+import { easeRotation } from '@team/nav/arrow'
+import { NAV_CONFIG } from '@team/nav/config'
 
-const props = defineProps<{ angle: number; step: number }>()
-const heading = useHeading()
-const baseline = ref<number | null>(null)
-const simulated = ref(0)
-let ticker: ReturnType<typeof setInterval> | undefined
-let delay: ReturnType<typeof setTimeout> | undefined
-function stopSim() { clearInterval(ticker); clearTimeout(delay); ticker = undefined }
+const props = defineProps<{ rotation: number | null; hollow?: boolean }>()
+const shown = ref(props.rotation ?? 0)
+let raf = 0
+let last = 0
+const reduceMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 
-/** 模擬轉身：停 1.2 秒讓人看清楚箭頭方向，再用 1.6 秒轉過去（以時間計算，不靠逐格動畫） */
-function simulateTurn(target: number) {
-  stopSim()
-  simulated.value = 0
-  if (heading.value !== null || target === 0) return
-  delay = setTimeout(() => {
-    const start = Date.now()
-    ticker = setInterval(() => {
-      const p = Math.min(1, (Date.now() - start) / 1600)
-      simulated.value = target * (1 - (1 - p) ** 3)
-      if (p >= 1 || heading.value !== null) stopSim()
-    }, 30)
-  }, 1200)
+function frame(now: number) {
+  const target = props.rotation
+  if (target === null) { raf = 0; return }
+  shown.value = reduceMotion ? target : easeRotation(shown.value, target, last ? now - last : 16, NAV_CONFIG.arrowTauMs)
+  last = now
+  raf = shown.value === target ? 0 : requestAnimationFrame(frame)
 }
-
-// 每一步開始時（用步驟編號，不是角度，連續兩步同角度也會重設），以當下朝向為基準
-watch(() => props.step, () => { baseline.value = heading.value; simulateTurn(props.angle) }, { immediate: true })
-watch(heading, h => { if (baseline.value === null && h !== null) baseline.value = h })
-onBeforeUnmount(stopSim)
-
-/** 已經轉了多少度：有感測器用實際朝向，沒有就用模擬值 */
-const turned = computed(() => (heading.value === null || baseline.value === null ? simulated.value : heading.value - baseline.value))
-
-/** 累加角度、每次走最短路徑，避免 350° → 10° 時繞一大圈 */
-function useShortestRotation(target: () => number) {
-  const shown = ref(target())
-  watch(target, t => { shown.value += ((((t - shown.value) % 360) + 540) % 360) - 180 })
-  return shown
-}
-const needle = useShortestRotation(() => props.angle - turned.value)
+watch(() => props.rotation, (r, prev) => {
+  if (r === null) return
+  if (prev === null || prev === undefined) shown.value = r // 剛出現：直接指對，不要從 0° 轉過來
+  if (!raf) { last = 0; raf = requestAnimationFrame(frame) }
+}, { immediate: true })
+onBeforeUnmount(() => cancelAnimationFrame(raf))
 </script>
 
 <template>
-  <svg class="compass" viewBox="0 0 200 200" role="img" :aria-label="`${Math.round(((props.angle % 360) + 360) % 360)}°`">
-    <g class="compass-rot" :style="{ transform: `rotate(${needle}deg)` }">
-      <!-- 粗箭頭：箭頭大三角＋寬箭身，圓角用同色描邊做出來 -->
-      <path class="arrow" d="M100 16 L178 96 L132 96 L132 184 L68 184 L68 96 L22 96 Z" />
+  <svg class="compass" viewBox="0 0 200 200" role="img" :aria-hidden="props.rotation === null">
+    <g v-if="props.rotation !== null" class="compass-rot" :style="{ transform: `rotate(${shown}deg)` }">
+      <!-- 粗箭頭：箭頭大三角＋寬箭身，圓角用同色描邊做出來；訊號弱／重新找路時是空心 -->
+      <path class="arrow" :class="{ hollow: props.hollow }" d="M100 16 L178 96 L132 96 L132 184 L68 184 L68 96 L22 96 Z" />
     </g>
   </svg>
 </template>
 
 <style scoped>
 .compass { width: min(78vw, 340px, 40dvh); height: auto; aspect-ratio: 1; display: block; }
-.compass-rot { transform-origin: 100px 100px; transition: transform .4s cubic-bezier(.2, .8, .2, 1); }
+.compass-rot { transform-origin: 100px 100px; }
 .arrow { fill: var(--accent); stroke: var(--accent); stroke-width: 14; stroke-linejoin: round; }
-@media (prefers-reduced-motion: reduce) { .compass-rot { transition: none; } }
+.arrow.hollow { fill: none; stroke-width: 12; }
 </style>

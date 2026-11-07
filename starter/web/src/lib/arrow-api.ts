@@ -40,10 +40,11 @@ export type Place = LatLon & {
 
 export type ManeuverKind = 'depart' | 'straight' | 'slight_left' | 'slight_right' | 'left' | 'right' | 'uturn' | 'stairs' | 'arrive'
 type Maneuver = { kind: ManeuverKind; atIndex: number; distanceToNextM: number; street: string | null }
-type Route = { id: string; recommended: boolean; distanceM: number; durationS: number; maneuvers: Maneuver[] }
+type Route = { id: string; recommended: boolean; distanceM: number; durationS: number; geometry: [number, number][]; maneuvers: Maneuver[] }
 
 export type NavStep = { angle: number; distance: string; instruction: string }
-export type PlannedRoute = { distanceM: number; durationS: number; steps: NavStep[] }
+/** route：給導航引擎（web/src/nav）用的路線形狀與轉彎 */
+export type PlannedRoute = { distanceM: number; durationS: number; steps: NavStep[]; route: { id: string; geometry: [number, number][]; maneuvers: Maneuver[] } }
 
 /** 定位失敗或不在服務範圍時的預設起點（圓山捷運站） */
 export const FALLBACK_ORIGIN: LatLon & { name: string } = { name: '圓山捷運站', lat: 25.07136, lon: 121.52 }
@@ -117,7 +118,7 @@ export async function planRoute(from: LatLon, to: Place, audience: string): Prom
   })
   const route = res.routes.find(r => r.recommended) ?? res.routes[0]
   if (!route) throw new Error('no route')
-  return { distanceM: route.distanceM, durationS: route.durationS, steps: toSteps(route.maneuvers) }
+  return { distanceM: route.distanceM, durationS: route.durationS, steps: toSteps(route.maneuvers), route: { id: route.id, geometry: route.geometry, maneuvers: route.maneuvers } }
 }
 
 /** 轉彎時箭頭的角度（相對於轉彎前面向的方向） */
