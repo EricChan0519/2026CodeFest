@@ -18,10 +18,17 @@ import { DEFAULT_DESTINATION, nearestPoint } from '@/nav/destination'
 import { ORIGIN_TAIPEI, twoLegRoute } from '@/nav/synth'
 import { fetchWalkRoute } from '@/lib/walkRoute'
 import type { WalkRoute } from '@/lib/walkRoute'
+import { bearingDeg, distanceM } from '@/nav/geo'
+import { createTraceRecorder } from '@/nav/trace'
+import type { TraceRecorder } from '@/nav/trace'
+import type { NavRoute } from '@/nav/machine'
+import { ManualGpsSource } from '@/sensors/manual'
+import type { PositionFix } from '@/sensors/source'
 import { ReplaySensorSource } from '@/sensors/replay'
 import type { SensorSource } from '@/sensors/source'
 import { WakeLockHolder } from '@/sensors/wakelock'
 import { WebSensorSource } from '@/sensors/web'
+import NavDebugMap from './NavDebugMap.vue'
 
 type Mode = 'route' | 'replay' | 'real'
 const mode = ref<Mode>('route')
@@ -37,11 +44,25 @@ const useManualHeading = ref(false)
 const permissionNote = ref('')
 const wakeNote = ref('')
 const showDebug = ref(false)
+/** 模擬 GPS：位置由方向鍵／點地圖決定，朝向仍用真實羅盤（或手動滑桿） */
+const simGps = ref(false)
+const stepM = ref(5)
+const simNote = ref('')
+const destinationPoint = ref<LatLon | null>(null)
+/** 由連續定位算出的行進方向（真北），用來和羅盤比對 */
+const gpsCourse = ref<number | null>(null)
+const traceCount = ref(0)
+
+/** 模擬 GPS 拿不到真實位置時的起點：目的地站牌南方約 400 公尺 */
+const SIM_FALLBACK_START: LatLon = [25.1136, 121.5347]
 
 let machine: NavMachine | null = null
 let source: SensorSource | null = null
 let replay: ReplaySensorSource | null = null
 let tickTimer: number | null = null
+let manual: ManualGpsSource | null = null
+let recorder: TraceRecorder | null = null
+let courseFrom: LatLon | null = null
 const wake = new WakeLockHolder()
 const announcer = createAnnouncer()
 
@@ -170,19 +191,31 @@ async function begin() {
   routeInfo.value = null
   routeError.value = ''
 
+  destinationPoint.value = null
+  gpsCourse.value = null
+  courseFrom = null
+  manual = null
+  const useSim = simGps.value && mode.value !== 'replay'
+  const rec = createTraceRecorder(useSim ? `${mode.value}+sim-gps` : mode.value)
+  recorder = rec
+  traceCount.value = 0
+
   const heading = new WebSensorSource({ position: false })
-  if (mode.value === 'route') {
-    replay = null
-    source = new WebSensorSource()
-    machine = createNavMachine({ route: null })
-  } else if (mode.value === 'replay') {
+  if (mode.value === 'replay') {
     const route = twoLegRoute(ORIGIN_TAIPEI, 0, { leg1M: 80, leg2M: 60, turn: 'right' })
+    destinationPoint.value = route.geometry.at(-1)!
     replay = new ReplaySensorSource({ geometry: route.geometry, speedMps: 1.4, headingSource: heading })
     source = replay
     machine = createNavMachine({ route })
+    rec.route(route)
   } else {
     replay = null
-    source = new WebSensorSource()
+    if (useSim) {
+      manual = new ManualGpsSource({ start: SIM_FALLBACK_START, headingSource: heading })
+      source = manual
+    } else {
+      source = new WebSensorSource()
+    }
     machine = createNavMachine({ route: null })
   }
 
@@ -191,9 +224,20 @@ async function begin() {
   permissionNote.value = perm === 'denied' ? '羅盤權限被拒絕，改用滑桿' : ''
   if (perm === 'denied') useManualHeading.value = true
 
+  // 模擬 GPS 的起點：先試真實位置，拿不到就用預設點
+  if (manual) {
+    const real = await currentPositionOnce()
+    manual.moveTo(real ?? SIM_FALLBACK_START)
+    simNote.value = real ? '模擬 GPS：從你現在的位置出發' : '模擬 GPS：拿不到位置，從站牌南方約 400 公尺出發'
+  } else {
+    simNote.value = ''
+  }
+
   const m = machine
   m.subscribe((v) => {
     view.value = v
+    rec.view(v)
+    traceCount.value = rec.count
     announcer.update(v).forEach(speakOrBuzz)
   })
   m.onEffect((e) => {
@@ -209,26 +253,36 @@ async function begin() {
       if (m.getView().state === 'routing') {
         // 第一次取得路線（真實模式）
         const route = twoLegRoute(e.from, m.getView().headingDeg ?? 0, { leg1M: 80, leg2M: 60, turn: 'right' })
-        return m.routeResult(route)
+        destinationPoint.value = route.geometry.at(-1)!
+        return giveRoute(m, route)
       }
       log('合成路線無法重算，帶你回原路線')
-      m.routeResult(null)
+      giveRoute(m, null)
     }, 700)
   })
 
   m.start()
   source.start({
     onHeading: (d) => {
-      if (!useManualHeading.value) m.onHeading(d)
+      if (useManualHeading.value) return
+      rec.heading(d)
+      m.onHeading(d)
     },
-    onPosition: (p) => m.onPosition(p),
+    onPosition: (p) => {
+      rec.position(p)
+      updateCourse(p)
+      m.onPosition(p)
+    },
     onError: (c) => {
       log(`感測錯誤 ${c}`)
       m.onError(c)
     },
   })
   tickTimer = window.setInterval(() => {
-    if (useManualHeading.value) m.onHeading(manualHeading.value) // 手動朝向要持續餵，不然會被判斷成沒有羅盤
+    if (useManualHeading.value) {
+      rec.heading(manualHeading.value)
+      m.onHeading(manualHeading.value) // 手動朝向要持續餵，不然會被判斷成沒有羅盤
+    }
     m.tick()
   }, 1000)
   const ok = await wake.on()
@@ -239,10 +293,11 @@ async function begin() {
 /** 向 Valhalla 要從目前位置到目的地站牌的步行路線（避開階梯、小巷）；重新規劃也走這裡 */
 async function fetchRealRoute(m: NavMachine, from: LatLon, candidate: string | null) {
   const to = nearestPoint(DEFAULT_DESTINATION, from)
+  destinationPoint.value = to
   if (candidate !== null && rerouteFails.value) {
     // 模擬重算失敗：不給新路線，箭頭指最近的路線點
     log('（模擬）重算失敗，帶你回原路線')
-    m.routeResult(null)
+    giveRoute(m, null)
     return
   }
   try {
@@ -251,12 +306,108 @@ async function fetchRealRoute(m: NavMachine, from: LatLon, candidate: string | n
     routeInfo.value = route
     routeError.value = ''
     log(`路線 ${route.distanceM} 公尺，約 ${Math.round(route.durationS / 60)} 分鐘，階梯 ${route.stairsCount} 段`)
-    m.routeResult(route)
+    giveRoute(m, route)
   } catch (err) {
     if (machine !== m) return
     routeError.value = `取得路線失敗：${(err as Error).message}`
     log(routeError.value)
-    m.routeResult(null)
+    giveRoute(m, null)
+  }
+}
+
+/** 回覆路線，順便記進軌跡 */
+function giveRoute(m: NavMachine, r: NavRoute | null) {
+  recorder?.route(r)
+  m.routeResult(r)
+}
+
+/** 取一次真實位置（模擬 GPS 的起點），5 秒內拿不到就放棄 */
+function currentPositionOnce(): Promise<LatLon | null> {
+  if (!('geolocation' in navigator)) return Promise.resolve(null)
+  return new Promise((resolve) =>
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve([p.coords.latitude, p.coords.longitude]),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 10000 },
+    ),
+  )
+}
+
+/** 連續定位移動 5 公尺以上，就更新行進方向。直走時它應該和羅盤朝向差不多 */
+function updateCourse(p: PositionFix) {
+  const here: LatLon = [p.lat, p.lon]
+  if (!courseFrom) {
+    courseFrom = here
+    return
+  }
+  if (distanceM(courseFrom, here) >= 5) {
+    gpsCourse.value = bearingDeg(courseFrom, here)
+    courseFrom = here
+  }
+}
+
+const courseDiff = computed(() => {
+  const h = view.value?.headingDeg
+  if (gpsCourse.value === null || h === null || h === undefined) return null
+  const d = Math.abs((((gpsCourse.value - h) % 360) + 360) % 360)
+  return Math.round(Math.min(d, 360 - d))
+})
+
+/** 模擬 GPS：以目前朝向為前方，移動 stepM 的倍數 */
+function simMove(forward: number, right: number) {
+  if (!manual) return
+  const h = view.value?.headingDeg ?? 0
+  manual.step(h, forward * stepM.value, right * stepM.value)
+}
+
+function simPick(p: LatLon) {
+  manual?.moveTo(p)
+}
+
+function onKey(e: KeyboardEvent) {
+  if (!running.value) return
+  const moves: Record<string, [number, number]> = {
+    ArrowUp: [1, 0],
+    ArrowDown: [-1, 0],
+    ArrowLeft: [0, -1],
+    ArrowRight: [0, 1],
+  }
+  const mv = moves[e.key]
+  if (mv && manual) {
+    e.preventDefault()
+    simMove(mv[0], mv[1])
+    return
+  }
+  // Q／E：手動朝向左右轉 15°（電腦上沒有羅盤時用）
+  if (e.key === 'q' || e.key === 'e') {
+    useManualHeading.value = true
+    manualHeading.value = (manualHeading.value + (e.key === 'q' ? -15 : 15) + 360) % 360
+    onManualHeading()
+  }
+}
+onMounted(() => window.addEventListener('keydown', onKey))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
+
+function traceJson(): string {
+  return JSON.stringify(recorder?.toJSON() ?? null)
+}
+
+function downloadTrace() {
+  if (!recorder) return
+  const blob = new Blob([traceJson()], { type: 'application/json' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `nav-trace-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+}
+
+async function copyTrace() {
+  try {
+    await navigator.clipboard.writeText(traceJson())
+    log('軌跡已複製')
+  } catch {
+    log('無法複製，請改用下載')
   }
 }
 
@@ -266,6 +417,7 @@ function stopAll() {
   source?.stop()
   source = null
   replay = null
+  manual = null
   machine = null
   void wake.off()
   running.value = false
@@ -347,6 +499,10 @@ onBeforeUnmount(() => window.clearInterval(speedTimer))
           <span>真實定位＋合成路線（路線沿你面向的方向 80 公尺後右轉 60 公尺）</span>
         </label>
       </div>
+      <label v-if="mode !== 'replay'" class="flex items-center gap-2 rounded-lg bg-white/10 p-3">
+        <input v-model="simGps" type="checkbox" />
+        <span>模擬 GPS（用方向鍵或點地圖移動，不用出門；朝向仍用手機羅盤）</span>
+      </label>
       <button class="h-16 w-full rounded-xl bg-white text-lg font-bold text-[#30383D]" @click="begin">開始走</button>
       <p v-if="permissionNote" class="text-amber-200">{{ permissionNote }}</p>
       <router-link class="block text-center underline" to="/lab/sensors">← 感測實驗</router-link>
@@ -395,6 +551,45 @@ onBeforeUnmount(() => window.clearInterval(speedTimer))
         <div class="mt-2 min-h-16 text-3xl">{{ sentence }}</div>
       </div>
 
+      <!-- 模擬 GPS：方向鍵。前方 = 手機目前朝向；電腦可用鍵盤方向鍵，Q／E 轉向 -->
+      <section v-if="simGps && mode !== 'replay'" class="space-y-2 px-4 pb-4">
+        <div class="text-center text-sm opacity-80">{{ simNote }}</div>
+        <div class="mx-auto grid w-56 grid-cols-3 gap-2">
+          <span />
+          <button class="h-14 rounded-lg bg-white/25 text-2xl" aria-label="往前" @click="simMove(1, 0)">↑</button>
+          <span />
+          <button class="h-14 rounded-lg bg-white/25 text-2xl" aria-label="往左" @click="simMove(0, -1)">←</button>
+          <button class="h-14 rounded-lg bg-white/25 text-2xl" aria-label="往後" @click="simMove(-1, 0)">↓</button>
+          <button class="h-14 rounded-lg bg-white/25 text-2xl" aria-label="往右" @click="simMove(0, 1)">→</button>
+        </div>
+        <label class="flex items-center justify-center gap-2 text-sm">每步
+          <select v-model.number="stepM" class="rounded bg-white/20 px-2 py-1">
+            <option :value="2">2 m</option>
+            <option :value="5">5 m</option>
+            <option :value="10">10 m</option>
+            <option :value="20">20 m</option>
+          </select>
+          ・點地圖可以瞬移
+        </label>
+      </section>
+
+      <div v-if="showDebug || simGps" class="h-72 px-4 pb-4">
+        <NavDebugMap
+          class="overflow-hidden rounded-lg"
+          :geometry="view.geometry"
+          :here="view.here"
+          :accuracy-m="view.accuracyM"
+          :target="view.targetPoint"
+          :nearest="view.nearestPoint"
+          :heading-deg="view.headingDeg"
+          :destination="destinationPoint"
+          @pick="simPick"
+        />
+        <div class="mt-1 text-xs opacity-80">
+          藍線：路線・橘線：箭頭指的點・虛線：羅盤朝向・綠點：目的地
+        </div>
+      </div>
+
       <div class="flex justify-between px-6 pb-4">
         <button class="h-16 w-16 rounded-full bg-white text-2xl text-[#30383D]" aria-label="結束" @click="end">✕</button>
         <button
@@ -415,6 +610,14 @@ onBeforeUnmount(() => window.clearInterval(speedTimer))
           <div>箭頭 {{ view.arrowDeg?.toFixed(0) ?? '—' }}°</div>
           <div>進度 {{ Math.round(view.progress * 100) }}%</div>
           <div>下個轉彎 {{ view.nextTurn ? `${view.nextTurn.kind} ${view.nextTurn.distanceM.toFixed(0)}m` : '—' }}</div>
+          <div class="col-span-2">
+            GPS 行進方向 {{ gpsCourse === null ? '—（走 5 m 以上才有）' : `${gpsCourse.toFixed(0)}°` }}
+            <template v-if="courseDiff !== null">・和羅盤差 {{ courseDiff }}°{{ courseDiff > 45 ? '（羅盤可能不準）' : '' }}</template>
+          </div>
+          <div class="col-span-2 flex gap-2">
+            <button class="rounded bg-white/20 px-3 py-2" @click="downloadTrace">下載軌跡（{{ traceCount }} 筆）</button>
+            <button class="rounded bg-white/20 px-3 py-2" @click="copyTrace">複製軌跡</button>
+          </div>
           <div class="col-span-2">{{ wakeNote }}</div>
           <div v-if="routeInfo" class="col-span-2">
             路線 {{ routeInfo.distanceM }} m・階梯 {{ routeInfo.stairsCount }} 段・

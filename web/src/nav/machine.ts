@@ -52,6 +52,11 @@ export interface NavView {
   /** 平滑後的真北朝向，除錯用 */
   headingDeg: number | null
   routeId: string | null
+  /** 以下給除錯地圖用：目前位置、箭頭指的點、最近的路線點、路線形狀 */
+  here: LatLon | null
+  targetPoint: LatLon | null
+  nearestPoint: LatLon | null
+  geometry: LatLon[] | null
 }
 
 export interface NavMachineOptions {
@@ -195,6 +200,10 @@ export function createNavMachine(opts: NavMachineOptions = {}): NavMachine {
       progress: total > 0 && track ? Math.min(1, track.alongM / total) : 0,
       headingDeg: hv ? hv.deg : null,
       routeId: route?.id ?? null,
+      here: lastPos ? [lastPos.lat, lastPos.lon] : null,
+      targetPoint: hasArrowState ? (target ?? null) : null,
+      nearestPoint: track?.nearest ?? null,
+      geometry: route?.geometry ?? null,
     }
   }
 

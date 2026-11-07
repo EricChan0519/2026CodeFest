@@ -262,6 +262,20 @@ describe('machine: arrow follows the route, not the destination', () => {
   })
 })
 
+describe('machine: debug fields', () => {
+  it('exposes where the arrow points, the nearest route point and the route shape', () => {
+    const { m, pos } = setup(LEFT_THEN_RIGHT)
+    m.start()
+    m.onHeading(mag(0))
+    m.onPosition(pos(0, 10))
+    const v = m.getView()
+    expect(v.here).toEqual(pt(0, 10).map((x) => expect.closeTo(x, 9)))
+    expect(bearingDeg(v.here!, v.targetPoint!)).toBeCloseTo(0, 0)
+    expect(v.nearestPoint).not.toBeNull()
+    expect(v.geometry).toBe(LEFT_THEN_RIGHT.geometry)
+  })
+})
+
 describe('machine: arrival', () => {
   it('needs arriveHits consecutive fixes inside the radius', () => {
     const { m, pos } = setup()
