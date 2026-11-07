@@ -1,0 +1,44 @@
+{
+  "updatedAt": "2026-11-07T23:30:00+08:00",
+  "defaults": ["fixture", "runS", "headwayS", "transfers", "exits"],
+  "lines": [
+    { "lineId": "BL", "name": { "zh": "板南線", "en": "Bannan Line" }, "color": "#0070BD", "headwayS": 300 },
+    { "lineId": "R", "name": { "zh": "淡水信義線", "en": "Tamsui-Xinyi Line" }, "color": "#E3002C", "headwayS": 300 }
+  ],
+  "stations": [
+    { "stationId": "BL10", "name": { "zh": "龍山寺", "en": "Longshan Temple" }, "lat": 25.0353, "lon": 121.4999, "exits": [] },
+    { "stationId": "BL11", "name": { "zh": "西門", "en": "Ximen" }, "lat": 25.0421, "lon": 121.5081,
+      "exits": [{ "exitId": "6", "name": "6", "lat": 25.0424, "lon": 121.5070, "elevator": false }] },
+    { "stationId": "BL12", "name": { "zh": "台北車站", "en": "Taipei Main Station" }, "lat": 25.0463, "lon": 121.5174,
+      "exits": [
+        { "exitId": "M3", "name": "M3", "lat": 25.0469, "lon": 121.5158, "elevator": true },
+        { "exitId": "M7", "name": "M7", "lat": 25.0457, "lon": 121.5190, "elevator": false }
+      ] },
+    { "stationId": "BL13", "name": { "zh": "善導寺", "en": "Shandao Temple" }, "lat": 25.0447, "lon": 121.5233, "exits": [] },
+    { "stationId": "BL14", "name": { "zh": "忠孝新生", "en": "Zhongxiao Xinsheng" }, "lat": 25.0423, "lon": 121.5329, "exits": [] },
+    { "stationId": "R08", "name": { "zh": "中正紀念堂", "en": "Chiang Kai-Shek Memorial Hall" }, "lat": 25.0326, "lon": 121.5183, "exits": [] },
+    { "stationId": "R09", "name": { "zh": "台大醫院", "en": "NTU Hospital" }, "lat": 25.0417, "lon": 121.5163, "exits": [] },
+    { "stationId": "R10", "name": { "zh": "台北車站", "en": "Taipei Main Station" }, "lat": 25.0463, "lon": 121.5174,
+      "exits": [
+        { "exitId": "M3", "name": "M3", "lat": 25.0469, "lon": 121.5158, "elevator": true },
+        { "exitId": "M7", "name": "M7", "lat": 25.0457, "lon": 121.5190, "elevator": false }
+      ] },
+    { "stationId": "R11", "name": { "zh": "中山", "en": "Zhongshan" }, "lat": 25.0527, "lon": 121.5203,
+      "exits": [{ "exitId": "2", "name": "2", "lat": 25.0523, "lon": 121.5207, "elevator": true }] },
+    { "stationId": "R12", "name": { "zh": "雙連", "en": "Shuanglian" }, "lat": 25.0577, "lon": 121.5205, "exits": [] }
+  ],
+  "patterns": [
+    { "lineId": "BL", "headsign": { "zh": "往南港展覽館", "en": "To Taipei Nangang Exhibition Center" },
+      "stops": ["BL10", "BL11", "BL12", "BL13", "BL14"], "runS": [120, 120, 90, 120] },
+    { "lineId": "BL", "headsign": { "zh": "往頂埔", "en": "To Dingpu" },
+      "stops": ["BL14", "BL13", "BL12", "BL11", "BL10"], "runS": [120, 90, 120, 120] },
+    { "lineId": "R", "headsign": { "zh": "往淡水", "en": "To Tamsui" },
+      "stops": ["R08", "R09", "R10", "R11", "R12"], "runS": [100, 90, 110, 90] },
+    { "lineId": "R", "headsign": { "zh": "往象山", "en": "To Xiangshan" },
+      "stops": ["R12", "R11", "R10", "R09", "R08"], "runS": [90, 110, 90, 100] }
+  ],
+  "transfers": [
+    { "from": "BL12", "to": "R10", "walkS": 240 },
+    { "from": "R10", "to": "BL12", "walkS": 240 }
+  ]
+}

@@ -101,6 +101,9 @@ flowchart LR
 | 用途 | 來源 | 欄位 | 備註 |
 |---|---|---|---|
 | 站位 | TDX 公車 `StopOfRoute`、`Station`、`Route` | `StopUID`、`StopName`、`StopPosition`、`Bearing`、`StationID`、`StopBoarding` | 腳本產生快照，執行時不需要 TDX 金鑰 |
+| 公車首末班 | TDX 公車 `Schedule`（臺北市） | `Timetables`、`Frequencys`、`ServiceDay` | 同一支腳本；回程沒有班表時借去程的時間，**是估計值** |
+| 捷運 | TDX 捷運 `Station`、`StationOfRoute`、`StationOfLine`、`Line`、`S2STravelTime`、`LineTransfer`、`StationExit`、`Frequency`、`FirstLastTimetable`（臺北捷運 TRTC、新北捷運 NTMC 的環狀線） | 站名、座標、出口、站間行車時間、換線時間、班距、首末班 | `scripts/build_metro_index.py` → `metro_index.json`；行車、候車、換線時間都是**估計值**，不是即時班表 |
+| 目的地地址 | OpenStreetMap Nominatim | 地址、地標 → 座標 | 前端直接呼叫，**使用者輸入的目的地會送到 OSM Nominatim**；遵守其使用規範（每秒最多 1 次） |
 | 地點 | OpenStreetMap（Overpass，臺北範圍） | `name`、`name:en`、`amenity`、`shop`、`tourism`、`leisure`、`office`、`healthcare`、車站 | `scripts/build_places.py` → `api/data/places.json`；格式見 [03](03-contracts.md) |
 | 路網、階梯 | OpenStreetMap `taiwan-latest.osm.pbf`（328 MB） | `highway=steps` 約 6,271 段 | 裁切成臺北範圍再建圖 |
 | 有紅綠燈的路口 | OpenStreetMap | `crossing=traffic_signals` 約 7,549 個 | |

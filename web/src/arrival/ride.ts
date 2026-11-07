@@ -21,6 +21,8 @@ export function buildRide(trip: ArrivalTrip, lang: Lang, audience: Audience, sta
     routeSub: base.routeSub,
     direction: base.direction,
     getOff: base.getOff,
+    exitVia: trip.exit ? fill(s.exitVia, { exit: trip.exit }) : null,
+    lineColor: base.lineColor,
     stopsLeft: fill(s.stopsLeft, { n: String(status.remaining) }),
     cueText,
     speechLang: base.speechLang,

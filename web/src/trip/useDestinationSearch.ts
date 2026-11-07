@@ -8,7 +8,7 @@
  * 錯誤用代碼回傳，文字由畫面依語言決定。
  */
 import { ref, shallowRef } from 'vue'
-import type { ForeignLang, Lang, LatLon, Station } from '@/lib/contract'
+import type { Audience, ForeignLang, Lang, LatLon, Station } from '@/lib/contract'
 import { emptyLabels, isForeignQuery, localizeResults, poiNameForTranslation, translateForSearch } from '@/lib/foreignSearch'
 import type { QueryTranslation, ResultLabels } from '@/lib/foreignSearch'
 import { searchPlaces } from '@/lib/geocode'
@@ -22,6 +22,9 @@ import { groupStops, loadStopIndex, searchStops } from '@/lib/stopSearch'
 import type { StopIndex } from '@/lib/stopSearch'
 import { planBus, WALK_M_PER_MIN } from '@/lib/transferBus'
 import type { BusPlan } from '@/lib/transferBus'
+import { loadMetroIndex } from '@/lib/metroIndex'
+import { planTransit } from '@/lib/transitPlan'
+import type { PlanTab, TransitPlan } from '@/lib/transitPlan'
 import { distanceM } from '@/nav/geo'
 
 export const TAIPEI_STATION: LatLon = [25.0478, 121.517]
@@ -225,20 +228,25 @@ export function useDestinationSearch(locator: Locator, uiLang: () => Lang = () =
 
   // ── 怎麼去：選了地點 A 之後算公車 ─────────────────
   const busOptions = shallowRef<BusPlan[]>([])
+  /** 公車＋捷運規劃的三個分頁；還沒算或算不出來時是 null */
+  const transit = shallowRef<Record<PlanTab, TransitPlan[]> | null>(null)
+  const debugTransitTime = ref<Date | null>(null)
+  const debugOrigin = ref<LatLon | null>(null)
   const busLoading = ref(false)
   const busNote = ref<BusNote>(null)
   /** 直接走過去約幾分鐘（直線距離估算）；拿不到位置時是 null */
   const walkMin = ref<number | null>(null)
   let busSeq = 0
 
-  async function planTo(target: LatLon) {
+  async function planTo(target: LatLon, audience: Audience = 'visitor') {
     const mySeq = ++busSeq
     busOptions.value = []
+    transit.value = null
     busNote.value = null
     walkMin.value = null
     busLoading.value = true
     try {
-      const [idx, user] = await Promise.all([loadStopIndex(), locator.current()])
+      const [idx, user, metro] = await Promise.all([loadStopIndex(), debugOrigin.value ? Promise.resolve(debugOrigin.value) : locator.current(), loadMetroIndex()])
       if (mySeq !== busSeq) return
       if (!user) {
         busNote.value = 'no_position'
@@ -250,7 +258,9 @@ export function useDestinationSearch(locator: Locator, uiLang: () => Lang = () =
         return
       }
       busOptions.value = planBus(idx.stations, idx.patterns, user, target)
-      if (busOptions.value.length === 0) busNote.value = 'not_worth'
+      transit.value = planTransit({ stations: idx.stations, patterns: idx.patterns }, metro, user, target, { audience, now: debugTransitTime.value ?? undefined })
+      const anyRide = transit.value.mixed.some((p) => p.rides.length > 0)
+      if (!anyRide) busNote.value = 'not_worth'
     } catch {
       if (mySeq === busSeq) busNote.value = 'failed'
     } finally {
@@ -261,6 +271,7 @@ export function useDestinationSearch(locator: Locator, uiLang: () => Lang = () =
   function clearBus() {
     busSeq++
     busOptions.value = []
+    transit.value = null
     busNote.value = null
     busLoading.value = false
     walkMin.value = null
@@ -286,6 +297,9 @@ export function useDestinationSearch(locator: Locator, uiLang: () => Lang = () =
     displayLang,
     relabel,
     busOptions,
+    transit,
+    debugTransitTime,
+    debugOrigin,
     busLoading,
     busNote,
     walkMin,
