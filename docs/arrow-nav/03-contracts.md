@@ -2,6 +2,8 @@
 
 這份合約讓 App、前端、後端可以同時開發。**15:30 凍結**，之後要改必須通知受影響的人，並更新這份文件。
 
+> **17:10 改版（受影響的 NAV、UI、API-B 要看過）：** 新增 `GET /api/places/search`；`POST /api/routes` 的 `to` 加 `placeId`、`candidate` 改用新的目標 id；`metrics`、`diff` 加 `maxGradePct`、`cameras`、`policeNearby`；新增原因代碼見 [02](02-route-candidates.md#原因代碼與文案)。依據見 [改版 spec](../superpowers/specs/2026-11-07-any-place-slope-safety-design.md)。
+
 ## 共通規則
 
 - 座標一律用 WGS84。JSON 物件寫 `{ "lat": 25.1, "lon": 121.5 }`，陣列寫 `[lat, lon]`。
@@ -181,12 +183,57 @@ export interface SensorSource {
 - `routes` 要排除只能下車的站（TDX `StopBoarding = -1`）。
 - `direction` 是 TDX 的值：0 去程、1 返程、2 迴圈、10 循環、255 未知。前端顯示 `headsign`，不要顯示數字。
 
+### `GET /api/places/search?q=地點`
+
+**17:10 改版新增。** 首頁搜尋框用這個 API。地點和公車站一起搜尋。不傳使用者座標，前端拿到結果後自己算距離。`q` 是 1–50 字。
+
+```json
+{
+  "places": [
+    {
+      "placeId": "osm:n123",
+      "kind": "place",
+      "category": "medical",
+      "name": { "zh": "範例醫院", "en": "Example Hospital" },
+      "lat": 25.1,
+      "lon": 121.5,
+      "stationUid": null
+    },
+    {
+      "placeId": "stop:TPE12345",
+      "kind": "bus_stop",
+      "category": "bus_stop",
+      "name": { "zh": "範例站", "en": "Example Stop" },
+      "lat": 25.1,
+      "lon": 121.5,
+      "stationUid": "TPE12345"
+    }
+  ],
+  "sources": [
+    { "name": "OpenStreetMap", "updatedAt": "2026-11-07" },
+    { "name": "TDX 公車站位資料", "updatedAt": "2026-11-07T15:59:00+08:00" }
+  ]
+}
+```
+
+| 欄位 | 說明 |
+|---|---|
+| `kind` | `place` 或 `bus_stop`。`bus_stop` 進 P4 選路線和方向；`place` 直接進 P5 |
+| `category` | `medical`、`school`、`station`、`park`、`government`、`shop`、`food`、`tourism`、`bus_stop`、`other`。前端用來選圖示 |
+| `placeId` | OSM 地點是 `osm:n<id>`、`osm:w<id>`；公車站是 `stop:<stationUid>` |
+| `name.en` | 可能是 `null` |
+| `stationUid` | 只有 `bus_stop` 有值；同名的多個站位合成一筆，選了以後用 `/api/stations/search` 的結果分方向 |
+
+- 排序：名稱完全相同 → 開頭相同 → 包含；同級時 `station`、`medical`、`government` 在前，再比名稱長度。最多 20 筆。
+- 沒有結果時回 `places: []`，不是 404。
+- 地點快照讀不到時回 503 `DATA_UNAVAILABLE`。
+
 ### `POST /api/routes`
 
 ```json
 {
   "from": { "lat": 25.1, "lon": 121.5 },
-  "to": { "lat": 25.101, "lon": 121.502, "stationUid": "TPE12345" },
+  "to": { "lat": 25.101, "lon": 121.502, "placeId": "stop:TPE12345", "stationUid": "TPE12345" },
   "audience": "elder",
   "candidate": null,
   "simulate": null
@@ -195,8 +242,9 @@ export interface SensorSource {
 
 | 欄位 | 說明 |
 |---|---|
+| `to.placeId`、`to.stationUid` | 都可以是 `null`。**只用座標算路**，這兩個欄位不參與計算 |
 | `audience` | `elder`、`child`、`visitor` |
-| `candidate` | `null` 表示依規則表算全部；重新規劃時傳目前的候選 id，只算這一條 |
+| `candidate` | `null` 表示依規則表算全部；重新規劃時傳目前路線的 `id`，只產生並挑選這個目標。可用值：`fastest`、`flattest`、`flattest_watched`、`fewer_unsignalized_watched`、`fewer_unsignalized_watched_bright`、`watched_bright` |
 | `simulate` | `null` 或 `night`。只用於 Demo，回應會加上 `simulated_night` |
 
 ```json
@@ -204,9 +252,9 @@ export interface SensorSource {
   "context": { "audience": "elder", "period": "night", "simulated": false },
   "routes": [
     {
-      "id": "fewer_steps_hills_bright",
+      "id": "flattest_watched",
       "recommended": true,
-      "reasons": ["fewer_steps", "brighter", "extra_distance"],
+      "reasons": ["flatter", "more_cameras", "extra_distance"],
       "distanceM": 380,
       "durationS": 420,
       "geometry": [[25.1, 121.5], [25.1002, 121.5004]],
@@ -215,8 +263,8 @@ export interface SensorSource {
         { "kind": "left", "atIndex": 12, "distanceToNextM": 300, "street": "範例街" },
         { "kind": "arrive", "atIndex": 30, "distanceToNextM": 0, "street": null }
       ],
-      "metrics": { "steps": 0, "climbM": 3, "litRatio": 0.8, "unsignalizedCrossings": 0, "signalCrossings": 2, "unknownCrossings": 1 },
-      "diff": { "distanceM": 60, "durationS": 120, "steps": 1, "climbM": 5, "unsignalizedCrossings": 2 }
+      "metrics": { "steps": 0, "climbM": 3, "maxGradePct": 4.5, "litRatio": 0.8, "unsignalizedCrossings": 0, "signalCrossings": 2, "unknownCrossings": 1, "cameras": 9, "policeNearby": 1 },
+      "diff": { "distanceM": 60, "durationS": 120, "steps": 1, "climbM": 5, "maxGradePct": 3.0, "unsignalizedCrossings": 2, "cameras": 5, "policeNearby": 1 }
     },
     {
       "id": "fastest",
@@ -226,14 +274,17 @@ export interface SensorSource {
       "durationS": 300,
       "geometry": [[25.1, 121.5], [25.1005, 121.501]],
       "maneuvers": [],
-      "metrics": { "steps": 1, "climbM": 8, "litRatio": 0.5, "unsignalizedCrossings": 2, "signalCrossings": 0, "unknownCrossings": 1 },
+      "metrics": { "steps": 1, "climbM": 8, "maxGradePct": 7.5, "litRatio": 0.5, "unsignalizedCrossings": 2, "signalCrossings": 0, "unknownCrossings": 1, "cameras": 4, "policeNearby": 0 },
       "diff": null
     }
   ],
   "notes": [],
   "sources": [
     { "name": "OpenStreetMap", "updatedAt": "2026-11-06" },
-    { "name": "臺北市路燈位置分布圖", "updatedAt": "2026-11-07" }
+    { "name": "臺北市路燈位置分布圖", "updatedAt": "2026-11-07" },
+    { "name": "內政部 20 公尺網格數值地形模型", "updatedAt": "2025-12-06" },
+    { "name": "臺北市政府警察局名稱及地址", "updatedAt": "2026-11-04" },
+    { "name": "臺北市政府警察局錄影監視系統設置區位", "updatedAt": "2026-10-13" }
   ]
 }
 ```
@@ -247,20 +298,23 @@ export interface SensorSource {
 | `routes[].reasons` | 只有量得到改善才有。代碼見 [02](02-route-candidates.md) |
 | `routes[].geometry` | `[lat, lon]`，不要傳 polyline 字串 |
 | `routes[].maneuvers[].kind` | `depart`、`straight`、`slight_left`、`slight_right`、`left`、`right`、`uturn`、`stairs`、`arrive` |
-| `routes[].metrics` | **階段 1 是 `null`**。沒有資料的欄位是 `null`，例如沒有坡度時 `climbM` 是 `null` |
-| `routes[].diff` | 和 `fastest` 比較：`distanceM`、`durationS` 是多走多少；其他是少了多少。`fastest` 本身是 `null` |
+| `routes[].metrics` | **階段 1 是 `null`**。沒有資料的欄位是 `null`，例如高程網格不存在時 `climbM`、`maxGradePct` 是 `null`，監視器沒通過 V5 時 `cameras` 是 `null`。算法見 [02](02-route-candidates.md#量測欄位) |
+| `routes[].diff` | 和 `fastest` 比較，`fastest` 本身是 `null`。`distanceM`、`durationS` 是**多走**多少；`steps`、`climbM`、`maxGradePct`、`unsignalizedCrossings` 是**少了**多少；`cameras`、`policeNearby` 是**多了**多少 |
 | `notes` | `no_better_route`、`simulated_night` |
+| `sources` | 只列這次回應用到的資料；前端關於頁另列全部 |
 
 ## 前端 mock
 
-API 負責人 15:30 前提供下列檔案，前端用 `VITE_API_MOCK=1` 切換：
+API 負責人提供下列檔案，前端用 `VITE_API_MOCK=1` 切換。標「改版」的由 API-A 在 **18:30 前**補上或更新：
 
 ```text
 web/src/mocks/stations-nearby.json
 web/src/mocks/stations-search.json
-web/src/mocks/routes-one.json        只有 fastest，metrics 是 null（階段 1）
-web/src/mocks/routes-many.json       長者晚上，兩條路（階段 2）
-web/src/mocks/routes-no-better.json  有 no_better_route
+web/src/mocks/places-search.json      改版：地點和公車站混合，含 en 為 null 的一筆
+web/src/mocks/routes-one.json         只有 fastest，metrics 是 null（階段 1）
+web/src/mocks/routes-many.json        改版：長者晚上 flattest_watched＋fastest，含新欄位（階段 2）
+web/src/mocks/routes-no-better.json   有 no_better_route
+web/src/mocks/routes-two-turns.json   改版：fastest，先左轉再右轉，NAV 測轉彎用
 ```
 
 ## 重置與 Demo 網址參數
