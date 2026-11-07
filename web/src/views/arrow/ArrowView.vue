@@ -3,7 +3,8 @@
  * 跟著箭頭走 · 主畫面（UI：yuchuan_ui_v4；導航：nav/ 引擎＋trip/ 行程）
  *
  * 整個畫面只有一個「共用箭頭」(.hero)：
- * 1. 開場在畫面中央轉一圈、重摔縮成主 logo（斜 45°），下方打字機打出「一鍵成行」。
+ * 1. 開場在畫面中央轉一圈、重摔縮成主 logo（斜 45°），接著縮小落進下方標語「一箭成行」的「箭」字位置，打字機打出其餘的字。
+ *    進下一步時標語淡出（之後的頁面上方不再顯示標語），箭頭從「箭」字飛去指著第一個選項。
  * 2. 第一次使用：語言、年紀、路線模式（快速／安全／平緩）清單由左滑入，箭頭在清單外側指著選項；點一個 → 箭頭戳一下、清單淡出。
  *    路線模式依年紀建議一個（兒童→安全、長者→平緩），箭頭先指著它。
  *    選過就跳過（存在手機）；搜尋欄右上角的小膠囊可以重選。?reset=1 清掉、?setup=1 強制再選一次。
@@ -60,6 +61,11 @@ const isStep = (p: Phase): p is StepName => (STEP_NAMES as string[]).includes(p)
 
 /** 開場 logo 斜 45° */
 const LOGO_DEG = 45
+/** 落進標語「箭」字位置時，箭頭（斜 45°）外框約佔一個字寬的 0.92（外框寬 ≈ 方塊 × LOGO_SPAN × k） */
+const K_GLYPH = 0.92 / 0.74
+/** logo 落進「箭」字的時間 */
+const T_GLYPH = 560
+const EASE_GLYPH = 'cubic-bezier(0.5, 0, 0.2, 1)'
 /** 在清單、搜尋欄外側時指向右（指著選項） */
 const POINT_DEG = 90
 /** 指著選項時，窄螢幕縮小箭頭，讓清單保有更多空間（箭頭長 ≈ 方塊邊長 × 0.72） */
@@ -156,13 +162,11 @@ const phase = ref<Phase>('intro')
 const steps = reactive<Record<StepName, StepState>>({ lang: 'off', age: 'off', mode: 'off', search: 'off', how: 'off', route: 'off' })
 const picked = ref(-1) // 剛被點的那一列
 const busy = ref(false) // 過場中不收點擊
-const lift = ref(0) // 標語往上滑的距離
 const root = ref<HTMLElement>()
 const hero = ref<HTMLElement>()
 const heroArrow = ref<HTMLElement>()
 const logoSlot = ref<HTMLElement>()
 const titleEl = ref<HTMLElement>()
-const dock = ref<HTMLElement>()
 const stepsEl = ref<HTMLElement>()
 const navSlot = ref<HTMLElement>()
 const input = ref<HTMLInputElement>()
@@ -201,6 +205,10 @@ function logoK(): number {
   return textW > 0 && slotW > 0 ? textW / (LOGO_SPAN * slotW) : K_LOGO
 }
 const logoPose = (r: number): Pose => poseAt(logoSlot.value!, size, r, logoK())
+/** 標語裡「箭」字的位置（量隱形整句裡的空格，打字中也不會跳） */
+const glyphPose = (r: number): Pose =>
+  poseAt(titleEl.value!.querySelector<HTMLElement>('.ask-ghost .glyph-slot')!, size, r, K_GLYPH)
+let inGlyph = false // logo 已經（開始）落進「箭」字
 const navPoseNow = (): Pose => poseAt(navSlot.value!, size, rot, K_NAV)
 /** 最接近 r、指向右的角度（不多轉） */
 const pointAngle = (r: number): number => Math.round((r - POINT_DEG) / 360) * 360 + POINT_DEG
@@ -1111,9 +1119,16 @@ const failed = computed(() => view.value?.state === 'failed' && !navArrived.valu
 // 報讀只在「說法」變的時候更新，不跟著距離刷新
 const announce = computed(() => (phase.value === 'nav' && !trip.card.value ? hint.value.main : ''))
 
-// ── 標語：logo 落定後打字機打出「一鍵成行」，停一下再進下一步 ─────
-const BRAND = '一鍵成行'
+// ── 標語：logo 落進「箭」字，打字機打出「一箭成行」其餘的字，停一下再進下一步 ─────
+const BRAND = '一箭成行'
+/** 「箭」由箭頭本身擔任，標語在這個位置留一個字寬的空格 */
+const GLYPH_AT = BRAND.indexOf('箭')
+const BRAND_HEAD = BRAND.slice(0, GLYPH_AT)
+const BRAND_TAIL = BRAND.slice(GLYPH_AT + 1)
 const typed = ref(0)
+/** 打字機打到哪：「箭」之前、之後各打出幾個字 */
+const typedHead = computed(() => BRAND_HEAD.slice(0, typed.value))
+const typedTail = computed(() => BRAND_TAIL.slice(0, Math.max(0, typed.value - GLYPH_AT - 1)))
 let typeTimer: ReturnType<typeof setInterval> | undefined
 let flowTimer: ReturnType<typeof setTimeout> | undefined
 function typeBrand() {
@@ -1132,8 +1147,20 @@ function typeBrand() {
   }, 170)
 }
 watch(phase, (p) => {
-  if (p === 'brand') typeBrand()
+  if (p !== 'brand') return
+  glyphFlight = dropIntoGlyph()
+  // 大 logo 疊在標語上：縮到差不多才開始打字，字才不會被蓋住
+  clearTimeout(flowTimer)
+  flowTimer = setTimeout(typeBrand, dur(T_GLYPH * 0.6))
 })
+
+/** logo 縮小、落進標語的「箭」字位置（logo 和標語同一個中心，等於原地縮進去） */
+let glyphFlight: Promise<void> | undefined
+async function dropIntoGlyph() {
+  inGlyph = true
+  await nextTick()
+  await play([{ p: cur }, { p: glyphPose(cur.r) }], dur(T_GLYPH), EASE_GLYPH)
+}
 
 // ── 開場 ─────────────────────────────────────────────
 const easeOutCubic = (u: number) => 1 - (1 - u) ** 3
@@ -1184,14 +1211,17 @@ async function intro() {
   phase.value = 'brand'
 }
 
-/** 打完標語：標語上移，第一次用就進語言清單，否則直接到搜尋；開始持續定位（不在開場時跳權限視窗） */
+/** 打完標語：標語淡出，第一次用就進語言清單，否則直接到搜尋；開始持續定位（不在開場時跳權限視窗） */
+let leavingBrand = false
 async function startSetup() {
-  if (phase.value !== 'brand') return
+  if (phase.value !== 'brand' || leavingBrand) return
+  leavingBrand = true
   clearInterval(typeTimer)
   clearTimeout(flowTimer)
   typed.value = BRAND.length
+  // 點一下跳過時 logo 可能還在往「箭」字落：等它落定再飛走，不然會從大 logo 的位置跳出去
+  await glyphFlight
   phase.value = needSetup ? 'lang' : 'search'
-  updateLift()
   await enterStep(needSetup ? 'lang' : 'search', cur, EASE_LIFT)
   // 箭頭落定後才開始定位：權限視窗、GPS 啟動不會卡在箭頭飛過去的途中
   locator.start()
@@ -1201,13 +1231,6 @@ async function startSetup() {
 function skipIntro() {
   if (phase.value === 'intro') anims.forEach((a) => a.finish())
   else if (phase.value === 'brand') void startSetup()
-}
-
-/** 標語滑到頂端（對齊 .dock 的位置） */
-function updateLift() {
-  if (!titleEl.value || !dock.value) return
-  const natural = titleEl.value.getBoundingClientRect().top - lift.value
-  lift.value = dock.value.getBoundingClientRect().top - natural
 }
 
 // ── 隱藏的除錯按鈕：長按 0.7 秒 ─────────────────────
@@ -1246,8 +1269,7 @@ function onResize() {
       requestAnimationFrame(() => hero.value && (hero.value.style.transition = ''))
     }
     const p = phase.value
-    if (p !== 'intro' && p !== 'brand') updateLift()
-    if (p === 'brand') setHero(logoPose(cur.r))
+    if (p === 'brand') setHero(inGlyph ? glyphPose(cur.r) : logoPose(cur.r))
     else if (isStep(p) && steps[p] === 'in') setHero(pointPose(p, armRow))
     else if (p === 'nav') {
       navPose = navPoseNow()
@@ -1289,23 +1311,21 @@ onBeforeUnmount(() => {
   >
     <!-- 背景是單色（.av 的 background-color）：首頁深色，導航換成狀態色，只做顏色過渡 -->
 
-    <!-- 開場：logo＋標語整組在畫面正中央（共用箭頭疊在 logo-slot 上）；之後標語滑到頂端 -->
+    <!-- 開場：logo＋標語整組在畫面正中央（共用箭頭疊在 logo-slot 上，再落進標語的「箭」字）；之後標語淡出 -->
     <main class="home">
-      <h1 class="sr-only">跟著箭頭走 · 一鍵成行</h1>
+      <h1 class="sr-only">跟著箭頭走 · 一箭成行</h1>
       <div class="stack">
         <div ref="logoSlot" class="logo-slot" />
         <!-- 隱形的整句撐住寬度，打出來的字疊在上面從左邊開始 → 置中但不會邊打邊跳 -->
-        <p ref="titleEl" class="title brand-text" lang="zh-TW" aria-hidden="true" :style="{ '--lift': `${lift}px` }">
-          <span class="ask-ghost">{{ BRAND }}</span>
-          <span class="ask-typed">{{ BRAND.slice(0, typed) }}<i class="caret" :class="{ off: typed >= BRAND.length }" /></span>
+        <p ref="titleEl" class="title brand-text" lang="zh-TW" aria-hidden="true">
+          <span class="ask-ghost">{{ BRAND_HEAD }}<span class="glyph-slot" />{{ BRAND_TAIL }}</span>
+          <span class="ask-typed">{{ typedHead }}<span v-if="typed > GLYPH_AT" class="glyph-slot" />{{ typedTail }}<i class="caret" :class="{ off: typed >= BRAND.length }" /></span>
         </p>
       </div>
     </main>
 
-    <!-- 設定步驟：語言 → 年紀 → 搜尋 → 怎麼去／要搭哪一班，同一個位置輪流由左滑入。
-         上下各放一個和標語等高的 .dock → 中間的操作區剛好落在畫面正中央 -->
+    <!-- 設定步驟：語言 → 年紀 → 搜尋 → 怎麼去／要搭哪一班，同一個位置輪流由左滑入（上方不再顯示標語） -->
     <div class="setup">
-      <p ref="dock" class="dock brand-text" aria-hidden="true">{{ BRAND }}</p>
       <div ref="stepsEl" class="steps">
         <!-- 語言（還沒選語言，標題中英並列） -->
         <section class="step" :class="`st-${steps.lang}`" data-step="lang" :inert="steps.lang !== 'in'" aria-labelledby="h-lang">
@@ -1475,7 +1495,6 @@ onBeforeUnmount(() => {
           </div>
         </section>
       </div>
-      <p class="dock brand-text" aria-hidden="true">{{ BRAND }}</p>
     </div>
 
     <RouterLink v-if="phase === 'search'" to="/about" class="about-link">{{ S.about }}</RouterLink>
@@ -1683,42 +1702,41 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 .stack {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
 }
+/* 開場的大 logo 和標語同一個中心：轉完直接縮進「箭」字，整組停在畫面正中央 */
 .logo-slot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
   width: 160px;
   height: 160px;
+  transform: translate(-50%, -50%);
 }
 .brand-text {
-  font-size: 28px;
+  font-size: clamp(40px, 13vw, 60px);
   font-weight: 700;
   line-height: 1.3;
   letter-spacing: 0.08em;
 }
 .title {
   position: relative;
-  margin-top: 20px;
+  margin: 0;
   /* letter-spacing 在最後一個字後面也留了空：吃掉它，文字的視覺中線才會對準箭頭 */
   margin-right: -0.08em;
   color: var(--ink);
-  transform: translate3d(0, 0, 0);
-  transition:
-    transform 0.62s var(--ease-out),
-    opacity 0.3s ease;
+  transition: opacity 0.3s ease;
 }
-/* 進入設定步驟後滑到頂端（位置由 .dock 量出來） */
+/* 進入設定步驟後標語淡出：之後的頁面上方不顯示標語，箭頭已經從「箭」字飛去指著選項 */
 .av:not(.is-intro):not(.is-brand) .title {
-  transform: translate3d(0, var(--lift), 0);
+  opacity: 0;
 }
-/* 開場時不出現游標；導航時標語淡出 */
+/* 開場時不出現游標 */
 .is-intro .title {
   visibility: hidden;
-}
-.is-launch .title,
-.is-nav .title {
-  opacity: 0;
 }
 .ask-ghost {
   visibility: hidden;
@@ -1727,6 +1745,14 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0 auto 0 0;
   white-space: nowrap;
+}
+/* 「箭」字的位置：留一個字寬（加上字距，空元素不會套到 letter-spacing），共用箭頭落在這裡 */
+.glyph-slot {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.08em;
+  vertical-align: -0.12em;
 }
 .caret {
   display: inline-block;
@@ -1748,7 +1774,7 @@ onBeforeUnmount(() => {
   }
 }
 
-/* ── 設定步驟：頂端標語＋中間操作區（上下對稱 → 在畫面正中央） ─────── */
+/* ── 設定步驟：操作區（上方不放標語，清單有更多空間） ─────── */
 .setup {
   position: absolute;
   inset: 0;
@@ -1757,10 +1783,6 @@ onBeforeUnmount(() => {
   align-items: center;
   padding: calc(24px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
   pointer-events: none;
-}
-.dock {
-  flex: none;
-  visibility: hidden;
 }
 .steps {
   position: relative;
