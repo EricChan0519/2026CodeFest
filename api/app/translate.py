@@ -167,9 +167,16 @@ def sources() -> list[dict]:
     ]
 
 
+@lru_cache(maxsize=1)
+def _taiwan_chars() -> frozenset[str]:
+    """公車站官方名稱用到的字（全是臺灣的正體字）：這些字不用換"""
+    return frozenset("".join(english_names()[0].keys()))
+
+
 def to_traditional(s: str) -> str:
     r = load_readings()
-    return "".join(_JA_WORDS.get(c) or r.jp.get(c) or r.s2t.get(c) or c for c in s).replace("台", "臺")
+    keep = _taiwan_chars()
+    return "".join(_JA_WORDS.get(c) or (c if c in keep else r.jp.get(c) or r.s2t.get(c)) or c for c in s).replace("台", "臺")
 
 
 # ---------------------------------------------------------------- 韓文
@@ -273,6 +280,10 @@ def char_readings(ch: str, system: str) -> list[str]:
         return [p] if p else []
     if system == "ko_sino":
         return [hangul_loose(h) for h in r.hangul.get(ch, [])][:1]
+    if system == "ko_sino2":
+        # 第二個讀音（北 = 배／북，Unihan 把 배 放前面）；只有一個讀音的字照用那個
+        hs = [hangul_loose(h) for h in r.hangul.get(ch, [])]
+        return hs[-1:] if hs else []
     if system == "ko_mandarin":
         p = r.pinyin.get(ch)
         h = pinyin_to_hangul(p) if p else None
@@ -341,10 +352,11 @@ def _lang_pool(lang: str) -> list[str]:
 
 def _glossary_forms(lang: str, word_level: bool) -> list[tuple[str, Term]]:
     out = []
+    tones = lang == "vi"
     for term in load_glossary():
         for code in _lang_pool(lang):
             for form in term.forms.get(code, []):
-                key = _match_key(form, word_level)
+                key = _match_key(form, word_level, tones)
                 if key:
                     out.append((key, term))
     # 長的寫法先比；同一個寫法對到好幾個詞時取中文最短的（역 → 站 而不是 車站，야시장 → 夜市）
@@ -352,8 +364,15 @@ def _glossary_forms(lang: str, word_level: bool) -> list[tuple[str, Term]]:
     return out
 
 
-def _match_key(s: str, word_level: bool) -> str:
+def _tone_words(s: str) -> list[str]:
+    """越南文：保留聲調，只轉小寫、拿掉標點"""
+    return re.findall(r"[0-9a-zà-ỹđ]+", unicodedata.normalize("NFC", s.lower()))
+
+
+def _match_key(s: str, word_level: bool, tones: bool = False) -> str:
     if word_level:
+        if tones:
+            return " ".join(_tone_words(s))
         return " ".join(re.findall(r"[0-9a-z]+", fold(s)))
     return re.sub(r"\s+", "", s.lower())
 
@@ -363,7 +382,7 @@ def _scan(q: str, lang: str) -> list[tuple[str, Term | None]]:
     word_level = lang in ("latin", "vi")
     forms = _glossary_forms(lang, word_level)
     if word_level:
-        units = re.findall(r"[0-9a-z]+", fold(q))
+        units = _tone_words(q) if lang == "vi" else re.findall(r"[0-9a-z]+", fold(q))
         joiner = " "
     else:
         units = list(re.sub(r"\s+", "", q.lower()))
@@ -407,14 +426,14 @@ def _resolve(text: str, lang: str) -> Segment:
         return Segment(text, "proper", [to_traditional(text)], "hanzi")
     systems: list[str] = []
     if lang == "ko":
-        systems = ["ko_mandarin", "ko_sino"]  # 즈산（中文音譯）和 지산（韓文漢字音）都要能找到 芝山
+        systems = ["ko_mandarin", "ko_sino", "ko_sino2"]  # 즈산（中文音譯）和 지산（韓文漢字音）都要能找到 芝山
     elif lang == "vi":
         systems = ["viet", "pinyin"]
     elif lang == "latin":
         systems = ["pinyin", "viet"]
     counts: Counter[str] = Counter()
     for system in systems:
-        if system == "ko_sino":
+        if system in ("ko_sino", "ko_sino2"):
             key = hangul_loose(text)
         elif system == "pinyin":
             key = re.sub(r"[^a-z]", "", fold(text)).replace("ü", "v")
@@ -435,10 +454,19 @@ def _resolve(text: str, lang: str) -> Segment:
 MAX_COMBINATIONS = 24
 
 
+_NAME_WRAP = re.compile(r"^(?:臺北捷運|捷運|臺鐵|公車)|[(（].*$")
+STRONG_WEIGHT = 20
+
+
 @lru_cache(maxsize=2048)
 def _name_count(text: str) -> int:
-    """有幾個已知地名包含這串中文（拿來在幾種組法裡挑最像真的地名的）"""
-    return sum(text in name for name in load_gazetteer())
+    """這串中文像不像真的地名：名稱本身（拿掉 捷運、括號後）就是它，一個算 20；只是包含它，一個算 1。
+    「橋和站」是站名本身，「…橋火車站」只是某個名稱的一部分（2026-11-08 掃描所有捷運站時發現）"""
+    total = 0
+    for name in load_gazetteer():
+        if text in name:
+            total += STRONG_WEIGHT if _NAME_WRAP.sub("", name) == text else 1
+    return total
 
 
 def _assemble(ordered: list[Segment]) -> list[str]:
@@ -513,6 +541,32 @@ def match_english_name(q: str) -> list[str]:
     return out[:MAX_CANDIDATES]
 
 
+def _merge_short_unknown(segments: list[Segment], lang: str) -> list[Segment]:
+    """看不懂的一小段接在認得的專有名稱後面時，連在一起用讀音再找一次：
+    타이베이＋차오 → 臺北橋（차오 只有一個字，單獨找不到）"""
+    out: list[Segment] = []
+    for seg in segments:
+        prev = out[-1] if out else None
+        # 用讀音湊出來的一小段（차오 → 車五）也一樣：先試著和前面連起來
+        loose = seg.kind == "unknown" or (seg.kind == "proper" and seg.via == "reading")
+        if loose and prev is not None and prev.kind == "proper":
+            merged = _resolve(prev.text + seg.text, lang)
+            if merged.kind == "proper":
+                out[-1] = merged
+                continue
+        out.append(seg)
+    return out
+
+
+def _heads_in_chinese_order(segments: list[Segment]) -> list[Segment]:
+    """種類詞換成中文的順序：在名稱後面的照原順序（Daan Park Station → 大安公園站）；
+    在名稱前面的（越南、印尼、泰、高棉文）倒過來（Ga Công viên Đại Hồ → 大湖公園站）"""
+    first_name = next((i for i, s in enumerate(segments) if s.kind in ("proper", "unknown")), len(segments))
+    before = [s for s in segments[:first_name] if s.kind == "head"]
+    after = [s for s in segments[first_name:] if s.kind == "head"]
+    return after + before[::-1]
+
+
 def _guess_latin(segments: list[Segment]) -> str:
     """拉丁字母的搜尋字串是英文還是印尼文：看對到的詞彙表寫法只出現在哪一種語言（Masjid、Pasar Malam → id）"""
     votes = Counter()
@@ -554,9 +608,10 @@ def translate_query(q: str) -> dict:
                     options.append(other.zh)
             segments.append(Segment(text, term.kind, options or [term.zh], "glossary"))
 
+    segments = _merge_short_unknown(segments, lang)
     prefixes = [s for s in segments if s.kind == "prefix"]
     propers = [s for s in segments if s.kind == "proper"]
-    heads = [s for s in segments if s.kind == "head"]
+    heads = _heads_in_chinese_order(segments)
     unknown = [s for s in segments if s.kind == "unknown"]
     display = lang
     if lang == "latin":
@@ -717,3 +772,13 @@ def localize_name(name: str, lang: str) -> dict:
     if text is None and lang != "ja" and len(zh) <= MAX_READING_CHARS:
         reading = romanize(zh, lang, spaced=lang not in ("ko",))
     return {"zh": name, "text": text, "reading": reading}
+
+
+def warm_up() -> None:
+    """先把讀音表、地名清單建好（約 3 秒）。伺服器一啟動就在背景跑，
+    不然第一個外語搜尋要等這麼久，前端會逾時、改用原字串搜尋而查不到（2026-11-08：즈산역）。"""
+    for system in ("ko_mandarin", "ko_sino", "ko_sino2", "viet", "pinyin"):
+        _reading_table(system)
+    english_names()
+    _taiwan_chars()
+    translate_query("즈산역")

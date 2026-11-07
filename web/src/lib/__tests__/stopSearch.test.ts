@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Station } from '../contract'
-import { buildStopIndex, normalizeQuery, queryVariants, searchStops } from '../stopSearch'
+import { buildStopIndex, groupStops, normalizeQuery, queryVariants, searchStops } from '../stopSearch'
 
 const st = (uid: string, zh: string, en: string | null, bearing: string | null = null): Station => ({
   stationUid: uid,
@@ -83,5 +83,50 @@ describe('searchStops', () => {
   it('respects the limit and returns nothing for unknown names', () => {
     expect(searchStops(index, '北', 1)).toHaveLength(1)
     expect(searchStops(index, '不存在的站')).toEqual([])
+  })
+})
+
+describe('groupStops (2026-11-08: one row per stop name)', () => {
+  const route = (no: string, headsign: string, stopUid: string) => ({
+    routeName: { zh: no, en: no },
+    direction: 0,
+    headsign: { zh: headsign, en: null },
+    stopUid,
+  })
+  const st = (uid: string, zh: string, lat: number, lon: number, routes: ReturnType<typeof route>[]) => ({
+    stationUid: uid,
+    name: { zh, en: null },
+    bearing: 'N',
+    lat,
+    lon,
+    routes,
+  })
+  const near: [number, number] = [25.104, 121.522]
+  const a = st('A', '捷運芝山站(福華)', 25.1041, 121.5223, [route('紅68', '往捷運芝山站', 'a1')])
+  const b = st('B', '捷運芝山站(福國)', 25.1019, 121.5243, [route('267', '往天母', 'b1'), route('606', '往萬芳社區', 'b2')])
+  const c = st('C', '捷運芝山站(福國)', 25.102, 121.5244, [route('267', '往天母', 'c1'), route('267', '往松山', 'c2')])
+  const far = st('D', '捷運芝山站(福華)', 25.2, 121.6, [route('9', '往X', 'd1')])
+  const other = st('E', '芝山岩', 25.103, 121.53, [])
+
+  it('merges same-name stops nearby, ignoring the street in brackets', () => {
+    const g = groupStops([a, b, c, other], near)
+    expect(g.map((x) => x.name.zh)).toEqual(['捷運芝山站', '芝山岩'])
+    expect(g[0]!.stations.map((s) => s.stationUid).sort()).toEqual(['A', 'B', 'C'])
+  })
+
+  it('each route keeps the stop it actually leaves from; same route and direction only once', () => {
+    const [g] = groupStops([a, b, c], near)
+    const rows = g!.routes.map((r) => `${r.route.routeName.zh}${r.route.headsign.zh}@${r.station.stationUid}`)
+    expect(rows).toHaveLength(4)
+    expect(rows).toContain('267往松山@C')
+    expect(rows.filter((r) => r.startsWith('267往天母'))).toHaveLength(1)
+  })
+
+  it('keeps the name as is when every stop has the same name', () => {
+    expect(groupStops([b, c], near)[0]!.name.zh).toBe('捷運芝山站(福國)')
+  })
+
+  it('does not merge far-apart stops with the same name', () => {
+    expect(groupStops([a, far], near)).toHaveLength(2)
   })
 })

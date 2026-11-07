@@ -26,16 +26,19 @@ import { ARROW_STRINGS, distanceWords, fill } from '@/i18n/arrow'
 import type { AgeKey, CompassKey, TurnWordKey } from '@/i18n/arrow'
 import { ROUTE_MODE_STRINGS } from '@/i18n/routeMode'
 import type { Audience, Lang, LatLon, ManeuverKind, RouteMode, Station } from '@/lib/contract'
+import { poiNameForTranslation, stopLabel } from '@/lib/foreignSearch'
+import { parseQuery } from '@/lib/fuzzy'
+import { stationQuery } from '@/lib/placeSearch'
+import { groupStops } from '@/lib/stopSearch'
+import type { StopGroup } from '@/lib/stopSearch'
 import { createLocator } from '@/lib/locator'
 import type { ModeRoute } from '@/lib/modeRoute'
 import { estimateBusMin } from '@/lib/transferBus'
-import type { BusPlan } from '@/lib/transferBus'
 import type { Cue } from '@/nav/announcer'
 import { easeRotation } from '@/nav/arrow'
 import { NAV_CONFIG } from '@/nav/config'
 import { DEFAULT_DESTINATION } from '@/nav/destination'
 import { distanceM } from '@/nav/geo'
-import { routeDetail } from '@/trip/routeText'
 import { useDestinationSearch } from '@/trip/useDestinationSearch'
 import { useTrip } from '@/trip/useTrip'
 import type { TripChoice } from '@/trip/useTrip'
@@ -140,7 +143,9 @@ const langLabel = computed(() => LANG_ITEMS.find((l) => l.id === lang.value)?.la
 
 // ── 位置、搜尋、行程 ───────────────────────────────
 const locator = createLocator()
-const search = useDestinationSearch(locator)
+const search = useDestinationSearch(locator, () => lang.value)
+// 換語言時，現有結果重新翻成新語言
+watch(lang, () => search.relabel())
 const routing = { mode: () => mode.value, audience: () => audience.value, simulate: () => simulate }
 const trip = useTrip({ locator, onCue, routing })
 const nav = trip.nav
@@ -166,8 +171,8 @@ const query = ref('')
 const debugOpen = ref(false)
 /** 「怎麼去」的目的地（地點、店家） */
 const target = ref<{ name: string; point: LatLon } | null>(null)
-/** 「要搭哪一班」的站位 */
-const station = ref<Station | null>(null)
+/** 「要搭哪一班」的站牌（同名、相鄰的站位合併成一筆，每條路線記得自己的站位） */
+const stopGroup = ref<StopGroup | null>(null)
 
 // ── 共用箭頭 ─────────────────────────────────────────
 let size = 240
@@ -436,10 +441,11 @@ interface ResultRow {
   key: string
   kind: Kind
   name: string
-  detail: string
+  /** 中文原名（招牌、站牌上看到的）；名稱已經是中文時是空字串 */
+  zh: string
   dist: number | null
   point: LatLon
-  station?: Station
+  stop?: StopGroup
   /** 這一組的第一筆：上面顯示組名 */
   head?: string
 }
@@ -455,6 +461,14 @@ type Row = ResultRow | MoreRow
 const nameOf = (n: { zh: string | null; en: string | null }) =>
   (lang.value === 'zh-TW' ? n.zh || n.en : n.en || n.zh) ?? ''
 
+/** 站名：使用者的語言（英文、印尼文用 TDX 官方英文站名），第二行附中文站名 */
+function stopNames(st: Station): { name: string; zh: string } {
+  const dl = search.displayLang.value
+  const l = dl ? stopLabel(st, dl, search.labels.value.names) : null
+  if (l && l.text !== st.name.zh) return { name: l.text, zh: st.name.zh }
+  return { name: nameOf(st.name), zh: lang.value === 'zh-TW' ? '' : st.name.zh }
+}
+
 /** 列表上的距離：350 公尺、2.4 公里 */
 function listDistance(m: number | null): string {
   if (m === null) return ''
@@ -462,53 +476,64 @@ function listDistance(m: number | null): string {
   return fill(S.value.km, { n: (m / 1000).toFixed(m < 10000 ? 1 : 0) })
 }
 
+/** 結果名稱：使用者的語言（翻不出來的部分照讀音），沒有就用中文；第二個值是要另外附上的中文原名 */
+function localName(zh: string, key = zh): [string, string] {
+  const l = search.displayLang.value ? search.labels.value.names.get(key) : undefined
+  return l && l.text !== zh ? [l.text, zh] : [zh, '']
+}
+
+/**
+ * 搜尋結果：每筆只有名稱和距離；外語介面再附中文原名對照招牌（2026-11-08 回報：下面那行小字太冗長）。
+ * 分組順序：找車站（芝山捷運站、士林站）時地點在前（合併後的車站排第一）、公車站牌第二；
+ * 找公車站牌（○○公車站、站牌）時站牌在前；其他搜尋地點、店家、站牌。
+ */
 const rows = computed<Row[]>(() => {
   const s = S.value
-  const out: Row[] = []
+  const q = search.searchedQuery.value
+  const placeRows: Row[] = []
   const placeAll = search.places.value
   placeAll.slice(0, placeShown.value).forEach((p, i) =>
-    out.push({
+    placeRows.push({
       type: 'hit',
       key: `pl-${p.name}-${p.point[0]}-${p.point[1]}-${i}`,
       kind: 'place',
-      name: p.name,
-      detail: p.category ?? p.detail,
+      name: localName(p.name)[0],
+      zh: localName(p.name)[1],
       dist: p.distanceM,
       point: p.point,
       head: i === 0 ? s.groupPlaces : undefined,
     }),
   )
-  if (placeAll.length > placeShown.value) out.push({ type: 'more', key: 'more-pl', kind: 'place', left: placeAll.length - placeShown.value })
+  if (placeAll.length > placeShown.value) placeRows.push({ type: 'more', key: 'more-pl', kind: 'place', left: placeAll.length - placeShown.value })
+  const poiRows: Row[] = []
   const poiAll = search.pois.value
   poiAll.slice(0, poiShown.value).forEach((p, i) =>
-    out.push({
+    poiRows.push({
       type: 'hit',
       key: `poi-${p.brand.key}-${p.point[0]}-${p.point[1]}`,
       kind: 'poi',
-      name: p.name,
-      detail: [lang.value === 'zh-TW' ? p.brand.zh : p.brand.en || p.brand.zh, p.address].filter(Boolean).join(' · '),
+      name: localName(p.name, poiNameForTranslation(p.name, p.brand))[0],
+      zh: localName(p.name, poiNameForTranslation(p.name, p.brand))[1],
       dist: p.distanceM,
       point: p.point,
       head: i === 0 ? s.groupStores : undefined,
     }),
   )
-  if (poiAll.length > poiShown.value) out.push({ type: 'more', key: 'more-poi', kind: 'poi', left: poiAll.length - poiShown.value })
-  search.stops.value.forEach((st, i) => {
-    const facing = st.bearing && st.bearing in s.compass ? fill(s.stopFacing, { dir: s.compass[st.bearing as CompassKey] }) : ''
-    const routes = st.routes.slice(0, 6).map((r) => nameOf(r.routeName)).join('、')
-    out.push({
-      type: 'hit',
-      key: `st-${st.stationUid}`,
-      kind: 'stop',
-      name: nameOf(st.name),
-      detail: [facing, routes].filter(Boolean).join(' · '),
-      dist: distanceM(search.near.value, [st.lat, st.lon]),
-      point: [st.lat, st.lon],
-      station: st,
-      head: i === 0 ? s.groupStops : undefined,
-    })
-  })
-  return out
+  if (poiAll.length > poiShown.value) poiRows.push({ type: 'more', key: 'more-poi', kind: 'poi', left: poiAll.length - poiShown.value })
+  // 合併後的站牌用合併後的名稱（拿掉括號）翻譯；英文、印尼文用 TDX 官方英文站名
+  const stopRows: Row[] = groupStops(search.stops.value, search.near.value).map((g, i) => ({
+    type: 'hit',
+    key: `st-${g.key}`,
+    kind: 'stop',
+    ...stopNames({ ...g.stations[0]!, name: g.name }),
+    dist: distanceM(search.near.value, [g.lat, g.lon]),
+    point: [g.lat, g.lon],
+    stop: g,
+    head: i === 0 ? s.groupStops : undefined,
+  }))
+  if (parseQuery(q).tags.includes('bus')) return [...stopRows, ...placeRows, ...poiRows]
+  if (stationQuery(q)) return [...placeRows, ...stopRows, ...poiRows]
+  return [...placeRows, ...poiRows, ...stopRows]
 })
 const hasResults = computed(() => rows.value.some((r) => r.type === 'hit'))
 /** 資料出處（站牌 TDX、店家與地標 Overture、地址 OSM；OSM 的授權要求一定要標） */
@@ -563,6 +588,12 @@ async function submitSearch() {
   if (first >= 0 && !busy.value) await moveArrow('search', first)
 }
 
+/** 外語搜尋的「也可能是…」：用那個中文重新搜尋 */
+function searchAlt(text: string) {
+  query.value = text
+  void submitSearch()
+}
+
 /** 點搜尋欄要改字：箭頭回到搜尋欄 */
 function onSearchFocus() {
   if (!busy.value && armRow !== -1) void moveArrow('search', -1)
@@ -572,8 +603,8 @@ async function pickResult(i: number) {
   const r = rows.value[i]
   if (!r || r.type !== 'hit' || busy.value || phase.value !== 'search') return
   if (!(await press('search', i))) return
-  if (r.kind === 'stop' && r.station) {
-    station.value = r.station
+  if (r.kind === 'stop' && r.stop) {
+    stopGroup.value = r.stop
     await goStep('search', 'route')
     return
   }
@@ -587,87 +618,62 @@ async function pickResult(i: number) {
 interface HowRow {
   key: string
   title: string
-  detail: string
   right: string
   choice: TripChoice
-}
-function busTitle(p: BusPlan): string {
-  const names = p.rides.map((r) => nameOf(r.route.routeName))
-  return names.length > 1 ? `${names[0]} → ${fill(S.value.transferAt, { route: names.slice(1).join(' → ') })}` : names[0]!
 }
 /** 約幾分鐘（路線的時間；長者用 3.5 km/h 算） */
 const routeMin = (r: ModeRoute) => Math.max(1, Math.round(r.durationS / 60))
 
 /**
- * 走路的列：依路線模式算好的路在前（說出比最快的路好在哪、多走多久），和最快不同時下面再列最快的路（說出沿路有什麼）。
- * 還在算、或算不出來時只有一列「走路過去」（導航開始時會再算一次）。
+ * 「怎麼去」只有幾個大選項，每個一列、只寫名稱和約幾分鐘（2026-11-08 回報：選項和小字太多）。
+ * 走路：依使用者選的路線模式算好的那一條（routes[0]）；還在算時先用直線距離估時間。
  */
 const walkRows = computed<HowRow[]>(() => {
   const t = target.value
   if (!t) return []
   const s = S.value
-  const r = R.value
   const plan = walkPlan.plan.value
-  if (!plan) {
+  const route = plan?.routes[0]
+  if (!plan || !route) {
     return [
       {
         key: 'walk',
-        title: s.walkThere,
-        detail: walkPlan.loading.value ? r.planning : '',
+        title: s.howWalk,
         right: search.walkMin.value ? fill(s.aboutMin, { min: search.walkMin.value }) : '',
         choice: { kind: 'walk', name: t.name, point: t.point },
       },
     ]
   }
-  return plan.routes.map<HowRow>((route, i) => {
-    const isMode = route.id !== 'fastest'
-    const facts = routeDetail(route, plan.mode, r)
-    return {
-      key: `walk-${route.id}`,
-      title: isMode ? fill(r.walkMode, { mode: r.modes[plan.mode] }) : i > 0 ? r.fastestRoute : s.walkThere,
-      detail: [isMode ? '' : listDistance(route.distanceM), facts].filter(Boolean).join(' · '),
+  const isMode = route.id !== 'fastest'
+  return [
+    {
+      key: 'walk',
+      title: s.howWalk,
       right: fill(s.aboutMin, { min: routeMin(route) }),
-      // 選了最快的路：之後重新規劃也走最快的
       choice: { kind: 'walk', name: t.name, point: t.point, route, from: plan.from, mode: isMode ? plan.mode : 'fast' },
-    }
-  })
+    },
+  ]
 })
-/** 路線模式的說明：沒有更合適的路、後端連不上、時間上限、模擬晚上 */
+/** 走路的說明只留要讓人知道的：後端連不上只能走最快的路、模擬晚上 */
 const routeNote = computed(() => {
   const plan = walkPlan.plan.value
   const r = R.value
-  if (!plan || plan.mode === 'fast') return plan?.fallback ? r.fallback : ''
-  const parts = [
-    plan.fallback ? r.fallback : plan.notes.includes('no_better_route') ? r.noBetter : fill(r.capNote, { pct: 20 }),
-  ]
-  if (plan.notes.includes('simulated_night')) parts.push(r.simNight)
-  return parts.join(' · ')
+  if (!plan) return ''
+  const parts = [plan.fallback && plan.mode !== 'fast' ? r.fallback : '', plan.notes.includes('simulated_night') ? r.simNight : '']
+  return parts.filter(Boolean).join(' · ')
 })
-// 走路的列從一列變成兩列（推薦＋最快）：箭頭原本指著公車就跟著往下，還是指著同一班車
-watch(
-  () => walkRows.value.length,
-  (n, old) => {
-    if (phase.value === 'how' && armRow >= old) armRow += n - old
-  },
-  { flush: 'sync' },
-)
+/** 公車：只列最快的一個搭法（直達或轉一次車），搭哪一班、在哪下車導航時再說 */
 const howRows = computed<HowRow[]>(() => {
   const t = target.value
   if (!t) return []
   const s = S.value
-  const buses = search.busOptions.value.map<HowRow>((p) => {
-    const first = p.rides[0]!
-    const last = p.rides[p.rides.length - 1]!
-    return {
-      key: p.rides.map((r) => `${r.route.routeName.zh}-${r.route.direction}`).join('>'),
-      title: busTitle(p),
-      detail: fill(s.busDetail, { walk: listDistance(p.walkToBoardM), n: p.stopCount, stop: nameOf(last.alight.name) }) +
-        (first.route.headsign.zh ? ` · ${nameOf(first.route.headsign)}` : ''),
-      right: fill(s.aboutMin, { min: Math.max(1, Math.round(estimateBusMin(p))) }),
-      choice: { kind: 'bus', plan: p, name: t.name, point: t.point },
-    }
-  })
-  return [...walkRows.value, ...buses]
+  const best = search.busOptions.value
+    .map((p) => ({ p, min: Math.max(1, Math.round(estimateBusMin(p))) }))
+    .sort((a, b) => a.min - b.min)[0]
+  const bus: HowRow[] = best
+    ? [{ key: 'bus', title: s.howBus, right: fill(s.aboutMin, { min: best.min }), choice: { kind: 'bus', plan: best.p, name: t.name, point: t.point } }]
+    : []
+  return [...walkRows.value, ...bus]
 })
 const howNote = computed(() => {
   if (search.busLoading.value) return S.value.busLoading
@@ -693,9 +699,11 @@ watch(
   },
 )
 
-const routeRows = computed(() => station.value?.routes ?? [])
+const routeRows = computed(() => stopGroup.value?.routes ?? [])
+/** 只有一個站位時才標朝哪個方向；合併了兩個方向時每條路線的「往哪裡」已經說清楚 */
 const stationFacing = computed(() => {
-  const b = station.value?.bearing
+  const g = stopGroup.value
+  const b = g && g.stations.length === 1 ? g.stations[0]!.bearing : null
   return b && b in S.value.compass ? fill(S.value.stopFacing, { dir: S.value.compass[b as CompassKey] }) : ''
 })
 
@@ -712,9 +720,8 @@ function pickHow(i: number) {
 }
 
 function pickRoute(i: number) {
-  const st = station.value
   const r = routeRows.value[i]
-  if (st && r && !busy.value && phase.value === 'route') void launch('route', i, { kind: 'stop', station: st, route: r })
+  if (r && !busy.value && phase.value === 'route') void launch('route', i, { kind: 'stop', station: r.station, route: r.route })
 }
 
 // ── 出發與導航 ───────────────────────────────────────
@@ -1286,6 +1293,22 @@ onBeforeUnmount(() => {
             </form>
             <div v-if="search.searching.value" class="search-spinner" role="status" :aria-label="S.searching"></div>
             <p v-if="searchNote" class="note warn" role="status">{{ searchNote }}</p>
+            <!-- 外語搜尋：讓使用者看到用什麼中文搜的（즈산역 → 芝山站）；有其他可能就給按鈕 -->
+            <div v-if="search.translation.value && !search.searching.value" class="note translated" aria-live="polite">
+              <span>{{ search.translation.value.from }} → </span>
+              <b v-if="search.translation.value.to" lang="zh-TW">{{ search.translation.value.to }}</b>
+              <span v-else>?</span>
+              <button
+                v-for="alt in search.translation.value.alternatives"
+                :key="alt"
+                type="button"
+                class="alt"
+                lang="zh-TW"
+                @click="searchAlt(alt)"
+              >
+                {{ alt }}
+              </button>
+            </div>
             <ul v-if="hasResults && !search.searching.value" class="list results" @scroll.passive="onResize">
               <template v-for="(r, i) in rows" :key="r.key">
                 <li v-if="r.type === 'hit' && r.head" class="group-h" aria-hidden="true">{{ r.head }}</li>
@@ -1305,7 +1328,7 @@ onBeforeUnmount(() => {
                     </span>
                     <span class="row-text">
                       <span class="row-main">{{ r.name }}</span>
-                      <span v-if="r.detail" class="row-sub">{{ r.detail }}</span>
+                      <span v-if="r.zh" class="row-zh" lang="zh-TW">{{ r.zh }}</span>
                     </span>
                     <span v-if="r.dist !== null" class="row-right">{{ listDistance(r.dist) }}</span>
                   </button>
@@ -1338,7 +1361,6 @@ onBeforeUnmount(() => {
                   </span>
                   <span class="row-text">
                     <span class="row-main">{{ r.title }}</span>
-                    <span v-if="r.detail" class="row-sub">{{ r.detail }}</span>
                   </span>
                   <span v-if="r.right" class="row-right">{{ r.right }}</span>
                 </button>
@@ -1357,18 +1379,18 @@ onBeforeUnmount(() => {
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
               </button>
               <h2 id="h-route" class="step-h">
-                {{ S.routeTitle }}<span v-if="station" class="step-sub">{{ nameOf(station.name) }}<template v-if="stationFacing"> · {{ stationFacing }}</template></span>
+                {{ S.routeTitle }}<span v-if="stopGroup" class="step-sub">{{ nameOf(stopGroup.name) }}<template v-if="stationFacing"> · {{ stationFacing }}</template></span>
               </h2>
             </div>
             <ul class="list" @scroll.passive="onResize">
-              <li v-for="(r, i) in routeRows" :key="r.stopUid">
+              <li v-for="(r, i) in routeRows" :key="r.route.stopUid">
                 <button type="button" class="row" :class="{ picked: phase === 'route' && picked === i }" :data-i="i" @click="pickRoute(i)">
                   <span class="sweep" aria-hidden="true" />
-                  <span class="row-label"><b class="route-no">{{ nameOf(r.routeName) }}</b> {{ nameOf(r.headsign) }}</span>
+                  <span class="row-label"><b class="route-no">{{ nameOf(r.route.routeName) }}</b> {{ nameOf(r.route.headsign) }}</span>
                 </button>
               </li>
             </ul>
-            <p v-if="station && !routeRows.length" class="note warn">{{ S.noResult }}</p>
+            <p v-if="stopGroup && !routeRows.length" class="note warn">{{ S.noResult }}</p>
           </div>
         </section>
       </div>
@@ -1848,17 +1870,24 @@ onBeforeUnmount(() => {
   font-weight: 700;
   line-height: 1.3;
 }
-/* 地址很長（OSM 的完整地址），最多兩行 */
-.row-sub {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-  font-size: calc(14px * var(--fs));
-  font-weight: 500;
-  line-height: 1.4;
+/* 外語介面：名稱下面附中文原名，對得上招牌 */
+.row-zh {
+  font-size: calc(15px * var(--fs));
+  font-weight: 600;
+  line-height: 1.35;
   color: var(--ink-2);
+}
+.note.translated {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.note.translated .alt {
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: inherit;
 }
 .row-right {
   flex: none;

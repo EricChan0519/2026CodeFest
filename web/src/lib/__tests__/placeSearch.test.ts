@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LatLon } from '@/lib/contract'
-import { fromLandmark, fromOsm, mergePlaces, osmMatches, relevance } from '../placeSearch'
+import { baseName, fromLandmark, fromOsm, mentionsCore, mergePlaces, osmMatches, relevance, stationCore, stationQuery } from '../placeSearch'
 
 const TIANMU: LatLon = [25.115, 121.536]
 const TAIPEI_STATION: LatLon = [25.0478, 121.517]
@@ -96,7 +96,8 @@ describe('relevance ranking (2026-11-07: 士林站 showed an eyelash salon first
       [[hit('璞美學-接睫毛/民權西路站/中山站/雙連站/劍潭站/士林站/大橋頭站', 1.7, '生活服務'), hit('大都會士林站', 5.2, '公車站'), hit('捷運士林站', 5.2, '車站')], [hit('公車士林站', 5.4)]],
       [25.0478, 121.517],
     )
-    expect(out.map((p) => p.name)).toEqual(['捷運士林站', '公車士林站', '大都會士林站', '璞美學-接睫毛/民權西路站/中山站/雙連站/劍潭站/士林站/大橋頭站'])
+    // 捷運士林站、公車士林站是同一站（相距 200 公尺），合併成一筆（2026-11-08）
+    expect(out.map((p) => p.name)).toEqual(['捷運士林站', '大都會士林站', '璞美學-接睫毛/民權西路站/中山站/雙連站/劍潭站/士林站/大橋頭站'])
   })
   it('a direction after a dash is still the station itself', () => {
     expect(relevance('士林站', { name: '捷運士林站 - 中正', category: '公車站' })).toBe(1)
@@ -112,5 +113,77 @@ describe('far away results (2026-11-07: 중산역 showed 中山站 in Taichung a
     const at = (name: string, lat: number, lon: number) => ({ name, detail: '', point: [lat, lon] as [number, number], distanceM: null, category: null, address: null, source: 'osm' as const })
     const out = mergePlaces('中山站', [[at('中山站', 24.1477, 120.6736), at('中山站', 22.62, 120.27), at('捷運中山站', 25.0525, 121.5203)]], [25.0478, 121.517])
     expect(out[0]!.name).toBe('捷運中山站')
+  })
+})
+
+describe('one row per station (2026-11-08: 芝山捷運站 listed six entries plus 圓山、中山)', () => {
+  const lm = (name: string, lat: number, lon: number, category: string, address: string | null = null) =>
+    fromLandmark({ name, lat, lon, address, category, distanceM: null })
+  const osm = (name: string, lat: number, lon: number) => fromOsm({ name, detail: '福華路，士林區，臺北市', point: [lat, lon] })
+  const landmarks = [
+    lm('芝山捷運橋下公園', 25.1031, 121.5213, '公園'),
+    lm('公車捷運芝山站（福華）', 25.1041, 121.5223, '交通'),
+    lm('【永慶房屋】芝山捷運直營店', 25.104, 121.5225, '商家', 'No. 171, Fuhua Rd'),
+    lm('捷運芝山站 夜間婦女候車區', 25.1029, 121.5226, '交通'),
+    lm('捷運淡水線-芝山站', 25.1025, 121.5227, '地點'),
+    lm('圓山捷運站', 25.0715, 121.5201, '交通', '酒泉街9-1號'),
+    lm('Zhong Shan MRT 中山捷運站', 25.0526, 121.5204, '公車站'),
+    lm('松山捷運站', 25.0502, 121.5776, '車站', '松山區八德路四段'),
+  ]
+  const nominatim = [osm('捷運芝山站(福華)', 25.1041, 121.5223), osm('捷運芝山站(福國)', 25.1019, 121.5243), osm('捷運芝山站 (福華)', 25.1026, 121.5228)]
+
+  it('merges every name for the same station into one 捷運芝山站 on top, and drops other stations', () => {
+    const out = mergePlaces('芝山捷運站', [landmarks, nominatim], TIANMU)
+    expect(out[0]!.name).toBe('捷運芝山站')
+    expect(out.slice(1).map((p) => p.name).sort()).toEqual(['【永慶房屋】芝山捷運直營店', '芝山捷運橋下公園'].sort())
+    // 合併後的點是那幾個點中間真的有的一個，不是平均出來的
+    const all = [...landmarks, ...nominatim].map((p) => p.point.join())
+    expect(all).toContain(out[0]!.point.join())
+  })
+
+  it('same for 芝山站 and 捷運芝山站', () => {
+    for (const q of ['芝山站', '捷運芝山站']) expect(mergePlaces(q, [landmarks, nominatim], TIANMU)[0]!.name).toBe('捷運芝山站')
+  })
+
+  it('does not merge the same station name in two far-apart places', () => {
+    const a = lm('捷運芝山站 夜間婦女候車區', 25.1029, 121.5226, '交通')
+    const b = lm('公車捷運芝山站（福華）', 25.1041, 121.5223, '交通')
+    const far = lm('芝山站', 25.2, 121.6, '公車站')
+    expect(mergePlaces('芝山站', [[a, b, far]], TIANMU)).toHaveLength(2)
+  })
+
+  it('leaves non-station searches alone', () => {
+    const out = mergePlaces('芝山', [landmarks], TIANMU)
+    expect(out.map((p) => p.name)).toContain('捷運淡水線-芝山站')
+    expect(out.map((p) => p.name)).toContain('公車捷運芝山站（福華）')
+  })
+})
+
+describe('baseName / stationCore / stationQuery / mentionsCore', () => {
+  it('baseName drops brackets and exits', () => {
+    expect(baseName('捷運大直站(1號出口)')).toBe(baseName('捷運大直站'))
+    expect(baseName('捷運芝山站 (福華)')).toBe(baseName('捷運芝山站(福國)'))
+  })
+  it('stationCore finds the station a name refers to', () => {
+    expect(stationCore('公車捷運芝山站（福華）')).toBe('芝山')
+    expect(stationCore('捷運淡水線-芝山站')).toBe('芝山')
+    expect(stationCore('捷運芝山站 夜間婦女候車區')).toBe('芝山')
+    expect(stationCore('台北捷運士林站')).toBe('士林')
+    expect(stationCore('臺鐵松山車站')).toBe('松山')
+    expect(stationCore('芝山捷運橋下公園')).toBeNull()
+    expect(stationCore('【永慶房屋】芝山捷運直營店')).toBeNull()
+  })
+  it('stationQuery', () => {
+    expect(stationQuery('芝山捷運站')).toBe('芝山')
+    expect(stationQuery('捷運 芝山')).toBe('芝山')
+    expect(stationQuery('芝山站')).toBe('芝山')
+    expect(stationQuery('芝山')).toBeNull()
+    expect(stationQuery('天母體育館')).toBeNull()
+  })
+  it('mentionsCore', () => {
+    expect(mentionsCore('芝山捷運站', '圓山捷運站酒泉街9-1號')).toBe(false)
+    expect(mentionsCore('芝山捷運站', '芝山捷運橋下公園')).toBe(true)
+    expect(mentionsCore('台北車站', '臺北火車站')).toBe(true)
+    expect(mentionsCore('天母棒球埸', '天母棒球場')).toBe(true) // 沒有種類字：不過濾，讓錯字容忍照常
   })
 })
