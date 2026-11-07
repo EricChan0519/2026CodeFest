@@ -52,6 +52,9 @@ import { formatDistance, loadPoiIndex, searchPois } from '@/lib/poiSearch'
 import type { PoiHit, PoiIndex } from '@/lib/poiSearch'
 import { WALK_M_PER_MIN, planBus, type BusPlan } from '@/lib/transferBus'
 import { loadStopIndex, searchStops } from '@/lib/stopSearch'
+import { isForeignQuery, localizeNames, pageLang, stopLabel, translateForSearch } from '@/lib/foreignSearch'
+import type { NameLabel, QueryTranslation } from '@/lib/foreignSearch'
+import type { ForeignLang } from '@/lib/contract'
 import type { StopIndex } from '@/lib/stopSearch'
 import type { ManeuverKind } from '@/lib/contract'
 import { fetchWalkRoute } from '@/lib/walkRoute'
@@ -78,6 +81,32 @@ const placeResults = ref<PlaceHit[] | null>(null)
 const poiResults = ref<PoiHit[] | null>(null)
 const stopsUpdatedAt = ref('')
 const poiRelease = ref('')
+/** 外語搜尋：搜尋字串換成的中文（畫面上顯示「대만박물관 → 臺灣博物館」） */
+const translation = ref<QueryTranslation | null>(null)
+/** 結果名稱要翻成的語言：網址 ?lang= 優先，否則用搜尋字串的語言；中文是 null */
+const displayLang = ref<ForeignLang | null>(pageLang())
+/** 中文地名 → 使用者語言的寫法（翻譯或讀音） */
+const labels = shallowRef<Map<string, NameLabel>>(new Map())
+
+interface NameLines {
+  main: string
+  sub: string | null
+  reading: boolean
+}
+
+/** 結果名稱的兩行：上面是使用者的語言（有翻譯的話），下面是中文原名（招牌上看到的）；只有讀音時中文在上 */
+function linesOf(zh: string, l: NameLabel | null | undefined): NameLines {
+  if (!l) return { main: zh, sub: null, reading: false }
+  return l.isReading ? { main: zh, sub: l.text, reading: true } : { main: l.text, sub: zh, reading: false }
+}
+function nameLines(zh: string): NameLines {
+  return linesOf(zh, displayLang.value ? labels.value.get(zh) : null)
+}
+function stopLines(st: Station): NameLines {
+  const lang = displayLang.value
+  return linesOf(st.name.zh, lang ? stopLabel(st, lang, labels.value) : null)
+}
+
 /** 結果依距離排序用的參考點是不是使用者位置；拿不到位置就用臺北車站 */
 const nearUser = ref(false)
 const TAIPEI_STATION: LatLon = [25.0478, 121.517]
@@ -98,7 +127,14 @@ function positionWithin(ms: number): Promise<LatLon | null> {
 
 let searchSeq = 0
 /** 最近一次搜尋：位置變了（位置晚到、導航結束回來）時用來重排，不用再查一次 OpenStreetMap */
-let lastSearch: { q: string; osm: Place[]; stops: StopIndex | null; pois: PoiIndex | null } | null = null
+let lastSearch: {
+  q: string
+  /** 外語搜尋時使用者打的原文（英文也比對 TDX 英文站名、連鎖店英文品牌）；中文搜尋是 null */
+  original: string | null
+  osm: Place[]
+  stops: StopIndex | null
+  pois: PoiIndex | null
+} | null = null
 
 const BEARING_TEXT: Record<string, string> = {
   N: '北', NE: '東北', E: '東', SE: '東南', S: '南', SW: '西南', W: '西', NW: '西北',
@@ -119,13 +155,53 @@ async function rankResults(seq: number, near: LatLon, isUser: boolean): Promise<
     landError = (e as Error).message
   }
   if (seq !== searchSeq) return null
-  stopResults.value = last.stops ? searchStops(last.stops, last.q, 20, near) : []
-  poiResults.value = last.pois ? searchPois(last.pois, last.q, { near, limit: POI_LIMIT }) : []
+  const qs = [last.q, ...(last.original ? [last.original] : [])]
+  const stops = last.stops
+  const pois = last.pois
+  stopResults.value = stops ? uniqueBy(qs.flatMap((q) => searchStops(stops, q, 20, near)), (s) => s.stationUid).slice(0, 20) : []
+  poiResults.value = pois
+    ? uniqueBy(qs.flatMap((q) => searchPois(pois, q, { near, limit: POI_LIMIT })), (p) => `${p.name}|${p.point[0]}|${p.point[1]}`)
+        .sort((a, b) => (a.distanceM ?? 0) - (b.distanceM ?? 0))
+        .slice(0, POI_LIMIT)
+    : []
   placeResults.value = mergePlaces(last.q, [landmarks, last.osm.map(fromOsm)], near)
   nearUser.value = isUser
   poiShown.value = POI_PAGE
   placeShown.value = PLACE_PAGE
+  void refreshLabels(seq)
   return landError
+}
+
+function uniqueBy<T>(items: T[], key: (t: T) => string): T[] {
+  const seen = new Set<string>()
+  return items.filter((t) => {
+    const k = key(t)
+    if (seen.has(k)) return false
+    seen.add(k)
+    return true
+  })
+}
+
+/** 把結果的中文名稱翻成使用者的語言；後端失敗就只顯示中文 */
+async function refreshLabels(seq: number) {
+  const lang = displayLang.value
+  if (!lang) {
+    labels.value = new Map()
+    return
+  }
+  const names = [
+    ...(placeResults.value ?? []).map((p) => p.name),
+    ...(poiResults.value ?? []).map((p) => p.name),
+    ...(stopResults.value ?? []).map((s) => s.name.zh),
+  ]
+  const map = await localizeNames(lang, names)
+  if (seq === searchSeq) labels.value = map
+}
+
+/** 點「也可能是…」：用那個中文重新搜尋 */
+function searchFor(text: string) {
+  addressInput.value = text
+  void search()
 }
 
 /** 用現在的位置重排目前的搜尋結果（導航結束回到搜尋畫面時） */
@@ -142,11 +218,30 @@ function hasAnyResult(): boolean {
 
 /** 同時查站牌（TDX 快照）、連鎖店（Overture 快照）、地標（後端 Overture 快照）和地址（OSM）；任何一邊失敗不影響其他 */
 async function search() {
-  const q = addressInput.value.trim()
-  if (!q || searching.value) return
+  const raw = addressInput.value.trim()
+  if (!raw || searching.value) return
   searching.value = true
   const seq = ++searchSeq
   searchError.value = ''
+  translation.value = null
+  // 外語：先換成中文再搜尋（後端規則翻譯，不用 AI）；後端沒開或翻不出來就照原字串搜尋
+  let q = raw
+  let original: string | null = null
+  if (isForeignQuery(raw)) {
+    try {
+      const t = await translateForSearch(raw)
+      translation.value = t
+      if (t.lang) displayLang.value = pageLang() ?? t.lang
+      if (t.to) {
+        q = t.to
+        original = raw
+      }
+    } catch {
+      // 照原字串搜尋
+    }
+  } else {
+    displayLang.value = pageLang()
+  }
   clearBusPlan()
   stopResults.value = null
   placeResults.value = null
@@ -159,6 +254,7 @@ async function search() {
   if (pois.status === 'fulfilled') poiRelease.value = pois.value.release
   lastSearch = {
     q,
+    original,
     osm: places.status === 'fulfilled' ? places.value : [],
     stops: stops.status === 'fulfilled' ? stops.value : null,
     pois: pois.status === 'fulfilled' ? pois.value : null,
@@ -1038,6 +1134,28 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
 
       <p v-if="searchError" class="text-amber-200" role="alert">{{ searchError }}</p>
 
+      <!-- 外語搜尋：顯示換成的中文，使用者看得出來是用什麼搜的；有其他可能就給按鈕 -->
+      <div v-if="translation" class="rounded-lg bg-white/10 p-3" aria-live="polite">
+        <div class="text-lg">
+          {{ translation.from }} →
+          <span v-if="translation.to" class="font-bold" lang="zh-Hant">{{ translation.to }}</span>
+          <span v-else class="text-amber-200">?</span>
+        </div>
+        <div v-if="translation.skipped.length" class="text-sm text-amber-200">? {{ translation.skipped.join(' ') }}</div>
+        <div v-if="translation.alternatives.length" class="mt-2 flex flex-wrap gap-2">
+          <button
+            v-for="alt in translation.alternatives"
+            :key="alt"
+            type="button"
+            class="rounded-full bg-white/20 px-3 py-1 text-base"
+            lang="zh-Hant"
+            @click="searchFor(alt)"
+          >
+            {{ alt }}
+          </button>
+        </div>
+      </div>
+
       <!-- 搭公車去：選了地址或店家 A 之後，搜尋結果收起來，這一區放在搜尋框正下方。用 TDX 停靠順序在裝置上算直達車 -->
       <section v-if="showBusPanel" ref="busPanel" class="scroll-mt-4 space-y-2" aria-label="搭公車去">
         <div class="flex items-start justify-between gap-3">
@@ -1099,9 +1217,10 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
             @click="pickPlace(p)"
           >
             <div class="flex items-baseline justify-between gap-2">
-              <span class="text-lg font-bold">{{ p.name }}</span>
+              <span class="text-lg font-bold">{{ nameLines(p.name).main }}</span>
               <span class="shrink-0 text-sm text-white/80">{{ formatDistance(p.distanceM) }}</span>
             </div>
+            <div v-if="nameLines(p.name).sub" class="text-base text-white/90" :class="{ italic: nameLines(p.name).reading }">{{ nameLines(p.name).sub }}</div>
             <div v-if="p.detail" class="text-sm text-white/70">{{ p.detail }}</div>
           </button>
           <button
@@ -1132,10 +1251,11 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
             @click="pickPoi(p)"
           >
             <div class="flex items-baseline justify-between gap-2">
-              <span class="text-lg font-bold">{{ p.name }}</span>
+              <span class="text-lg font-bold">{{ nameLines(p.name).main }}</span>
               <span class="shrink-0 text-sm text-white/80">{{ formatDistance(p.distanceM) }}</span>
             </div>
-            <div class="text-sm text-white/70">{{ p.brand.zh }}<template v-if="p.address">・{{ p.address }}</template></div>
+            <div v-if="nameLines(p.name).sub" class="text-base text-white/90" :class="{ italic: nameLines(p.name).reading }">{{ nameLines(p.name).sub }}</div>
+            <div class="text-sm text-white/70">{{ displayLang && p.brand.en ? p.brand.en : p.brand.zh }}<template v-if="p.address">・{{ p.address }}</template></div>
           </button>
           <button
             v-if="poiShown < poiResults.length"
@@ -1155,9 +1275,10 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
           </h2>
           <div v-for="st in stopResults" :key="st.stationUid" class="rounded-lg bg-white/10 p-3">
             <div class="text-lg font-bold">
-              {{ st.name.zh }}
+              {{ stopLines(st).main }}
               <span v-if="st.bearing" class="text-sm font-normal text-white/70">（站位朝{{ BEARING_TEXT[st.bearing] ?? st.bearing }}）</span>
             </div>
+            <div v-if="stopLines(st).sub" class="text-base text-white/90" :class="{ italic: stopLines(st).reading }">{{ stopLines(st).sub }}</div>
             <div class="mb-2 text-sm text-white/70">點下要搭的那一班車：</div>
             <div class="flex flex-wrap gap-2">
               <button

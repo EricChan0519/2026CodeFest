@@ -70,6 +70,32 @@ export interface PlaceSearchResponse {
   source: { name: string; release: string | null; license: string | null; updatedAt: string | null }
 }
 
+/** 外語地點搜尋支援的語言（中文以外） */
+export type ForeignLang = 'en' | 'id' | 'vi' | 'th' | 'km' | 'ko' | 'ja'
+
+/** POST /api/translate/query：外語搜尋字串 → 中文（規則＋開放資料，不用 AI 模型） */
+export interface TranslateQueryResponse {
+  /** 判斷出來的語言；中文是 'zh' */
+  lang: ForeignLang | 'zh'
+  /** 中文搜尋字串，最可能的在前；翻不出來是空陣列 */
+  queries: string[]
+  /** 有看不懂、略過的部分 */
+  partial: boolean
+  segments: { text: string; kind: 'prefix' | 'proper' | 'head' | 'unknown'; zh: string[]; via: string }[]
+}
+
+/** POST /api/translate/names：中文地名 → 使用者的語言；拆不出來的不翻（text 為 null），只給讀音 */
+export interface LocalizedName {
+  zh: string
+  text: string | null
+  reading: string | null
+}
+
+export interface TranslateNamesResponse {
+  lang: ForeignLang
+  names: LocalizedName[]
+}
+
 export interface AroundRequest {
   lat: number
   lon: number

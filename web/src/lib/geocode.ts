@@ -54,6 +54,35 @@ export function parseNominatim(rows: NominatimRow[]): Place[] {
   return out
 }
 
+/**
+ * 捷運站的另一種說法，給 Nominatim 查不到時重試一次：
+ * 「芝山捷運站」「捷運 芝山」「芝山 MRT」→「捷運芝山站」；本來就是「捷運芝山站」→「芝山站」。
+ * 不是捷運站的說法回 null。
+ */
+export function mrtAlternative(q: string): string | null {
+  const s = q.trim().replace(/\s+/g, '')
+  const canonical = s.match(/^捷運(.+?)站$/)
+  if (canonical) return `${canonical[1]}站`
+  const m = s.match(/^(.+?)捷運站?$/) ?? s.match(/^捷運(.+?)$/) ?? s.match(/^(.+?)(?:站)?mrt(?:station)?$/i)
+  const name = m?.[1]?.replace(/站$/, '')
+  return name ? `捷運${name}站` : null
+}
+
+/** 公開 Nominatim 每秒最多一次 */
+const NOMINATIM_GAP_MS = 1100
+
+async function queryNominatim(query: string, limit: number, signal: AbortSignal): Promise<Place[]> {
+  const url = new URL(NOMINATIM_URL)
+  url.searchParams.set('q', query)
+  url.searchParams.set('format', 'jsonv2')
+  url.searchParams.set('countrycodes', 'tw')
+  url.searchParams.set('limit', String(limit))
+  url.searchParams.set('accept-language', 'zh-TW')
+  const res = await fetch(url, { signal })
+  if (!res.ok) throw new Error(`GEOCODE_HTTP_${res.status}`)
+  return parseNominatim((await res.json()) as NominatimRow[])
+}
+
 export async function searchPlaces(q: string, opts: { timeoutMs?: number; limit?: number } = {}): Promise<Place[]> {
   const query = q.trim()
   if (!query) return []
@@ -64,15 +93,12 @@ export async function searchPlaces(q: string, opts: { timeoutMs?: number; limit?
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
-    const url = new URL(NOMINATIM_URL)
-    url.searchParams.set('q', query)
-    url.searchParams.set('format', 'jsonv2')
-    url.searchParams.set('countrycodes', 'tw')
-    url.searchParams.set('limit', String(limit))
-    url.searchParams.set('accept-language', 'zh-TW')
-    const res = await fetch(url, { signal: ctrl.signal })
-    if (!res.ok) throw new Error(`GEOCODE_HTTP_${res.status}`)
-    return parseNominatim((await res.json()) as NominatimRow[])
+    const first = await queryNominatim(query, limit, ctrl.signal)
+    const alt = mrtAlternative(query)
+    if (first.length > 0 || !alt) return first
+    // 查不到再換個說法查一次（只多一次，而且隔開一秒，符合 Nominatim 的使用規定）
+    await new Promise((r) => setTimeout(r, NOMINATIM_GAP_MS))
+    return await queryNominatim(alt, limit, ctrl.signal)
   } catch (e) {
     if ((e as Error).name === 'AbortError') throw new Error('搜尋逾時，請稍後再試')
     throw e

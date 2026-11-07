@@ -78,3 +78,26 @@ python3 -m venv /tmp/ovenv && /tmp/ovenv/bin/pip install duckdb
 前端（`web/src/lib/placeSearch.ts`）再和 Nominatim 的路名、地址合併、去重（同名 150 m 內、名稱互相包含 40 m 內），一樣依距離排。
 
 資料品質：少數地點座標不對（例如「新莊體育館游泳池」的地址「公園路11號」被定位到臺北車站旁的公園路），來源本身的問題。
+
+## 外語地點搜尋（韓、日、英、印尼、越、泰、高棉）
+
+2026-11-07 回報：「대만박물관」應該要找到「臺灣博物館」。做法是**先把外語換回中文再搜尋**，結果再換成使用者的語言顯示。
+不用 AI 模型（翻譯模型最小也要每個語言方向約 110 MB，專案有大小限制；而且執行階段 AI 必須在裝置端），全部用規則和開放資料，在後端算（`api/app/translate.py`）。
+
+| 資料 | 授權 | 用途 |
+| --- | --- | --- |
+| Unicode Unihan Database（kMandarin、kHangul、kVietnamese） | Unicode License v3 | 漢字的拼音、韓文漢字音、越南漢越音。只收地點、站牌、連鎖店名稱用到的約 5,200 字 → `api/data/han_readings.json`（166 KB） |
+| OpenCC 字典（JPShinjitaiCharacters、STCharacters） | Apache-2.0 | 日文新字體、簡體字 → 繁體（「台湾大学」「士林駅」） |
+| 地點詞彙表 `api/data/place_glossary.json`（人工整理，非核心資料） | AGPL-3.0（本專案） | 地點「種類詞」（博物館、公園、車站、醫院、清真寺、就業服務站…）、前綴（國立、市立、捷運）和約定俗成的地名（臺灣、臺北、淡水…），7 種語言 |
+
+更新讀音表：`python scripts/build_han_readings.py --unihan Unihan.zip --opencc-dict node_modules/opencc-js/dist/esm-lib/dict`（Unihan.zip 從 https://www.unicode.org/Public/UCD/latest/ucd/Unihan.zip 下載）。
+
+外語 → 中文（`POST /api/translate/query`）：
+1. 依文字判斷語言；拉丁字母再依對到的詞判斷英文或印尼文（Masjid、Pasar Malam → 印尼文）。
+2. 由左到右找詞彙表的詞，剩下的是專有名稱。
+3. 專有名稱用**讀音**對已知地名（後端 15.7 萬筆地點＋公車站名）：韓文比中文音譯（즈산）和韓文漢字音（지산），越南文比漢越音（Chi Sơn），英文、印尼文比拼音（Zhishan）。對到的字就是中文（芝山）；有好幾個時，常見的在前，畫面給「也可能是…」按鈕。
+4. 依中文的順序組回去：前綴＋專有名稱＋種類詞。泰文、高棉文、日文假名沒有可靠的讀音規則，只翻詞彙表裡有的詞；看不懂的部分畫面會標示。
+
+中文 → 外語（`POST /api/translate/names`）：只有能拆成「前綴＋一個專有名稱（3 字以內）＋種類詞」的名稱才翻（National Taiwan Museum、Museum Nasional Taiwan、국립대만박물관、สถานีรถไฟฟ้า Zhishan）。專有名稱用該語言慣用的寫法（英、印尼、泰、高棉用拼音；韓文用中文音譯；越南文用漢越音；日文用漢字）。拆不出來的（「臺北榮民總醫院」的「榮民總」不是地名）**不硬翻**，只給讀音，畫面同時留中文原名（招牌、站牌都是中文）。公車站在英文、印尼文直接用 TDX 官方英文站名。
+
+限制：詞彙表的韓、泰、高棉、越、印尼文由開發者整理，尚未請母語人士逐條校對；泰文、高棉文寫的專有名稱（例如泰文的「士林」）查不到，要改用英文或拼音。

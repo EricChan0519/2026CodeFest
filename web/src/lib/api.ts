@@ -8,12 +8,15 @@
 import type {
   AroundRequest,
   AroundResponse,
+  ForeignLang,
   NearbyRequest,
   PlaceSearchRequest,
   PlaceSearchResponse,
   RoutesRequest,
   RoutesResponse,
   StationsResponse,
+  TranslateNamesResponse,
+  TranslateQueryResponse,
 } from './contract'
 
 export class ApiError extends Error {
@@ -74,6 +77,15 @@ const endpoints = {
   landmarks: async (req: PlaceSearchRequest): Promise<PlaceSearchResponse> => {
     if (isMockApi()) return { places: [], source: { name: 'Overture Maps Places', release: null, license: null, updatedAt: null } }
     return post<PlaceSearchResponse>('/api/landmarks/search', req, 8000)
+  },
+  translateQuery: async (q: string): Promise<TranslateQueryResponse> => {
+    if (isMockApi()) return { lang: 'zh', queries: [], partial: false, segments: [] }
+    // 搜尋前要等它：後端沒回應就 3 秒放棄，改用原字串搜尋
+    return post<TranslateQueryResponse>('/api/translate/query', { q }, 3000)
+  },
+  translateNames: async (lang: ForeignLang, names: string[]): Promise<TranslateNamesResponse> => {
+    if (isMockApi()) return { lang, names: names.map((zh) => ({ zh, text: null, reading: null })) }
+    return post<TranslateNamesResponse>('/api/translate/names', { lang, names }, 8000)
   },
   around: async (req: AroundRequest): Promise<AroundResponse> => {
     if (isMockApi()) {
