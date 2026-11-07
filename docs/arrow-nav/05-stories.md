@@ -9,12 +9,73 @@
 | APP | App、Handler、APK | Flutter、Android 實機 | 隊長 |
 | NAV | 前端 1：感測與導航 | Node | 待填 |
 | UI | 前端 2：畫面、對象、語言 | Node，Figma | 待填 |
-| API | 後端與資料：FastAPI、TDX 快照、Valhalla | Python，Valhalla 建置要 Docker | 待填 |
+| API-A | 後端 1：服務與站位。FastAPI、錯誤格式、站位快照、規則表、mock | Python；部署 `api` 要 gcloud | 待填 |
+| API-B | 後端 2：路徑與地理資料。Valhalla、引擎 adapter、路口、路燈、階梯坡度 | Python、Docker；部署 `routing` 要 gcloud | 待填 |
 | PM | 規劃與 Demo：Repo、README、實測、彩排 | 會跑通主流程即可 | 待填 |
 
-- 只有 4 人時，由 NAV 或 API 兼任 PM，戶外實測全組輪流。
-- TDX 金鑰由隊長保管，只用來產生快照，不進 repo。
+- 隊伍最多 5 人。API 由兩人負責時，PM 由其他角色兼任，戶外實測全組輪流。
+- TDX 金鑰由隊長保管，只用來產生快照，不進 repo。D1 要跟隊長拿金鑰在本機跑腳本。
 - 隊友要先加入 Firebase 專案才能部署預覽版。
+- 部署 Cloud Run 要 gcloud。API 兩人都沒有時，交給隊長部署。
+
+## API 兩人的分工
+
+兩人共用 `api/`，但檔案不重疊。**分界是路徑引擎 adapter**：API-B 把 Valhalla（或備案 OSRM）的回應轉成我們自己的格式，API-A 只用這個格式組回應。V3 失敗改 OSRM 時，只有 API-B 要改。
+
+| | API-A：服務與站位 | API-B：路徑與地理資料 |
+|---|---|---|
+| 負責的檔案 | `api/app/main.py`、`schemas.py`、`errors.py`、`stations.py`、`routes_service.py`、`route_rules.py`、`adapters/fake.py`；`scripts/build_stop_index.py`；`api/data/stop_index.json`；`web/src/mocks/` | `routing/`；`api/app/adapters/valhalla.py`、`adapters/osrm.py`（備案）、`metrics.py`；`scripts/build_crossings.py`、`build_lamp_grid.py`；`api/data/crossings.json`、`lamp_grid.json` |
+| 階段 1 | **F4 mock（15:30）**、F2、D1、D2、R1 的 endpoint、R2 | **V3（16:30）**、R1 的 adapter |
+| 階段 2 | C1、C5；協助 PM 做 C6 | C2、C3、C4 |
+| 不用等對方 | 用 `FakeEngine` 回固定路線，endpoint 照樣開發和測試 | 用腳本直接呼叫 adapter 測試，不用等 FastAPI |
+
+### 共用的內部介面
+
+放在 `api/app/engine.py`，**和合約一起在 15:30 凍結**。兩人都同意才能改。
+
+```python
+LatLon = tuple[float, float]                # (lat, lon)
+
+@dataclass
+class PedestrianCosting:                    # 欄位名稱沿用 02 的權重表
+    walkway_factor: float = 1.0
+    sidewalk_factor: float = 1.0
+    alley_factor: float = 2.0
+    driveway_factor: float = 5.0
+    use_hills: float = 0.5
+    use_lit: float = 0.0
+    step_penalty: float | None = None       # None 用引擎預設
+    elevator_penalty: float | None = None
+    walking_speed_kmh: float = 5.1
+
+@dataclass
+class Maneuver:
+    kind: str                               # 03 的 maneuvers[].kind
+    at_index: int                           # geometry 的索引
+    distance_to_next_m: float
+    street: str | None
+
+@dataclass
+class EngineRoute:
+    distance_m: float
+    duration_s: float
+    geometry: list[LatLon]
+    maneuvers: list[Maneuver]
+    steps: int | None                       # 階梯段數；引擎給不出來時是 None
+    climb_m: float | None                   # 沒有坡度資料時是 None
+
+class RouteNotFound(Exception): ...         # → ROUTE_NOT_FOUND
+class RoutingUnavailable(Exception): ...    # → ROUTING_UNAVAILABLE
+
+class RoutingEngine(Protocol):
+    async def route(self, origin: LatLon, dest: LatLon,
+                    costing: PedestrianCosting, alternates: int = 0) -> list[EngineRoute]: ...
+    async def ping(self) -> bool: ...       # /api/health?deep=1 使用
+```
+
+- 用環境變數 `ROUTING_ENGINE`（`valhalla`、`osrm`、`fake`）和 `ROUTING_URL` 切換引擎。
+- OSRM 不支援的權重直接忽略，`steps`、`climb_m` 回 `None`。
+- 階段 2 由 API-B 提供 `metrics.measure(route: EngineRoute) -> Metrics`，欄位和 03 的 `metrics` 相同。API-A 只用這些數字決定推薦和原因，不讀快照原始檔。
 
 ## 時程
 
@@ -44,7 +105,7 @@ gantt
 
 | 時間 | 必須達成 | 沒達成怎麼辦 |
 |---|---|---|
-| 15:30 | Repo、合約、mock 都就緒 | 先凍結合約，其他延後 |
+| 15:30 | Repo、合約、mock、API 內部介面都就緒 | 先凍結合約，其他延後 |
 | **16:30** | V1、V2、V3 都有結論 | 見下方「技術驗證」 |
 | 17:10 前 | 錄一條真實走路軌跡（天黑前） | 改用路線合成的軌跡 |
 | 19:00 | 假資料走完整個導航流程 | 砍掉階段 2 |
@@ -59,7 +120,7 @@ gantt
 |---|---|---|---|---|
 | V1 | NAV＋APP | 實體 Android 手機、TownPass WebView 內的 `deviceorientationabsolute` | 有事件；對照指南針 App 誤差不超過 15° | APP 做 `nav_sensors` 的朝向 |
 | V2 | NAV＋APP | 同環境的 `watchPosition` | 戶外持續更新；精度合理 | APP 做 `nav_sensors` 的位置 |
-| V3 | API | 用臺北裁切資料建 Valhalla，部署到 Cloud Run | 能回傳步行路線；記錄映像大小、記憶體、冷啟動 | 改 OSRM（`foot.lua`）；階段 2 只留可行的情境 |
+| V3 | API-B | 用臺北裁切資料建 Valhalla，部署到 Cloud Run | 能回傳步行路線；記錄映像大小、記憶體、冷啟動 | 改 OSRM（`foot.lua`）；階段 2 只留可行的情境 |
 
 - 把測試頁部署到 Hosting 預覽版，用測試服務開啟，不需要等完整畫面。
 - 模擬器沒有真實羅盤，V1 要用實體手機。
@@ -99,9 +160,9 @@ flowchart LR
 | ID | 負責 | 故事 | 驗收條件 |
 |---|---|---|---|
 | F1 | PM | 作為隊員，我要有共用的 repo | 用 EricChan0519/2026CodeFest；全英文路徑；含 `app/ web/ api/ routing/ scripts/ docs/`；LICENSE 有 AGPL-3.0 與主辦聲明；全員能 clone；上傳前改成公開 |
-| F2 | API | 作為前端，我要能呼叫部署好的 API | `web` 上 Hosting；`api` 上 Cloud Run；`/api/health` 經 rewrite 回 200；有 Dockerfile |
+| F2 | API-A | 作為前端，我要能呼叫部署好的 API | `web` 上 Hosting；`api` 上 Cloud Run；`/api/health` 經 rewrite 回 200；有 Dockerfile |
 | F3 | APP | 作為使用者，我要在城市通看到這個服務 | 服務已預設置頂；`destinationUrl` 是 HTTPS；main manifest 有 `INTERNET`；release APK 能打開網頁 |
-| F4 | API | 作為前端，我不想等後端 | 15:30 前 [03](03-contracts.md) 的 mock 都有；`VITE_API_MOCK=1` 可切換 |
+| F4 | API-A | 作為前端，我不想等後端 | 15:30 前 [03](03-contracts.md) 的 mock 都有；`VITE_API_MOCK=1` 可切換 |
 
 ### App
 
@@ -115,15 +176,15 @@ flowchart LR
 
 | ID | 負責 | 故事 | 驗收條件 |
 |---|---|---|---|
-| D1 | API | 作為系統，我要有站位快照 | `scripts/build_stop_index.py` 從 TDX 產生 `api/data/stop_index.json`；排除只能下車的站；同名不同站位分開；包含中文和英文；印出有英文站名的比例；服務執行時不需要 TDX |
-| D2 | API | 作為前端，我要查附近和搜尋站位 | 兩個 API 符合合約；回應少於 1 秒；座標不進 log |
+| D1 | API-A | 作為系統，我要有站位快照 | `scripts/build_stop_index.py` 從 TDX 產生 `api/data/stop_index.json`；排除只能下車的站；同名不同站位分開；包含中文和英文；印出有英文站名的比例；服務執行時不需要 TDX |
+| D2 | API-A | 作為前端，我要查附近和搜尋站位 | 兩個 API 符合合約；回應少於 1 秒；座標不進 log |
 
 ### 路線
 
 | ID | 負責 | 故事 | 驗收條件 |
 |---|---|---|---|
-| R1 | API | 作為前端，我要拿到統一格式的路線 | `POST /api/routes` 符合合約，`metrics` 是 `null`；Valhalla 格式只出現在 adapter；polyline 解成 `[lat, lon]`；設定 `--max-instances`；座標不進 log |
-| R2 | API | 作為隊伍，上台前要能確認服務正常 | `/api/health?deep=1` 會檢查路徑服務和快照 |
+| R1 | API-A＋API-B | 作為前端，我要拿到統一格式的路線 | `POST /api/routes` 符合合約，`metrics` 是 `null`；Valhalla 格式只出現在 adapter；polyline 解成 `[lat, lon]`；設定 `--max-instances`；座標不進 log |
+| R2 | API-A | 作為隊伍，上台前要能確認服務正常 | `/api/health?deep=1` 會檢查路徑服務和快照 |
 
 ### 導航
 
@@ -161,11 +222,11 @@ flowchart LR
 
 | ID | 負責 | 故事 | 驗收條件 |
 |---|---|---|---|
-| C1 | API | 作為使用者，我要拿到適合我的路線 | `route_rules.py` 實作規則表；權重組合正確；去重；繞路上限；只有量得到改善才給原因；`no_better_route` 正確 |
-| C2 | API | 作為兒童，我想少過沒有紅綠燈的路口 | `scripts/build_crossings.py` 從 OSM 產生快照；分清楚有燈、無燈、不確定；`metrics` 正確 |
-| C3 | API | 作為晚上走路的人，我想走路燈較多的路 | `scripts/build_lamp_grid.py` 從路燈資料建網格；TWD97 轉 WGS84 正確；`litRatio` 正確；服務啟動不載入原始檔 |
-| C4 | API | 作為長者，我想少階梯少坡 | 階梯用 `step_penalty`；`build_elevation` 可行才做坡度；不可行時 `climbM` 是 `null`，不給 `flatter` |
-| C5 | API | 作為評審，我想在白天看到晚上的效果 | `simulate: "night"` 可用；回應有 `simulated_night` |
+| C1 | API-A | 作為使用者，我要拿到適合我的路線 | `route_rules.py` 實作規則表；權重組合正確；去重；繞路上限；只有量得到改善才給原因；`no_better_route` 正確 |
+| C2 | API-B | 作為兒童，我想少過沒有紅綠燈的路口 | `scripts/build_crossings.py` 從 OSM 產生快照；分清楚有燈、無燈、不確定；`metrics` 正確 |
+| C3 | API-B | 作為晚上走路的人，我想走路燈較多的路 | `scripts/build_lamp_grid.py` 從路燈資料建網格；TWD97 轉 WGS84 正確；`litRatio` 正確；服務啟動不載入原始檔 |
+| C4 | API-B | 作為長者，我想少階梯少坡 | 階梯用 `step_penalty`；`build_elevation` 可行才做坡度；不可行時 `climbM` 是 `null`，不給 `flatter` |
+| C5 | API-A | 作為評審，我想在白天看到晚上的效果 | `simulate: "night"` 可用；回應有 `simulated_night` |
 | C6 | PM | 作為評審，我要看到真實的路線差別 | 找到至少 2 組起終點，推薦路線和最快路線確實不同；到現場確認；內建成 Demo 路線 |
 | U10 | UI | 作為使用者，我想知道為什麼推薦這條路 | P5 依代碼和數字組句，8 種語言都有；「看其他路線」可切換；全站不出現「安全」「無障礙」 |
 | U11 | UI | 作為評審，我要知道現在是模擬晚上 | 設定頁或 Demo 模式有開關；畫面標示「模擬晚上」 |

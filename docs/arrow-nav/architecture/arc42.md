@@ -105,10 +105,10 @@ C4Container
 | ea:townpass:arrow-nav:system:arrow-nav | 系統 | 整個服務 | 全組 |
 | ea:townpass:arrow-nav:external:townpass-app | TownPass App | WebView、Handler | APP |
 | ea:townpass:arrow-nav:container:web | 微服務網頁 | 畫面、導航引擎 | NAV、UI |
-| ea:townpass:arrow-nav:container:api | API | 站位、規則表、組合路線 | API |
-| ea:townpass:arrow-nav:container:routing | 路徑服務 | Valhalla | API |
-| ea:townpass:arrow-nav:container:snapshots | 資料快照 | 站位、路口、路燈網格 | API |
-| ea:townpass:arrow-nav:container:scripts | 資料腳本 | 產生快照 | API |
+| ea:townpass:arrow-nav:container:api | API | 站位、規則表、組合路線 | API-A |
+| ea:townpass:arrow-nav:container:routing | 路徑服務 | Valhalla | API-B |
+| ea:townpass:arrow-nav:container:snapshots | 資料快照 | 站位、路口、路燈網格 | API-A（站位）、API-B（路口、路燈） |
+| ea:townpass:arrow-nav:container:scripts | 資料腳本 | 產生快照 | API-A（站位）、API-B（路口、路燈） |
 
 ### Repo 結構
 

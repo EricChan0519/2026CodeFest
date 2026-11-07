@@ -24,7 +24,8 @@
 | APP（隊長） | App、Handler、APK | [03 合約](03-contracts.md) 的 Bridge、[ADR-0003](architecture/decisions/0003-use-web-sensors-first.md) |
 | NAV（前端 1） | 感測與導航 | [04 導航邏輯](04-nav-logic.md)、[03 合約](03-contracts.md) |
 | UI（前端 2） | 畫面、對象、語言 | [01 產品規格](01-product-spec.md)、[03 合約](03-contracts.md) 的 REST |
-| API（後端與資料） | FastAPI、TDX 快照、Valhalla | [02 候選路線](02-route-candidates.md)、[03 合約](03-contracts.md) 的 REST |
+| API-A（後端 1） | FastAPI、站位快照、規則表、mock | [03 合約](03-contracts.md) 的 REST、[02 候選路線](02-route-candidates.md)、[05](05-stories.md#api-兩人的分工) 的內部介面 |
+| API-B（後端 2） | Valhalla、引擎 adapter、路口、路燈 | [02 候選路線](02-route-candidates.md)、[05](05-stories.md#api-兩人的分工) 的內部介面 |
 | PM（規劃與 Demo） | Repo、README、實測、彩排 | [06 Demo 腳本](06-demo-script.md)、[07 加入新技術](07-adding-tech.md) |
 
 ## 文件清單
@@ -47,8 +48,8 @@
 
 1. **PM：** 團隊 repo 是 [EricChan0519/2026CodeFest](https://github.com/EricChan0519/2026CodeFest)，clone 到全英文路徑。從 `starter/` 建 `web/`、`api/`。**repo 目前是私有的，上傳前要改成公開。**
 2. **全員：** 讀 [03 合約](03-contracts.md)，**15:30 前**提出意見。之後要改合約，受影響的人都要同意。
-3. **API：** 15:30 前把 mock JSON 放進 `web/src/mocks/`，前端不用等後端。
-4. **APP、NAV、API：** 先做 3 個技術驗證，16:30 判斷（見 [05](05-stories.md)）。
+3. **API-A：** 15:30 前把 mock JSON 放進 `web/src/mocks/`，前端不用等後端。
+4. **APP、NAV、API-B：** 先做 3 個技術驗證，16:30 判斷（見 [05](05-stories.md)）。
 
 ## 已定案的技術
 
