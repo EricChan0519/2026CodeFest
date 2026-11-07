@@ -308,6 +308,16 @@ function pointPose(s: StepName, i: number, r = pointAngle(cur.r)): Pose {
   return { x: cx - size / 2, y: cy - size / 2, s: pb / size, r, k: K_POINT }
 }
 
+/**
+ * 按下第 i 列之前，箭頭要不要先滑過去：換了一列，或清單捲動過。
+ * 捲動清單時箭頭不跟著動（手機上一邊捲一邊追會抽搐，2026-11-08 回報），
+ * 所以同一列也可能已經不在箭頭旁邊了。
+ */
+function moveTarget(s: StepName, i: number): Pose | null {
+  const to = pointPose(s, i)
+  return i !== armRow || Math.abs(to.y - cur.y) > 1 || Math.abs(to.x - cur.x) > 1 ? to : null
+}
+
 /** 步驟由左滑入，箭頭同時滑到第一列外側（搜尋步驟是搜尋欄） */
 async function enterStep(s: StepName, from: Pose = cur, easing = EASE_LIST) {
   const my = ++seq
@@ -370,8 +380,9 @@ async function moveArrow(s: StepName, i: number) {
 async function press(s: StepName, i: number): Promise<boolean> {
   const my = ++seq
   busy.value = true
-  if (i !== armRow) {
-    await play([{ p: cur }, { p: pointPose(s, i) }], dur(T_MOVE), EASE_MOVE)
+  const to = moveTarget(s, i)
+  if (to) {
+    await play([{ p: cur }, { p: to }], dur(T_MOVE), EASE_MOVE)
     if (my !== seq) return false
     armRow = i
   }
@@ -867,8 +878,9 @@ async function launch(s: StepName, i: number, choice: TripChoice) {
   const my = ++seq
   busy.value = true
   navigator.vibrate?.(12)
-  if (i !== armRow) {
-    await play([{ p: cur }, { p: pointPose(s, i) }], dur(T_MOVE), EASE_MOVE)
+  const to = moveTarget(s, i)
+  if (to) {
+    await play([{ p: cur }, { p: to }], dur(T_MOVE), EASE_MOVE)
     if (my !== seq) return
     armRow = i
   }
@@ -1293,7 +1305,7 @@ watch(debugOpen, async () => {
   await play([{ p: from, easing: 'cubic-bezier(0.2, 0.9, 0.1, 1)' }, { p: { ...navPose, r: rot } }], 360)
 })
 
-// ── 版面變動（轉向、鍵盤、清單捲動、結果出來） ─────────
+// ── 版面變動（轉向、鍵盤、結果出來；清單捲動時箭頭不動，點了才滑過去） ─────────
 let resizeRaf = 0
 /**
  * 過場中版面變了、還沒重新對準。過場的終點是開始時量的；手機收鍵盤時視窗變高，
@@ -1383,7 +1395,7 @@ onBeforeUnmount(() => {
         <section class="step" :class="`st-${steps.lang}`" data-step="lang" :inert="steps.lang !== 'in'" aria-labelledby="h-lang">
           <div class="step-body">
             <h2 id="h-lang" class="step-h" lang="zh-TW">選擇語言<span class="step-sub" lang="en">Language</span></h2>
-            <ul class="list" @scroll.passive="onResize">
+            <ul class="list">
               <li v-for="(item, i) in LANG_ITEMS" :key="item.id">
                 <button type="button" class="row" :class="{ picked: phase === 'lang' && picked === i }" :data-i="i" :lang="item.id" @click="pickLang(i)">
                   <span class="row-label">{{ item.label }}</span>
@@ -1397,7 +1409,7 @@ onBeforeUnmount(() => {
         <section class="step" :class="`st-${steps.age}`" data-step="age" :inert="steps.age !== 'in'" aria-labelledby="h-age">
           <div class="step-body">
             <h2 id="h-age" class="step-h">{{ S.ageTitle }}</h2>
-            <ul class="list" @scroll.passive="onResize">
+            <ul class="list">
               <li v-for="(key, i) in AGE_ITEMS" :key="key">
                 <button type="button" class="row" :class="{ picked: phase === 'age' && picked === i }" :data-i="i" @click="pickAge(i)">
                   <span class="row-label">{{ S.ages[key] }}</span>
@@ -1411,7 +1423,7 @@ onBeforeUnmount(() => {
         <section class="step" :class="`st-${steps.mode}`" data-step="mode" :inert="steps.mode !== 'in'" aria-labelledby="h-mode">
           <div class="step-body">
             <h2 id="h-mode" class="step-h">{{ R.modeTitle }}</h2>
-            <ul class="list" @scroll.passive="onResize">
+            <ul class="list">
               <li v-for="(key, i) in MODE_ITEMS" :key="key">
                 <button type="button" class="row" :class="{ picked: phase === 'mode' && picked === i }" :data-i="i" @click="pickMode(i)">
                   <span class="row-label">{{ R.modes[key] }}</span>
@@ -1453,7 +1465,7 @@ onBeforeUnmount(() => {
             </form>
             <div v-if="search.searching.value" class="search-spinner" role="status" :aria-label="S.searching"></div>
             <p v-if="searchNote" class="note warn" role="status">{{ searchNote }}</p>
-            <ul v-if="hasResults && !search.searching.value" class="list results" @scroll.passive="onResize">
+            <ul v-if="hasResults && !search.searching.value" class="list results">
               <template v-for="(r, i) in rows" :key="r.key">
                 <li v-if="r.type === 'hit' && r.head" class="group-h" aria-hidden="true">{{ r.head }}</li>
                 <li>
@@ -1494,7 +1506,7 @@ onBeforeUnmount(() => {
                 {{ S.howTitle }}<span class="step-sub">{{ target?.name }}</span>
               </h2>
             </div>
-            <ul class="list" @scroll.passive="onResize">
+            <ul class="list">
               <li v-for="(r, i) in howRows" :key="r.key">
                 <button
                   type="button"
@@ -1535,7 +1547,7 @@ onBeforeUnmount(() => {
                 {{ S.routeTitle }}<span v-if="stopGroup" class="step-sub">{{ nameOf(stopGroup.name) }}<template v-if="stationFacing"> · {{ stationFacing }}</template></span>
               </h2>
             </div>
-            <ul class="list" @scroll.passive="onResize">
+            <ul class="list">
               <li v-for="(r, i) in routeRows" :key="r.route.stopUid">
                 <button type="button" class="row" :class="{ picked: phase === 'route' && picked === i }" :data-i="i" @click="pickRoute(i)">
                   <span class="sweep" aria-hidden="true" />
@@ -2686,7 +2698,7 @@ onBeforeUnmount(() => {
   pointer-events: none;
   transition: color 0.5s ease;
 }
-/* 箭頭停在清單／搜尋欄上時，跟著版面（鍵盤彈出、清單捲動）滑過去，不跳 */
+/* 箭頭停在清單／搜尋欄上時，跟著版面（鍵盤彈出、結果出來）滑過去，不跳；清單捲動時不跟 */
 .settled .hero {
   transition:
     color 0.5s ease,
