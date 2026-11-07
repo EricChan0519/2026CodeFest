@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { arrowAngle, directionKey, nextCssRotation, smoothHeading } from '../arrow'
+import { alphaForDt, arrowAngle, directionKey, easeRotation, nextCssRotation, smoothHeading } from '../arrow'
 
 describe('smoothHeading', () => {
   it('smooths across north (359 and 1 stay near 0, not 180)', () => {
@@ -63,5 +63,32 @@ describe('directionKey', () => {
     [180, 'turn_around'],
   ])('%d -> %s', (angle, key) => {
     expect(directionKey(angle)).toBe(key)
+  })
+})
+
+describe('alphaForDt', () => {
+  it('is 0 for no elapsed time and approaches 1 for long gaps', () => {
+    expect(alphaForDt(0, 80)).toBe(0)
+    expect(alphaForDt(10_000, 80)).toBeCloseTo(1)
+  })
+  it('matches the old 0.2-per-event feel at 60 Hz', () => {
+    expect(alphaForDt(1000 / 60, 80)).toBeGreaterThan(0.15)
+    expect(alphaForDt(1000 / 60, 80)).toBeLessThan(0.25)
+  })
+})
+
+describe('easeRotation', () => {
+  it('moves part of the way per frame and never overshoots', () => {
+    const r = easeRotation(0, 100, 16, 50)
+    expect(r).toBeGreaterThan(0)
+    expect(r).toBeLessThan(100)
+  })
+  it('snaps when close enough', () => {
+    expect(easeRotation(99.95, 100, 16, 50)).toBe(100)
+  })
+  it('reaches the target within a few time constants', () => {
+    let r = 0
+    for (let i = 0; i < 20; i++) r = easeRotation(r, 90, 16, 50) // 320 ms
+    expect(r).toBeGreaterThan(89)
   })
 })

@@ -23,6 +23,25 @@ export function smoothHeading(prev: HeadingVec | null, headingDeg: number, alpha
   return { x, y, deg: norm360(deg(Math.atan2(y, x))) }
 }
 
+/**
+ * 依「距離上一筆多久」算平滑係數：alpha = 1 − e^(−dt/τ)。
+ * 固定 alpha 的話，事件頻率低（部分 WebView 只有 ~10 Hz）時箭頭會慢很多；依時間算則延遲固定約 τ。
+ */
+export function alphaForDt(dtMs: number, tauMs: number): number {
+  if (dtMs <= 0) return 0
+  return 1 - Math.exp(-dtMs / tauMs)
+}
+
+/**
+ * 畫面每一幀把顯示角度往目標靠（指數趨近，不會超過目標），取代 CSS transition。
+ * CSS transition 每次事件都重新開始，會把箭頭再拖慢約 0.2 秒，且感測頻率低時會一格一格跳。
+ */
+export function easeRotation(current: number, target: number, dtMs: number, tauMs: number): number {
+  const diff = target - current
+  if (Math.abs(diff) < 0.1) return target
+  return current + diff * alphaForDt(dtMs, tauMs)
+}
+
 /** 箭頭相對手機上緣的角度：(bearing − heading) mod 360 */
 export function arrowAngle(bearing: number, heading: number): number {
   return norm360(bearing - heading)

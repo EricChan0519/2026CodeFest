@@ -5,7 +5,7 @@
  */
 import type { LatLon, RouteOption, SensorErrorCode } from '@/lib/contract'
 import type { PositionFix } from '@/sensors/source'
-import { arrowAngle, directionKey, nextCssRotation, smoothHeading } from './arrow'
+import { alphaForDt, arrowAngle, directionKey, nextCssRotation, smoothHeading } from './arrow'
 import type { DirectionKey, HeadingVec } from './arrow'
 import { NAV_CONFIG, arriveRadiusM, offRouteM } from './config'
 import type { NavConfig } from './config'
@@ -234,8 +234,10 @@ export function createNavMachine(opts: NavMachineOptions = {}): NavMachine {
     },
 
     onHeading(magneticDeg) {
-      hv = smoothHeading(hv, norm360(magneticDeg + cfg.declinationDeg), cfg.headingAlpha)
-      lastHeadingAt = clock()
+      const now = clock()
+      const alpha = lastHeadingAt === null ? 1 : alphaForDt(now - lastHeadingAt, cfg.headingTauMs)
+      hv = smoothHeading(hv, norm360(magneticDeg + cfg.declinationDeg), alpha)
+      lastHeadingAt = now
       publish()
     },
 

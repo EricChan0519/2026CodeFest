@@ -242,3 +242,33 @@ describe('replay + machine + announcer', () => {
     expect(cues.filter((c) => c.key === 'start')).toHaveLength(1)
   })
 })
+
+describe('machine: heading responsiveness', () => {
+  // 部分 Android WebView 的羅盤事件只有 10 Hz 左右；平滑要依時間，不可依事件數
+  it('follows a 90° turn within 300 ms even when events arrive at 10 Hz', () => {
+    const { m, advance } = setup()
+    m.start()
+    const mag = (trueDeg: number) => trueDeg - NAV_CONFIG.declinationDeg
+    m.onHeading(mag(0))
+    for (let i = 0; i < 3; i++) {
+      advance(0.1)
+      m.onHeading(mag(90))
+    }
+    expect(m.getView().headingDeg!).toBeGreaterThan(80)
+  })
+
+  it('still smooths jitter at 60 Hz (one noisy sample moves less than a third)', () => {
+    const { m, advance } = setup()
+    m.start()
+    const mag = (trueDeg: number) => trueDeg - NAV_CONFIG.declinationDeg
+    m.onHeading(mag(0))
+    for (let i = 0; i < 30; i++) {
+      advance(1 / 60)
+      m.onHeading(mag(0))
+    }
+    advance(1 / 60)
+    m.onHeading(mag(30))
+    const h = m.getView().headingDeg!
+    expect(Math.min(h, 360 - h)).toBeLessThan(10)
+  })
+})

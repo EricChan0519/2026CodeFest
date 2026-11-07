@@ -6,9 +6,11 @@
  * - 合成真實：用真實定位，路線以「你面向的方向」合成，走出去就能測箭頭、走偏、抵達
  * 文字是實驗用的中文；正式文案走 i18n（UI 負責）。
  */
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { LatLon } from '@/lib/contract'
 import { createAnnouncer } from '@/nav/announcer'
+import { easeRotation } from '@/nav/arrow'
+import { NAV_CONFIG } from '@/nav/config'
 import type { Cue } from '@/nav/announcer'
 import { createNavMachine } from '@/nav/machine'
 import type { NavMachine, NavState, NavView } from '@/nav/machine'
@@ -291,6 +293,25 @@ function restart() {
 
 onBeforeUnmount(stopAll)
 
+// 箭頭每一幀往目標角度內插，直接寫 DOM（不經 Vue 重繪、不用 CSS transition）。
+// 感測事件 10 Hz 或 60 Hz 都一樣順，延遲約 headingTauMs + arrowTauMs。
+const arrowEl = ref<SVGSVGElement | null>(null)
+let shownRotation = 0
+let lastFrameAt = 0
+let rafId = 0
+function frame(t: number) {
+  const target = view.value?.cssRotation
+  const dt = lastFrameAt ? t - lastFrameAt : 16
+  lastFrameAt = t
+  if (target !== undefined) shownRotation = easeRotation(shownRotation, target, dt, NAV_CONFIG.arrowTauMs)
+  if (arrowEl.value) arrowEl.value.style.transform = `rotate(${shownRotation}deg)`
+  rafId = requestAnimationFrame(frame)
+}
+onMounted(() => {
+  rafId = requestAnimationFrame(frame)
+})
+onBeforeUnmount(() => cancelAnimationFrame(rafId))
+
 // 讓使用者可以在跑的過程中加速
 const speedTimer = window.setInterval(setSpeed, 1000)
 onBeforeUnmount(() => window.clearInterval(speedTimer))
@@ -347,9 +368,9 @@ onBeforeUnmount(() => window.clearInterval(speedTimer))
       <div class="flex flex-1 items-center justify-center">
         <svg
           v-if="showArrow"
-          class="w-[60vw] max-w-72"
+          ref="arrowEl"
+          class="w-[60vw] max-w-72 will-change-transform"
           viewBox="0 0 100 100"
-          :style="{ transform: `rotate(${view.cssRotation}deg)`, transition: 'transform 0.2s linear' }"
         >
           <path
             d="M50 6 L88 88 L50 70 L12 88 Z"
