@@ -7,12 +7,15 @@
  * 正式流程用自己後端的 GET /api/stations/search（api.search），不是這個檔案。
  */
 import type { Station } from '@/lib/contract'
+import type { RoutePattern } from '@/lib/directBus'
 
 export const STOP_INDEX_URL = '/lab/stop_index.json'
 
 export interface StopIndex {
   updatedAt: string
   stations: Station[]
+  /** 每條路線、每個方向的停靠順序，給 planDirectBus 用；舊快照沒有時是空陣列 */
+  patterns: RoutePattern[]
   /** 預先算好的小寫、臺／台統一的搜尋字串，和 stations 同一個順序 */
   keys: string[]
 }
@@ -36,10 +39,11 @@ export function queryVariants(q: string): string[] {
   return [...out]
 }
 
-export function buildStopIndex(data: { updatedAt: string; stations: Station[] }): StopIndex {
+export function buildStopIndex(data: { updatedAt: string; stations: Station[]; patterns?: RoutePattern[] }): StopIndex {
   return {
     updatedAt: data.updatedAt,
     stations: data.stations,
+    patterns: data.patterns ?? [],
     keys: data.stations.map((s) => normalizeQuery(`${s.name.zh} ${s.name.en ?? ''}`)),
   }
 }
@@ -76,7 +80,7 @@ export function loadStopIndex(): Promise<StopIndex> {
     cached = fetch(STOP_INDEX_URL)
       .then((res) => {
         if (!res.ok) throw new Error(`STOPS_HTTP_${res.status}`)
-        return res.json() as Promise<{ updatedAt: string; stations: Station[] }>
+        return res.json() as Promise<{ updatedAt: string; stations: Station[]; patterns?: RoutePattern[] }>
       })
       .then(buildStopIndex)
       .catch((e) => {

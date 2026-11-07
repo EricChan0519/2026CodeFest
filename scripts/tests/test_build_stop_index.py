@@ -49,3 +49,34 @@ def test_pagination(monkeypatch):
     monkeypatch.setattr(builder, "tdx_get", fake)
     assert len(asyncio.run(builder.fetch_all("/test"))) == 5001
     assert [x[1]["$skip"] for x in calls] == [0,5000]
+
+
+def test_patterns_keep_stop_order_per_route_direction():
+    result = builder.build_index(load("stop_of_route"), load("stop"), load("route"), "x")
+    outbound = next(p for p in result["patterns"] if p["direction"] == 0)
+    assert outbound["routeName"] == {"zh": "1", "en": None}
+    assert outbound["headsign"] == {"zh": "往終點", "en": "To End"}
+    # s1、s2 同站位會合併；s4 只能下車、所在站位沒有可上車路線，不在 stations 裡；s5 沒有 StationID
+    assert outbound["stops"] == ["TPE1", "TPE2", "TPE1"]
+    assert outbound["noBoard"] == [] and outbound["noAlight"] == []
+    known = {s["stationUid"] for s in result["stations"]}
+    assert all(uid in known for p in result["patterns"] for uid in p["stops"])
+
+
+def test_patterns_follow_stop_sequence_and_boarding_flags():
+    stops = [
+        {"StopUID": "a", "StationID": "1", "StopName": {"Zh_tw": "甲"}, "StopBoarding": 0, "StopSequence": 3, "StopPosition": {"PositionLat": 25.0, "PositionLon": 121.5}},
+        {"StopUID": "b", "StationID": "2", "StopName": {"Zh_tw": "乙"}, "StopBoarding": 1, "StopSequence": 1, "StopPosition": {"PositionLat": 25.1, "PositionLon": 121.5}},
+        {"StopUID": "c", "StationID": "3", "StopName": {"Zh_tw": "丙"}, "StopBoarding": 0, "StopSequence": 2, "StopPosition": {"PositionLat": 25.2, "PositionLon": 121.5}},
+    ]
+    data = [{"RouteUID": "r", "RouteName": {"Zh_tw": "9"}, "Direction": 0, "Stops": stops}]
+    pattern = builder.build_index(data, [], [], "x")["patterns"][0]
+    assert pattern["stops"] == ["TPE2", "TPE3", "TPE1"]
+    # b 只能上車：不能在那裡下車
+    assert pattern["noAlight"] == [0] and pattern["noBoard"] == []
+
+
+def test_identical_patterns_from_sub_routes_are_merged():
+    data = load("stop_of_route")[:1] * 2
+    result = builder.build_index(data, load("stop"), load("route"), "x")
+    assert len([p for p in result["patterns"] if p["direction"] == 0]) == 1
