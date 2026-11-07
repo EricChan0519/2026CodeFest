@@ -44,7 +44,7 @@ describe('saved language', () => {
 
 describe('LANG_CHOICES', () => {
   it('lists all 8 languages, each named in its own language', () => {
-    expect(LANG_CHOICES.map((c) => c.lang)).toEqual(['zh-TW', 'en', 'id', 'vi', 'th', 'km', 'ja', 'ko'])
+    expect(LANG_CHOICES.map((c) => c.lang)).toEqual(['zh-TW', 'en', 'id', 'vi', 'th', 'ja', 'ko'])
     expect(LANG_CHOICES.find((c) => c.lang === 'th')!.name).toBe('ไทย')
   })
 })

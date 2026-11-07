@@ -6,6 +6,8 @@
 使用者座標只放 POST body，不寫進 log（ADR-0005）。
 """
 import asyncio
+import threading
+from contextlib import asynccontextmanager
 import os
 from datetime import datetime
 from functools import lru_cache
@@ -27,7 +29,15 @@ from app.schemas import AroundRequest, NearbyRequest, PlaceSearchRequest, Routes
 from app import localize, translate
 from app.stations import StationIndex
 
-app = FastAPI(title="Arrow Nav API")
+@asynccontextmanager
+async def lifespan(_app):
+    # 外語搜尋的讀音表在背景先建好（約 3 秒）；不擋住啟動，也不讓第一個使用者等
+    if not os.environ.get("SKIP_WARM_UP"):
+        threading.Thread(target=translate.warm_up, name="translate-warm-up", daemon=True).start()
+    yield
+
+
+app = FastAPI(title="Arrow Nav API", lifespan=lifespan)
 install_error_handlers(app)
 
 # 走 Hosting rewrite 是同網域、不需 CORS；直接打 run.app 網址或本機時才用得到

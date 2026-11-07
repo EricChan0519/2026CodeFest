@@ -11,7 +11,6 @@ export const LANG_CHOICES: { lang: Lang; name: string }[] = [
   { lang: 'id', name: 'Bahasa Indonesia' },
   { lang: 'vi', name: 'Tiếng Việt' },
   { lang: 'th', name: 'ไทย' },
-  { lang: 'km', name: 'ខ្មែរ' },
   { lang: 'ja', name: '日本語' },
   { lang: 'ko', name: '한국어' },
 ]

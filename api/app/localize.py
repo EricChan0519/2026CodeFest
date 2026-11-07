@@ -147,18 +147,34 @@ def _spell(chunk: str, lang: str) -> str:
 def _join_words(parts: list[str], lang: str) -> str:
     if lang == "ja":
         return "".join(parts)
-    if lang in ("th", "km"):
+    if lang == "th":
         return tr._join(parts, lang)
     return " ".join(p for p in parts if p)
 
 
 def localize_name(name: str, lang: str, official_en: str | None = None) -> dict:
+    out = _localize_name(name, lang, official_en)
+    if lang == "ja" and out.get("text"):
+        out["text"] = tr.to_japanese(out["text"])
+    if lang == "th" and out.get("text"):
+        # 「捷運」＋「站」碰上名稱本身的「สถานี」（สถานีหลักไทเป）時不要重複
+        t = out["text"].replace("สถานีรถไฟฟ้าสถานี", "สถานีรถไฟฟ้า").replace("รถไฟฟ้าสถานี", "สถานีรถไฟฟ้า").replace("สถานีสถานี", "สถานี")
+        out["text"] = t
+    return out
+
+
+def _localize_name(name: str, lang: str, official_en: str | None = None) -> dict:
     """中文地名 → {"zh", "text", "exact"}；text 一定有（名稱是空的除外）"""
     if lang not in LANGS or not name.strip():
         return {"zh": name, "text": None, "exact": False}
     if official_en and lang in ("en", "id"):
         return {"zh": name, "text": official_en, "exact": True}
     # 名稱本身已經有英文（「臺鐵台北車站 TRA Taipei Station」）：英文、印尼文直接用，其他語言放在括號裡
+    # 知名地標、品牌整個名稱就是詞彙表裡的專有名稱：直接用官方名稱（中正紀念堂 → Chiang Kai-shek Memorial Hall，
+    # 不用 TDX 公車站的縮寫 C.K.S. Memorial Hall）
+    whole = next((t for t in tr.load_base_glossary() if t.kind == "proper" and t.zh == name.strip().replace("台", "臺")), None)
+    if whole and whole.forms.get(lang):
+        return {"zh": name, "text": whole.forms[lang][0], "exact": True}
     latin = re.search(r"[A-Za-z][A-Za-z0-9&'.\-]*(?:\s+[A-Za-z0-9&'.\-]+)+", name)
     if latin and re.search(r"[一-鿿]", name):
         han = (name[: latin.start()] + name[latin.end():]).strip()
@@ -166,8 +182,15 @@ def localize_name(name: str, lang: str, official_en: str | None = None) -> dict:
             return {"zh": name, "text": latin.group(0).strip(), "exact": True}
         inner = localize_name(han, lang)
         return {"zh": name, "text": f"{inner['text']} ({latin.group(0).strip()})", "exact": inner["exact"]}
-    # 英文、印尼文：TDX 官方英文站名優先（政大 → National Chengchi University）
-    if lang in ("en", "id"):
+    # 「IKEA宜家家居」：中文部分翻出來和英文一樣時只留一次
+    single = re.fullmatch(r"\s*([A-Za-z][A-Za-z0-9&'.\-]*)\s*([一-鿿].*)", name)
+    if single:
+        rest = localize_name(single.group(2), lang)["text"] or ""
+        if rest.lower() == single.group(1).lower():
+            return {"zh": name, "text": single.group(1), "exact": True}
+    # 英文：TDX 官方英文站名優先（政大 → National Chengchi University）。
+    # 印尼文不直接用（TDX 是英文縮寫「MRT Zhishan Sta.」），照印尼文的詞組（Stasiun MRT Zhishan）
+    if lang == "en":
         en = tr.english_names()[0].get(tr._PAREN.sub("", name).replace("台", "臺"))
         if en:
             return {"zh": name, "text": en, "exact": True}
@@ -189,6 +212,11 @@ def localize_name(name: str, lang: str, official_en: str | None = None) -> dict:
     parts: list[tuple[str, str]] = []  # (kind, 文字)
     for seg, term in segs:
         if term is None:
+            # 地名（中山）後面緊接的「站」「店」：只修飾那個地名（中山站裝置藝術街 → 중산역 …）
+            heads1 = {t.zh: t for t in tr.load_glossary() if t.kind == "head" and len(t.zh) == 1}
+            if parts and parts[-1][0] == "proper" and seg[:1] in heads1:
+                parts.append(("head", (heads1[seg[0]].forms.get(lang) or [seg[0]])[0]))
+                seg = seg[1:]
             # 不認得的部分：先切出已知地名（中山、士林），地名後面的單字種類詞（站、店）只修飾那個地名
             for piece in seg.split(" "):
                 parts.extend(_spell_parts(piece, lang))
@@ -200,10 +228,27 @@ def localize_name(name: str, lang: str, official_en: str | None = None) -> dict:
     if lang in tr.HEAD_FIRST:
         # 種類詞在前的語言：種類詞緊接在名稱後面時只修飾前一個詞（臺北車站 → Ga Đài Bắc），
         # 連續的第二個種類詞修飾前面全部（一風堂…臺北車站店 → Cửa hàng … Ga Đài Bắc）
+        # 名稱最後是「前綴＋種類詞」（台北車站捷運站、台北車站-捷運入口）：這一組是整個地點的種類，
+        # 合成一個（สถานีรถไฟฟ้า、ทางเข้ารถไฟฟ้า）放最前面
+        wrapper = None
+        k = len(parts)
+        while k > 0 and parts[k - 1][0] in ("prefix", "head"):
+            k -= 1
+        tail = parts[k:]
+        if 0 < k and any(kd == "prefix" for kd, _ in tail) and any(kd == "head" for kd, _ in tail):
+            heads = [w for kd, w in tail if kd == "head"]
+            prefixes = [w for kd, w in tail if kd == "prefix"]
+            wrapper = _join_words(heads[::-1] + prefixes, lang)
+            parts = parts[:k]
         units: list[str] = []
         prev = None
-        for kind, w in parts:
-            if kind == "head" and units:
+        # 「站」只修飾前面那個地名（Ga Zhongshan）；名稱最後的其他種類詞（店、門市）是整個地點的種類，放最前面
+        station_words = {(t.forms.get(lang) or [""])[0] for t in tr.load_base_glossary() if t.zh in ("站", "車站")}
+        for idx, (kind, w) in enumerate(parts):
+            last = idx == len(parts) - 1
+            if kind == "head" and units and last and len(units) > 1 and w not in station_words:
+                units = [_join_words([w] + units, lang)]
+            elif kind == "head" and units:
                 if prev != "head":
                     units[-1] = _join_words([w, units[-1]], lang)
                 else:
@@ -211,6 +256,8 @@ def localize_name(name: str, lang: str, official_en: str | None = None) -> dict:
             else:
                 units.append(w)
             prev = kind
+        if wrapper:
+            units = [wrapper] + units
         return {"zh": name, "text": _join_words(units, lang) or None, "exact": False}
     words = [w for _, w in parts]
     if lang == "ko":
@@ -255,17 +302,16 @@ _ADDR = re.compile(
     r"|(?P<village>[一-鿿]{1,3}里)"
 )
 
-_DIRS = {"東": ("East", "Timur", "Đông", "ตะวันออก", "ខាងកើត"), "西": ("West", "Barat", "Tây", "ตะวันตก", "ខាងលិច"),
-         "南": ("South", "Selatan", "Nam", "ใต้", "ខាងត្បូង"), "北": ("North", "Utara", "Bắc", "เหนือ", "ខាងជើង")}
-_DIR_IDX = {"en": 0, "id": 1, "vi": 2, "th": 3, "km": 4}
+_DIRS = {"東": ("East", "Timur", "Đông", "ตะวันออก"), "西": ("West", "Barat", "Tây", "ตะวันตก"),
+         "南": ("South", "Selatan", "Nam", "ใต้"), "北": ("North", "Utara", "Bắc", "เหนือ")}
+_DIR_IDX = {"en": 0, "id": 1, "vi": 2, "th": 3}
 
 # 各語言的地址詞：(區, 路, 街, 大道, 段, 巷, 弄, 號, 樓)
 _WORDS = {
     "en": ("District", "Road", "Street", "Boulevard", "Sec. {n}", "Ln. {n}", "Aly. {n}", "No. {n}", "{n}F"),
-    "id": ("Distrik", "Jalan", "Jalan", "Jalan", "Seksi {n}", "Gang {n}", "Lorong {n}", "No. {n}", "Lantai {n}"),
+    "id": ("Distrik", "Jalan", "Jalan", "Jalan", "Sec. {n}", "Gang {n}", "Lorong {n}", "No. {n}", "Lantai {n}"),
     "vi": ("Quận", "Đường", "Phố", "Đại lộ", "Đoạn {n}", "Ngõ {n}", "Ngách {n}", "Số {n}", "Tầng {n}"),
-    "th": ("เขต", "ถนน", "ถนน", "ถนน", "ช่วง {n}", "ซอย {n}", "ตรอก {n}", "เลขที่ {n}", "ชั้น {n}"),
-    "km": ("ខណ្ឌ", "ផ្លូវ", "ផ្លូវ", "មហាវិថី", "ផ្នែក {n}", "ច្រក {n}", "ផ្លូវតូច {n}", "លេខ {n}", "ជាន់ {n}"),
+    "th": ("เขต", "ถนน", "ถนน", "ถนน", "ตอน {n}", "ซอย {n}", "ตรอก {n}", "เลขที่ {n}", "ชั้น {n}"),
     "ko": ("구", "", "", "", "{n}단", "{n}항", "{n}롱", "{n}호", "{n}층"),
 }
 
@@ -276,14 +322,14 @@ def _road(name: str, kind: str, lang: str) -> str:
         return tr.romanize(name + kind, "ko") or name + kind
     words = _WORDS[lang]
     road_word = {"路": words[1], "街": words[2], "大道": words[3]}[kind]
-    if lang == "vi":
-        return f"{road_word} {_roman(name, 'vi')}"
     base, direction = name, ""
     if len(name) > 1 and name[-1] in _DIRS:
         base, direction = name[:-1], _DIRS[name[-1]][_DIR_IDX[lang]]
     spelled = _roman(base, lang)
     if lang == "en":
         return " ".join(x for x in (spelled, direction, road_word) if x)
+    if lang == "th":
+        return "".join(x for x in (road_word, spelled, direction) if x)  # 泰文不空格：ถนนจงเซียวตะวันตก
     return " ".join(x for x in (road_word, spelled, direction) if x)
 
 
@@ -340,7 +386,8 @@ def localize_address(addr: str, lang: str) -> str | None:
                 road_text = _road(road[: -len(kind_word)], kind_word, lang)
                 if g["sec"]:
                     sec = w[4].format(n=_num(g["sec"]))
-                    road_text = f"{road_text} {sec}" if lang == "ko" else f"{sec}, {road_text}"
+                    # 韓文、泰文：路名在前、段在後（중샤오시루 1단、ถนน … ตอน 1）；其他：段在前（Sec. 1, Zhongxiao…）
+                    road_text = f"{road_text} {sec}" if lang in ("ko", "th") else f"{sec}, {road_text}"
                 tokens.append(("road", road_text))
             elif g["lane"]:
                 tokens.append(("lane", w[5].format(n=_num(g["lane"]))))
@@ -364,7 +411,8 @@ def localize_address(addr: str, lang: str) -> str | None:
     # 韓文由大到小（타이베이시 중정구 중샤오시루 1단 3호 2층）；其他由小到大（No. 3, Sec. 1, …, Taipei City）
     big_first = lang == "ko"
     tokens = sorted(tokens, key=lambda t: order.get(t[0], 6), reverse=big_first)
-    sep = " " if lang == "ko" else ", "
+    # 韓文、泰文地址不用逗號
+    sep = " " if lang in ("ko", "th") else ", "
     return sep.join(v for _, v in tokens)
 
 

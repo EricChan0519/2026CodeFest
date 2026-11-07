@@ -6,7 +6,7 @@
 export type Audience = 'elder' | 'child' | 'visitor'
 /** 使用者選的路線模式：快速＝最快；安全＝路燈、監視器、派出所、便利商店與店面多，避開小巷；平緩＝少階梯、少坡 */
 export type RouteMode = 'fast' | 'safe' | 'gentle'
-export type Lang = 'zh-TW' | 'en' | 'th' | 'vi' | 'id' | 'km' | 'ja' | 'ko'
+export type Lang = 'zh-TW' | 'en' | 'th' | 'vi' | 'id' | 'ja' | 'ko'
 export type LatLon = [number, number]
 
 export type ManeuverKind =
@@ -81,7 +81,7 @@ export interface PlaceSearchResponse {
 }
 
 /** 外語地點搜尋支援的語言（中文以外） */
-export type ForeignLang = 'en' | 'id' | 'vi' | 'th' | 'km' | 'ko' | 'ja'
+export type ForeignLang = 'en' | 'id' | 'vi' | 'th' | 'ko' | 'ja'
 
 /** POST /api/translate/query：外語搜尋字串 → 中文（規則＋開放資料，不用 AI 模型） */
 export interface TranslateQueryResponse {
