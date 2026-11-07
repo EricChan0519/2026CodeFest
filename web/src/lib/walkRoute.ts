@@ -11,6 +11,7 @@
  * 臨時施工、違停、坑洞這類 OSM 沒有的障礙，這裡無法得知。
  */
 import type { LatLon, Maneuver, ManeuverKind } from '@/lib/contract'
+import { distanceM } from '@/nav/geo'
 import type { NavRoute } from '@/nav/machine'
 
 export const VALHALLA_URL = 'https://valhalla1.openstreetmap.de/route'
@@ -115,11 +116,22 @@ export function mapManeuverType(t: number): ManeuverKind {
   }
 }
 
-export function parseValhalla(res: ValhallaResponse, id: string): WalkRoute {
+/** 終點離路這麼近，就把路線接到目的地本身（店門口常在路邊幾公尺到十幾公尺外） */
+export const END_LINK_MAX_M = 40
+
+/**
+ * @param to 要求的終點。Valhalla 會把終點吸附到最近的路上；離目的地不遠時補一段直線過去，
+ *   抵達判斷才會以目的地本身為準，不會站在店門口卻「還沒到」。
+ */
+export function parseValhalla(res: ValhallaResponse, id: string, to?: LatLon): WalkRoute {
   const leg = res.trip?.legs[0]
   if (!res.trip || !leg) throw new Error('ROUTE_NOT_FOUND')
   const geometry = decodePolyline6(leg.shape)
   if (geometry.length < 2) throw new Error('ROUTE_NOT_FOUND')
+  if (to) {
+    const gap = distanceM(geometry[geometry.length - 1]!, to)
+    if (gap > 1 && gap <= END_LINK_MAX_M) geometry.push(to)
+  }
 
   const maneuvers: Maneuver[] = leg.maneuvers.map((m) => ({
     kind: mapManeuverType(m.type),
@@ -169,7 +181,7 @@ export async function fetchWalkRoute(
       }),
     })
     if (!res.ok) throw new Error(`ROUTE_HTTP_${res.status}`)
-    return parseValhalla((await res.json()) as ValhallaResponse, id)
+    return parseValhalla((await res.json()) as ValhallaResponse, id, to)
   } finally {
     clearTimeout(timer)
   }
