@@ -5,6 +5,8 @@ export const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', name: 'home', component: HomeView },
+    // 新介面（UI 展示中，確認後才接導航引擎）
+    { path: '/arrow', name: 'arrow', component: () => import('./views/arrow/ArrowView.vue') },
     // P7 抵達：路線資訊由 arrivalLocation() 帶入，網址不放座標
     { path: '/arrived', name: 'arrived', component: () => import('./views/ArrivedView.vue') },
     // NAV 實驗頁：手機上測羅盤、定位與導航（不在主流程內）
