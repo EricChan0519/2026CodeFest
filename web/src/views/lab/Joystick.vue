@@ -1,9 +1,10 @@
 <script setup lang="ts">
 /**
  * 圓形拖曳搖桿：按住搖桿頭拖動，放開回到中心。
- * 往上 = 往手機朝向前進。用 Pointer Events，手指和滑鼠都可以；touch-action: none 避免拖動時捲動頁面。
+ * 往上 = 往手機朝向前進。用 Pointer Events，手指和滑鼠都可以。
+ * 除了 touch-action: none，還要阻止觸控預設行為，避免 iOS Safari／部分 WebView 捲動或回彈。
  */
-import { ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { joystickVector } from '@/sensors/joystick'
 import type { JoystickVector } from '@/sensors/joystick'
 
@@ -14,6 +15,19 @@ const base = ref<HTMLDivElement>()
 const knob = ref({ x: 0, y: 0 })
 const active = ref(false)
 let pointerId: number | null = null
+
+function preventTouchScroll(e: TouchEvent) {
+  e.preventDefault()
+}
+
+onMounted(() => {
+  base.value?.addEventListener('touchstart', preventTouchScroll, { passive: false })
+  base.value?.addEventListener('touchmove', preventTouchScroll, { passive: false })
+})
+onBeforeUnmount(() => {
+  base.value?.removeEventListener('touchstart', preventTouchScroll)
+  base.value?.removeEventListener('touchmove', preventTouchScroll)
+})
 
 const radius = () => props.size / 2 - 28 // 搖桿頭半徑 28px，留在圓內
 

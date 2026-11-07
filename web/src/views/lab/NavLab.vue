@@ -415,6 +415,20 @@ function onKey(e: KeyboardEvent) {
     onManualHeading()
   }
 }
+// 防止導航實驗頁觸發下拉重新整理。
+let previousHtmlOverscroll = ''
+let previousBodyOverscroll = ''
+onMounted(() => {
+  previousHtmlOverscroll = document.documentElement.style.overscrollBehavior
+  previousBodyOverscroll = document.body.style.overscrollBehavior
+  document.documentElement.style.overscrollBehavior = 'none'
+  document.body.style.overscrollBehavior = 'none'
+})
+onBeforeUnmount(() => {
+  document.documentElement.style.overscrollBehavior = previousHtmlOverscroll
+  document.body.style.overscrollBehavior = previousBodyOverscroll
+})
+
 onMounted(() => window.addEventListener('keydown', onKey))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
