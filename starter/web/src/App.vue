@@ -306,11 +306,14 @@ onUnmounted(() => window.removeEventListener('resize', fitText))
           </button>
         </div>
         <div v-else class="empty"><span class="empty-icon"><AppIcon name="search" :size="24" /></span><h2>{{ t('找不到這個地點') }}</h2><button class="secondary" @click="query = ''">{{ t('清除搜尋') }}</button></div>
-        <button v-if="query.trim() && listState === 'ok' && addressState !== 'ok'" class="address-search" :disabled="addressState === 'loading'" @click="runAddressSearch"><AppIcon name="pin" :size="22" />{{ addressState === 'loading' ? t('載入中') : addressState === 'error' ? t('無法連線，請確認網路') : t('用地址搜尋') }}</button>
-        <div v-if="listState === 'ok' && results.length > 3" class="pagination">
-          <button class="text-button" :disabled="listPage === 0" @click="listPage--"><AppIcon name="chevron-left" :size="20" />{{ t('上一頁') }}</button>
-          <span>{{ listPage + 1 }} / {{ Math.ceil(results.length / 3) }}</span>
-          <button class="text-button" :disabled="(listPage + 1) * 3 >= results.length" @click="listPage++">{{ t('下一頁') }}<AppIcon name="chevron-right" :size="20" /></button>
+        <!-- 畫面下方固定：用地址搜尋＋頁數列，不隨列表長度移動 -->
+        <div class="search-footer">
+          <button v-if="query.trim() && listState === 'ok' && addressState !== 'ok'" class="address-search" :disabled="addressState === 'loading'" @click="runAddressSearch"><AppIcon name="pin" :size="22" />{{ addressState === 'loading' ? t('載入中') : addressState === 'error' ? t('無法連線，請確認網路') : t('用地址搜尋') }}</button>
+          <div v-if="listState === 'ok' && results.length > 3" class="pagination">
+            <button class="text-button" :disabled="listPage === 0" @click="listPage--"><AppIcon name="chevron-left" :size="20" />{{ t('上一頁') }}</button>
+            <span>{{ listPage + 1 }} / {{ Math.ceil(results.length / 3) }}</span>
+            <button class="text-button" :disabled="(listPage + 1) * 3 >= results.length" @click="listPage++">{{ t('下一頁') }}<AppIcon name="chevron-right" :size="20" /></button>
+          </div>
         </div>
       </section>
 
