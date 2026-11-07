@@ -8,7 +8,7 @@
  */
 import type { LatLon } from '@/lib/contract'
 import { distanceM } from '@/nav/geo'
-import { normalizeQuery } from '@/lib/stopSearch'
+import { fuzzyScore, normalizeQuery, parseQuery } from '@/lib/fuzzy'
 
 export const POI_INDEX_URL = '/lab/poi_index.json'
 
@@ -129,6 +129,12 @@ export function searchPois(index: PoiIndex, q: string, opts: PoiSearchOptions = 
     }
   }
   const rest = matchedAlias ? qn.replace(matchedAlias, '') : ''
+  // 品牌後面的地點對不到整串時退一步：拿掉「捷運」「站」再比（「全家 芝山捷運站」→ 店名或地址有「芝山」）。
+  // 連鎖店很多，只接受核心連續出現，不做字序打亂或錯字；沒有品牌時照舊只比「店名包含」。
+  const restParsed = parseQuery(rest)
+  const fits = (text: string) => text.includes(rest) || fuzzyScore(restParsed, text, { loose: false }) > 0
+  // 英文要從字的開頭對（「ntu」不能配到「kentucky」）
+  const latinWord = /^[a-z0-9]+$/.test(qn) ? new RegExp(`(^|[^a-z0-9])${qn}`) : null
 
   const hits: PoiHit[] = []
   index.places.forEach((p, i) => {
@@ -136,8 +142,8 @@ export function searchPois(index: PoiIndex, q: string, opts: PoiSearchOptions = 
     const addrKey = index.addrKeys[i]!
     if (brandKeys.size > 0) {
       if (!brandKeys.has(p.brand.key)) return
-      if (rest && !nameKey.includes(rest) && !addrKey.includes(rest)) return
-    } else if (!nameKey.includes(qn)) {
+      if (rest && !fits(nameKey) && !fits(addrKey)) return
+    } else if (latinWord ? !latinWord.test(p.name.toLowerCase()) : !nameKey.includes(qn)) {
       return
     }
     hits.push({ ...p, distanceM: near ? distanceM(near, p.point) : null })

@@ -19,7 +19,7 @@ export interface Pose {
 /** 首頁／開場：logo 箭頭在方塊內的比例 */
 export const K_LOGO = 0.62
 /** 導航：箭頭放大 */
-export const K_NAV = 0.8
+export const K_NAV = 0.95
 
 export const outerT = (p: Pose): string =>
   `translate3d(${p.x.toFixed(2)}px, ${p.y.toFixed(2)}px, 0) scale(${p.s.toFixed(4)})`

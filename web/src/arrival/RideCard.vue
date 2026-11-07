@@ -3,17 +3,23 @@
  * 坐車中：大字顯示坐哪一班、在哪下車、還有幾站。
  * 下一站要下車、到了下車站時震動並念出來；下車由使用者按「下車了」確認（定位在車上不一定準）。
  */
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import type { Audience, Lang } from '@/lib/contract'
 import type { RideStatus } from '@/nav/journey'
-import type { ArrivalTrip } from './arrival'
+import { ARRIVAL_STRINGS } from '@/i18n/arrival'
+import AskCardsDialog from './AskCardsDialog.vue'
+import { askCards, type ArrivalTrip, type Name } from './arrival'
 import { buildRide } from './ride'
 import { speakText } from './speech'
 
-const props = defineProps<{ trip: ArrivalTrip; lang: Lang; audience: Audience; status: RideStatus; simulate?: boolean }>()
+const props = defineProps<{ trip: ArrivalTrip; lang: Lang; audience: Audience; status: RideStatus; simulate?: boolean; place?: Name | null }>()
 const emit = defineEmits<{ gotOff: []; simNext: [] }>()
 
 const ride = computed(() => buildRide(props.trip, props.lang, props.audience, props.status))
+/** 坐車時給司機看「到 ○○ 請提醒我下車」 */
+const cards = computed(() => askCards(props.trip, props.lang, props.place ?? undefined))
+const showingCard = ref(false)
+const showOthers = computed(() => ARRIVAL_STRINGS[props.lang].showOthers)
 const say = (text: string | null) => text && speakText(text, ride.value.speechLang, ride.value.rate)
 const hearAgain = () => say([ride.value.cueText ?? ride.value.getOff, ride.value.stopsLeft].filter(Boolean).join(' '))
 
@@ -51,6 +57,9 @@ onMounted(() => say(ride.value.getOff))
       <button class="min-h-16 rounded-[20px] bg-gray-50 px-4 text-xl font-bold text-[#356C77] active:scale-[0.98]" @click="emit('gotOff')">
         {{ ride.labels.gotOff }}
       </button>
+      <button v-if="cards.length" class="min-h-16 rounded-[20px] border border-white/15 border-t-white/30 bg-white/10 px-3 text-xl font-bold active:scale-[0.98]" @click="showingCard = true">
+        {{ showOthers }}
+      </button>
       <button class="min-h-16 rounded-[20px] border border-white/15 border-t-white/30 bg-white/10 px-3 text-xl font-bold active:scale-[0.98]" @click="hearAgain">
         {{ ride.labels.hearAgain }}
       </button>
@@ -58,5 +67,6 @@ onMounted(() => say(ride.value.getOff))
         模擬：車子往前開一站
       </button>
     </div>
+    <AskCardsDialog v-if="showingCard" :cards="cards" :lang="lang" initial="remind" @close="showingCard = false" />
   </main>
 </template>

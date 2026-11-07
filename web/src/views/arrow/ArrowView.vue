@@ -26,17 +26,20 @@ import { ARROW_STRINGS, distanceWords, fill } from '@/i18n/arrow'
 import type { AgeKey, CompassKey, TurnWordKey } from '@/i18n/arrow'
 import { ROUTE_MODE_STRINGS } from '@/i18n/routeMode'
 import type { Audience, Lang, LatLon, ManeuverKind, RouteMode, Station } from '@/lib/contract'
+import { poiNameForTranslation, stopLabel } from '@/lib/foreignSearch'
+import { parseQuery } from '@/lib/fuzzy'
+import { stationQuery } from '@/lib/placeSearch'
+import { groupStops } from '@/lib/stopSearch'
+import type { StopGroup } from '@/lib/stopSearch'
 import { createLocator } from '@/lib/locator'
 import type { ModeRoute } from '@/lib/modeRoute'
 import { estimateBusMin } from '@/lib/transferBus'
-import type { BusPlan } from '@/lib/transferBus'
 import type { PlanTab, TransitPlan } from '@/lib/transitPlan'
 import type { Cue } from '@/nav/announcer'
 import { easeRotation } from '@/nav/arrow'
 import { NAV_CONFIG } from '@/nav/config'
 import { DEFAULT_DESTINATION } from '@/nav/destination'
 import { distanceM } from '@/nav/geo'
-import { routeDetail } from '@/trip/routeText'
 import { useDestinationSearch } from '@/trip/useDestinationSearch'
 import { useTrip } from '@/trip/useTrip'
 import type { TripChoice } from '@/trip/useTrip'
@@ -57,14 +60,15 @@ const isStep = (p: Phase): p is StepName => (STEP_NAMES as string[]).includes(p)
 const LOGO_DEG = 45
 /** 在清單、搜尋欄外側時指向右（指著選項） */
 const POINT_DEG = 90
-/** 指著選項時，箭頭方塊的邊長與箭頭比例（箭頭長 ≈ 36 × 0.72 ≈ 26 px） */
-const POINT_BOX = 36
+/** 指著選項時，窄螢幕縮小箭頭，讓清單保有更多空間（箭頭長 ≈ 方塊邊長 × 0.72） */
+const pointBox = () => (window.innerWidth <= 600 ? 26 : 36)
 const K_POINT = 0.72
 /** 箭頭尖端和框之間的空隙 */
 const POINT_GAP = 8
-const POINT_LEN = POINT_BOX * K_POINT
 const EASE_LIST = 'cubic-bezier(0.2, 0.9, 0.1, 1)' // 和 CSS 的 --ease-out 一樣
 const EASE_MOVE = 'cubic-bezier(0.3, 0.7, 0.2, 1)'
+/** logo 靜止後第一次飛去清單：從靜止慢慢起步（EASE_LIST 起步太陡，60Hz 手機第一格就跳 20 多 px） */
+const EASE_LIFT = 'cubic-bezier(0.4, 0, 0.2, 1)'
 const EASE_UNLOCK = 'cubic-bezier(0.55, 0, 0.25, 1)' // 推過去、在邊界輕輕停住
 const T_INTRO = 1900
 const T_LIST = 620
@@ -73,7 +77,8 @@ const T_PRESS = 280
 const T_FADE = 250
 const T_UNLOCK = 650
 const T_HOLD = 380
-const T_LAUNCH = 820
+const T_LAUNCH_PAUSE = 700 // 標語淡出後留一點時間，只看見箭頭
+const T_LAUNCH = 1200
 
 /** 語言名稱用各自的語言寫，看得懂自己的語言就能選 */
 const LANG_ITEMS: { id: Lang; label: string }[] = [
@@ -86,8 +91,9 @@ const LANG_ITEMS: { id: Lang; label: string }[] = [
   { id: 'ja', label: '日本語' },
   { id: 'ko', label: '한국어' },
 ]
-const AGE_ITEMS: AgeKey[] = ['child', 'youth', 'elder']
-/** 年紀 → 抵達文字與語速用的對象（青年用一般設定） */
+/** 由上而下：一般、兒童、長者（key 沿用 youth，手機裡存過的選擇才不會失效） */
+const AGE_ITEMS: AgeKey[] = ['youth', 'child', 'elder']
+/** 年紀 → 抵達文字與語速用的對象（一般用一般設定） */
 const AUDIENCE: Record<AgeKey, Audience> = { child: 'child', youth: 'visitor', elder: 'elder' }
 /** 字級倍率（01 產品規格「對象設定」） */
 const FONT_SCALE: Record<AgeKey, number> = { child: 1.1, youth: 1, elder: 1.2 }
@@ -138,7 +144,9 @@ const langLabel = computed(() => LANG_ITEMS.find((l) => l.id === lang.value)?.la
 
 // ── 位置、搜尋、行程 ───────────────────────────────
 const locator = createLocator()
-const search = useDestinationSearch(locator)
+const search = useDestinationSearch(locator, () => lang.value)
+// 換語言時，現有結果重新翻成新語言
+watch(lang, () => search.relabel())
 const routing = { mode: () => mode.value, audience: () => audience.value, simulate: () => simulate }
 const trip = useTrip({ locator, onCue, routing })
 const nav = trip.nav
@@ -149,6 +157,7 @@ const phase = ref<Phase>('intro')
 const steps = reactive<Record<StepName, StepState>>({ lang: 'off', age: 'off', mode: 'off', search: 'off', how: 'off', route: 'off' })
 const picked = ref(-1) // 剛被點的那一列
 const busy = ref(false) // 過場中不收點擊
+const launchMoving = ref(false) // 移動時逐漸切成導航箭頭，抵達後不再換形狀
 const lift = ref(0) // 標語往上滑的距離
 const root = ref<HTMLElement>()
 const hero = ref<HTMLElement>()
@@ -163,8 +172,8 @@ const query = ref('')
 const debugOpen = ref(false)
 /** 「怎麼去」的目的地（地點、店家） */
 const target = ref<{ name: string; point: LatLon } | null>(null)
-/** 「要搭哪一班」的站位 */
-const station = ref<Station | null>(null)
+/** 「要搭哪一班」的站牌（同名、相鄰的站位合併成一筆，每條路線記得自己的站位） */
+const stopGroup = ref<StopGroup | null>(null)
 
 // ── 共用箭頭 ─────────────────────────────────────────
 let size = 240
@@ -179,7 +188,21 @@ let fullH = 0 // 沒有鍵盤時的視窗高度（判斷鍵盤是否開著）
 
 const dur = (ms: number): number => (reducedMotion() ? 0 : ms)
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
-const logoPose = (r: number): Pose => poseAt(logoSlot.value!, size, r, K_LOGO)
+/**
+ * logo 斜 45° 時，箭頭（含圓角筆畫）的外框寬 ≈ 箭頭方塊的 0.74。
+ * 依「一鍵成行」實際寬度決定箭頭比例：箭頭左右剛好對齊標語的頭尾，不會只蓋到第三個字。
+ */
+const LOGO_SPAN = 0.74
+function logoK(): number {
+  const ghost = titleEl.value?.querySelector<HTMLElement>('.ask-ghost')
+  const slot = logoSlot.value
+  if (!ghost || !slot) return K_LOGO
+  // 最後一個字後面的字距不算
+  const textW = ghost.getBoundingClientRect().width - parseFloat(getComputedStyle(ghost).letterSpacing || '0')
+  const slotW = slot.getBoundingClientRect().width
+  return textW > 0 && slotW > 0 ? textW / (LOGO_SPAN * slotW) : K_LOGO
+}
+const logoPose = (r: number): Pose => poseAt(logoSlot.value!, size, r, logoK())
 const navPoseNow = (): Pose => poseAt(navSlot.value!, size, rot, K_NAV)
 /** 最接近 r、指向右的角度（不多轉） */
 const pointAngle = (r: number): number => Math.round((r - POINT_DEG) / 360) * 360 + POINT_DEG
@@ -221,9 +244,16 @@ function play(frames: Frame[], duration: number, easing = 'linear'): Promise<voi
   return new Promise((resolve) => {
     outer.onfinish = () => {
       const last = frames[frames.length - 1]!
+      const el = hero.value!
+      // 把終點寫回 inline style 時先關掉 CSS transition，並強制算一次樣式再打開：
+      // Safari 會拿「動畫開始前的 inline transform」當起點，配上 .settled 的 0.35s 過渡，
+      // 箭頭到位後會再抽一下（Chrome 用動畫當下的值，所以電腦上看不出來）
+      el.style.transition = 'none'
       setHero(last.p)
-      hero.value!.style.opacity = String(last.opacity ?? 1)
+      el.style.opacity = String(last.opacity ?? 1)
       mine.forEach((a) => a.cancel())
+      void getComputedStyle(el).transform
+      el.style.transition = ''
       if (anims === mine) anims = []
       resolve()
     }
@@ -231,10 +261,12 @@ function play(frames: Frame[], duration: number, easing = 'linear'): Promise<voi
   })
 }
 
-function measure() {
+function measure(): boolean {
+  const prev = size
   size = heroSize()
   root.value!.style.setProperty('--hero', `${size}px`)
   fullH = Math.max(fullH, window.innerHeight)
+  return prev !== size
 }
 
 // ── 步驟（清單、搜尋欄）的位置 ───────────────────────
@@ -260,12 +292,13 @@ function pointPose(s: StepName, i: number, r = pointAngle(cur.r)): Pose {
     const half = Math.min(b.height, l.height) / 2
     cy = Math.min(Math.max(cy, l.top + half), l.bottom - half)
   }
-  const cx = b.left - stepDx(s) - POINT_GAP - POINT_LEN / 2
-  return { x: cx - size / 2, y: cy - size / 2, s: POINT_BOX / size, r, k: K_POINT }
+  const pb = pointBox()
+  const cx = b.left - stepDx(s) - POINT_GAP - (pb * K_POINT) / 2
+  return { x: cx - size / 2, y: cy - size / 2, s: pb / size, r, k: K_POINT }
 }
 
 /** 步驟由左滑入，箭頭同時滑到第一列外側（搜尋步驟是搜尋欄） */
-async function enterStep(s: StepName, from: Pose = cur) {
+async function enterStep(s: StepName, from: Pose = cur, easing = EASE_LIST) {
   const my = ++seq
   busy.value = true
   picked.value = -1
@@ -274,6 +307,10 @@ async function enterStep(s: StepName, from: Pose = cur) {
   phase.value = s
   steps[s] = 'in'
   await nextTick()
+  // 等瀏覽器把新步驟排版、畫出第一格再量位置、開始動：手機第一次渲染清單比較久，
+  // 同一格裡開始動畫會掉前幾格，看起來像箭頭先跳一下
+  await new Promise<void>((r) => requestAnimationFrame(() => r()))
+  if (my !== seq) return
   // 搜尋：指著搜尋欄；路線模式：指著依年紀建議的那個；
   // 怎麼去：車已經算好就直接指著建議的第一個能搭的方案（還在算的話，算好時由 watch 滑過去）
   armRow =
@@ -284,7 +321,7 @@ async function enterStep(s: StepName, from: Pose = cur) {
         : s === 'how' && !search.busLoading.value
           ? firstPickable()
           : 0
-  await play([{ p: from }, { p: pointPose(s, armRow, pointAngle(from.r)) }], dur(T_LIST), EASE_LIST)
+  await play([{ p: from }, { p: pointPose(s, armRow, pointAngle(from.r)) }], dur(T_LIST), easing)
   if (my !== seq) return
   busy.value = false
 }
@@ -405,10 +442,11 @@ interface ResultRow {
   key: string
   kind: Kind
   name: string
-  detail: string
+  /** 中文原名（招牌、站牌上看到的）；名稱已經是中文時是空字串 */
+  zh: string
   dist: number | null
   point: LatLon
-  station?: Station
+  stop?: StopGroup
   /** 這一組的第一筆：上面顯示組名 */
   head?: string
 }
@@ -424,6 +462,14 @@ type Row = ResultRow | MoreRow
 const nameOf = (n: { zh: string | null; en: string | null }) =>
   (lang.value === 'zh-TW' ? n.zh || n.en : n.en || n.zh) ?? ''
 
+/** 站名：使用者的語言（英文、印尼文用 TDX 官方英文站名），第二行附中文站名 */
+function stopNames(st: Station): { name: string; zh: string } {
+  const dl = search.displayLang.value
+  const l = dl ? stopLabel(st, dl, search.labels.value.names) : null
+  if (l && l.text !== st.name.zh) return { name: l.text, zh: st.name.zh }
+  return { name: nameOf(st.name), zh: lang.value === 'zh-TW' ? '' : st.name.zh }
+}
+
 /** 列表上的距離：350 公尺、2.4 公里 */
 function listDistance(m: number | null): string {
   if (m === null) return ''
@@ -431,53 +477,64 @@ function listDistance(m: number | null): string {
   return fill(S.value.km, { n: (m / 1000).toFixed(m < 10000 ? 1 : 0) })
 }
 
+/** 結果名稱：使用者的語言（翻不出來的部分照讀音），沒有就用中文；第二個值是要另外附上的中文原名 */
+function localName(zh: string, key = zh): [string, string] {
+  const l = search.displayLang.value ? search.labels.value.names.get(key) : undefined
+  return l && l.text !== zh ? [l.text, zh] : [zh, '']
+}
+
+/**
+ * 搜尋結果：每筆只有名稱和距離；外語介面再附中文原名對照招牌（2026-11-08 回報：下面那行小字太冗長）。
+ * 分組順序：找車站（芝山捷運站、士林站）時地點在前（合併後的車站排第一）、公車站牌第二；
+ * 找公車站牌（○○公車站、站牌）時站牌在前；其他搜尋地點、店家、站牌。
+ */
 const rows = computed<Row[]>(() => {
   const s = S.value
-  const out: Row[] = []
+  const q = search.searchedQuery.value
+  const placeRows: Row[] = []
   const placeAll = search.places.value
   placeAll.slice(0, placeShown.value).forEach((p, i) =>
-    out.push({
+    placeRows.push({
       type: 'hit',
       key: `pl-${p.name}-${p.point[0]}-${p.point[1]}-${i}`,
       kind: 'place',
-      name: p.name,
-      detail: p.category ?? p.detail,
+      name: localName(p.name)[0],
+      zh: localName(p.name)[1],
       dist: p.distanceM,
       point: p.point,
       head: i === 0 ? s.groupPlaces : undefined,
     }),
   )
-  if (placeAll.length > placeShown.value) out.push({ type: 'more', key: 'more-pl', kind: 'place', left: placeAll.length - placeShown.value })
+  if (placeAll.length > placeShown.value) placeRows.push({ type: 'more', key: 'more-pl', kind: 'place', left: placeAll.length - placeShown.value })
+  const poiRows: Row[] = []
   const poiAll = search.pois.value
   poiAll.slice(0, poiShown.value).forEach((p, i) =>
-    out.push({
+    poiRows.push({
       type: 'hit',
       key: `poi-${p.brand.key}-${p.point[0]}-${p.point[1]}`,
       kind: 'poi',
-      name: p.name,
-      detail: [lang.value === 'zh-TW' ? p.brand.zh : p.brand.en || p.brand.zh, p.address].filter(Boolean).join(' · '),
+      name: localName(p.name, poiNameForTranslation(p.name, p.brand))[0],
+      zh: localName(p.name, poiNameForTranslation(p.name, p.brand))[1],
       dist: p.distanceM,
       point: p.point,
       head: i === 0 ? s.groupStores : undefined,
     }),
   )
-  if (poiAll.length > poiShown.value) out.push({ type: 'more', key: 'more-poi', kind: 'poi', left: poiAll.length - poiShown.value })
-  search.stops.value.forEach((st, i) => {
-    const facing = st.bearing && st.bearing in s.compass ? fill(s.stopFacing, { dir: s.compass[st.bearing as CompassKey] }) : ''
-    const routes = st.routes.slice(0, 6).map((r) => nameOf(r.routeName)).join('、')
-    out.push({
-      type: 'hit',
-      key: `st-${st.stationUid}`,
-      kind: 'stop',
-      name: nameOf(st.name),
-      detail: [facing, routes].filter(Boolean).join(' · '),
-      dist: distanceM(search.near.value, [st.lat, st.lon]),
-      point: [st.lat, st.lon],
-      station: st,
-      head: i === 0 ? s.groupStops : undefined,
-    })
-  })
-  return out
+  if (poiAll.length > poiShown.value) poiRows.push({ type: 'more', key: 'more-poi', kind: 'poi', left: poiAll.length - poiShown.value })
+  // 合併後的站牌用合併後的名稱（拿掉括號）翻譯；英文、印尼文用 TDX 官方英文站名
+  const stopRows: Row[] = groupStops(search.stops.value, search.near.value).map((g, i) => ({
+    type: 'hit',
+    key: `st-${g.key}`,
+    kind: 'stop',
+    ...stopNames({ ...g.stations[0]!, name: g.name }),
+    dist: distanceM(search.near.value, [g.lat, g.lon]),
+    point: [g.lat, g.lon],
+    stop: g,
+    head: i === 0 ? s.groupStops : undefined,
+  }))
+  if (parseQuery(q).tags.includes('bus')) return [...stopRows, ...placeRows, ...poiRows]
+  if (stationQuery(q)) return [...placeRows, ...stopRows, ...poiRows]
+  return [...placeRows, ...poiRows, ...stopRows]
 })
 const hasResults = computed(() => rows.value.some((r) => r.type === 'hit'))
 /** 資料出處（站牌 TDX、店家與地標 Overture、地址 OSM；OSM 的授權要求一定要標） */
@@ -532,6 +589,12 @@ async function submitSearch() {
   if (first >= 0 && !busy.value) await moveArrow('search', first)
 }
 
+/** 外語搜尋的「也可能是…」：用那個中文重新搜尋 */
+function searchAlt(text: string) {
+  query.value = text
+  void submitSearch()
+}
+
 /** 點搜尋欄要改字：箭頭回到搜尋欄 */
 function onSearchFocus() {
   if (!busy.value && armRow !== -1) void moveArrow('search', -1)
@@ -541,8 +604,8 @@ async function pickResult(i: number) {
   const r = rows.value[i]
   if (!r || r.type !== 'hit' || busy.value || phase.value !== 'search') return
   if (!(await press('search', i))) return
-  if (r.kind === 'stop' && r.station) {
-    station.value = r.station
+  if (r.kind === 'stop' && r.stop) {
+    stopGroup.value = r.stop
     await goStep('search', 'route')
     return
   }
@@ -557,7 +620,6 @@ async function pickResult(i: number) {
 interface HowRow {
   key: string
   title: string
-  detail: string
   right: string
   choice: TripChoice
   /** 公車或捷運（決定圖示）；走路沒有 */
@@ -580,13 +642,10 @@ function transitTitle(p: TransitPlan): string {
 }
 function transitRow(p: TransitPlan, t: { name: string; point: LatLon }): HowRow {
   const first = p.rides[0]!
-  const last = p.rides[p.rides.length - 1]!
   const modes = new Set(p.rides.map((r) => r.mode))
   return {
     key: p.rides.map((r) => `${r.mode}:${r.route.routeName.zh}:${r.board.stationUid}`).join('>'),
     title: transitTitle(p),
-    detail: fill(S.value.transitDetail, { stop: nameOf(first.board.name), alight: nameOf(last.alight.name) }) +
-      (first.route.headsign.zh ? ` · ${nameOf(first.route.headsign)}` : ''),
     right: fill(S.value.aboutMin, { min: Math.max(1, Math.round(p.durationS / 60)) }),
     choice: { kind: 'transit', plan: p, name: t.name, point: t.point },
     mode: modes.size > 1 ? 'mixed' : first.mode,
@@ -611,71 +670,50 @@ function selectTab(t: PlanTab) {
   armRow = firstPickable()
   void nextTick(onResize)
 }
-function busTitle(p: BusPlan): string {
-  const names = p.rides.map((r) => nameOf(r.route.routeName))
-  return names.length > 1 ? `${names[0]} → ${fill(S.value.transferAt, { route: names.slice(1).join(' → ') })}` : names[0]!
-}
 /** 約幾分鐘（路線的時間；長者用 3.5 km/h 算） */
 const routeMin = (r: ModeRoute) => Math.max(1, Math.round(r.durationS / 60))
 
 /**
- * 走路的列：依路線模式算好的路在前（說出比最快的路好在哪、多走多久），和最快不同時下面再列最快的路（說出沿路有什麼）。
- * 還在算、或算不出來時只有一列「走路過去」（導航開始時會再算一次）。
+ * 「怎麼去」只有幾個大選項，每個一列、只寫名稱和約幾分鐘（2026-11-08 回報：選項和小字太多）。
+ * 走路：依使用者選的路線模式算好的那一條（routes[0]）；還在算時先用直線距離估時間。
  */
 const walkRows = computed<HowRow[]>(() => {
   const t = target.value
   if (!t) return []
   const s = S.value
-  const r = R.value
   const plan = walkPlan.plan.value
-  if (!plan) {
+  const route = plan?.routes[0]
+  if (!plan || !route) {
     return [
       {
         key: 'walk',
-        title: s.walkThere,
-        detail: walkPlan.loading.value ? r.planning : '',
+        title: s.howWalk,
         right: search.walkMin.value ? fill(s.aboutMin, { min: search.walkMin.value }) : '',
         choice: { kind: 'walk', name: t.name, point: t.point },
         sortS: search.walkMin.value ? search.walkMin.value * 60 : undefined,
       },
     ]
   }
-  return plan.routes.map<HowRow>((route, i) => {
-    const isMode = route.id !== 'fastest'
-    const facts = routeDetail(route, plan.mode, r)
-    return {
-      key: `walk-${route.id}`,
-      title: isMode ? fill(r.walkMode, { mode: r.modes[plan.mode] }) : i > 0 ? r.fastestRoute : s.walkThere,
-      detail: [isMode ? '' : listDistance(route.distanceM), facts].filter(Boolean).join(' · '),
+  const isMode = route.id !== 'fastest'
+  return [
+    {
+      key: 'walk',
+      title: s.howWalk,
       right: fill(s.aboutMin, { min: routeMin(route) }),
-      // 選了最快的路：之後重新規劃也走最快的
       choice: { kind: 'walk', name: t.name, point: t.point, route, from: plan.from, mode: isMode ? plan.mode : 'fast' },
       sortS: route.durationS,
-    }
-  })
+    },
+  ]
 })
-/** 路線模式的說明：沒有更合適的路、後端連不上、時間上限、模擬晚上 */
+/** 走路的說明只留要讓人知道的：後端連不上只能走最快的路、模擬晚上 */
 const routeNote = computed(() => {
   const plan = walkPlan.plan.value
   const r = R.value
-  if (!plan || plan.mode === 'fast') return plan?.fallback ? r.fallback : ''
-  const parts = [
-    plan.fallback ? r.fallback : plan.notes.includes('no_better_route') ? r.noBetter : fill(r.capNote, { pct: 20 }),
-  ]
-  if (plan.notes.includes('simulated_night')) parts.push(r.simNight)
-  return parts.join(' · ')
+  if (!plan) return ''
+  const parts = [plan.fallback && plan.mode !== 'fast' ? r.fallback : '', plan.notes.includes('simulated_night') ? r.simNight : '']
+  return parts.filter(Boolean).join(' · ')
 })
-// 走路的列從一列變成兩列（推薦＋最快）：箭頭原本指著公車就跟著往下，還是指著同一班車
-watch(
-  () => walkRows.value.length,
-  (n, old) => {
-    if (phase.value !== 'how') return
-    // 公車＋捷運規劃時列表依時間排序，走路的路算好後位置會變：重新指最快的那個
-    if (search.transit.value) armRow = firstPickable()
-    else if (armRow >= old) armRow += n - old
-  },
-  { flush: 'sync' },
-)
+/** 公車：只列最快的一個搭法（直達或轉一次車），搭哪一班、在哪下車導航時再說 */
 const howRows = computed<HowRow[]>(() => {
   const t = target.value
   if (!t) return []
@@ -690,21 +728,22 @@ const howRows = computed<HowRow[]>(() => {
       .sort((a, b) => Number(!!a.r.disabled) - Number(!!b.r.disabled) || (a.r.sortS ?? Infinity) - (b.r.sortS ?? Infinity) || a.i - b.i)
       .map(({ r }) => r)
   }
-  const buses = search.busOptions.value.map<HowRow>((p) => {
-    const first = p.rides[0]!
-    const last = p.rides[p.rides.length - 1]!
-    return {
-      key: p.rides.map((r) => `${r.route.routeName.zh}-${r.route.direction}`).join('>'),
-      title: busTitle(p),
-      detail: fill(s.busDetail, { walk: listDistance(p.walkToBoardM), n: p.stopCount, stop: nameOf(last.alight.name) }) +
-        (first.route.headsign.zh ? ` · ${nameOf(first.route.headsign)}` : ''),
-      right: fill(s.aboutMin, { min: Math.max(1, Math.round(estimateBusMin(p))) }),
-      choice: { kind: 'bus', plan: p, name: t.name, point: t.point },
-      mode: 'bus',
-    }
-  })
-  return [...walkRows.value, ...buses]
+  const best = search.busOptions.value
+    .map((p) => ({ p, min: Math.max(1, Math.round(estimateBusMin(p))) }))
+    .sort((a, b) => a.min - b.min)[0]
+  const bus: HowRow[] = best
+    ? [{ key: 'bus', title: s.howBus, right: fill(s.aboutMin, { min: best.min }), choice: { kind: 'bus', plan: best.p, name: t.name, point: t.point } }]
+    : []
+  return [...walkRows.value, ...bus]
 })
+// 公車＋捷運規劃時列表依時間排序：走路的路算好、或時間改變後順序會變，箭頭重新指最快能搭的那個
+watch(
+  () => howRows.value.map((r) => r.key).join('|'),
+  () => {
+    if (phase.value === 'how' && search.transit.value && !busy.value) armRow = firstPickable()
+  },
+  { flush: 'sync' },
+)
 const howNote = computed(() => {
   if (search.busLoading.value) return S.value.busLoading
   const plans = search.transit.value
@@ -739,9 +778,11 @@ watch(
   },
 )
 
-const routeRows = computed(() => station.value?.routes ?? [])
+const routeRows = computed(() => stopGroup.value?.routes ?? [])
+/** 只有一個站位時才標朝哪個方向；合併了兩個方向時每條路線的「往哪裡」已經說清楚 */
 const stationFacing = computed(() => {
-  const b = station.value?.bearing
+  const g = stopGroup.value
+  const b = g && g.stations.length === 1 ? g.stations[0]!.bearing : null
   return b && b in S.value.compass ? fill(S.value.stopFacing, { dir: S.value.compass[b as CompassKey] }) : ''
 })
 
@@ -758,9 +799,8 @@ function pickHow(i: number) {
 }
 
 function pickRoute(i: number) {
-  const st = station.value
   const r = routeRows.value[i]
-  if (st && r && !busy.value && phase.value === 'route') void launch('route', i, { kind: 'stop', station: st, route: r })
+  if (r && !busy.value && phase.value === 'route') void launch('route', i, { kind: 'stop', station: r.station, route: r.route })
 }
 
 // ── 出發與導航 ───────────────────────────────────────
@@ -781,7 +821,7 @@ async function launch(s: StepName, i: number, choice: TripChoice) {
   picked.value = i
   const box = boxEl(s, i)
   const b = box.getBoundingClientRect()
-  const tip0 = cur.x + size / 2 + POINT_LEN / 2
+  const tip0 = cur.x + size / 2 + (pointBox() * K_POINT) / 2
   const tip1 = b.right - 4
   const t = dur(T_UNLOCK)
   const enter = Math.min(0.95, Math.max(0, (b.left - tip0) / (tip1 - tip0)))
@@ -801,13 +841,17 @@ async function launch(s: StepName, i: number, choice: TripChoice) {
   await flyToNav(my)
 }
 
-/** 箭頭放大滑回畫面中央，同時由指向右轉成指向正上方，接上導航 */
+/** 元件退場、背景變暗後，讓箭頭獨留片刻，再放大轉向中心接上導航 */
 async function flyToNav(my: number) {
+  launchMoving.value = false
   phase.value = 'launch'
   await nextTick()
+  await wait(dur(T_LAUNCH_PAUSE))
+  if (my !== seq) return
   rot = cur.r - POINT_DEG
   navPose = navPoseNow()
-  await play([{ p: cur }, { p: navPose }], dur(T_LAUNCH), 'cubic-bezier(0.45, 0, 0.1, 1)')
+  launchMoving.value = true
+  await play([{ p: cur }, { p: navPose }], dur(T_LAUNCH), 'cubic-bezier(0.42, 0, 0.25, 1)')
   if (my !== seq) return
   busy.value = false
   target_ = rot
@@ -1058,6 +1102,7 @@ const showRecal = computed(() => {
   return !!v && !navArrived.value && v.state !== 'arrived' && v.state !== 'failed' && (v.headingLost || v.headingCheck === 'suspect')
 })
 const failed = computed(() => view.value?.state === 'failed' && !navArrived.value)
+
 // 報讀只在「說法」變的時候更新，不跟著距離刷新
 const announce = computed(() => (phase.value === 'nav' && !trip.card.value ? hint.value.main : ''))
 
@@ -1140,10 +1185,11 @@ async function startSetup() {
   clearInterval(typeTimer)
   clearTimeout(flowTimer)
   typed.value = BRAND.length
-  locator.start()
   phase.value = needSetup ? 'lang' : 'search'
   updateLift()
-  await enterStep(needSetup ? 'lang' : 'search')
+  await enterStep(needSetup ? 'lang' : 'search', cur, EASE_LIFT)
+  // 箭頭落定後才開始定位：權限視窗、GPS 啟動不會卡在箭頭飛過去的途中
+  locator.start()
 }
 
 /** 點一下畫面：跳過開場；標語還在打就直接打完、進下一步 */
@@ -1187,8 +1233,13 @@ let resizeRaf = 0
 function onResize() {
   cancelAnimationFrame(resizeRaf)
   resizeRaf = requestAnimationFrame(() => {
-    measure()
+    const resized = measure()
     if (anims.length) return // 過場中不打斷；過場結束時的位置是量出來的
+    // 方塊大小變了（--hero 立刻生效）：位置也要同一格到位，不能用 .settled 的過渡慢慢滑，不然箭頭會抽一下
+    if (resized) {
+      hero.value!.style.transition = 'none'
+      requestAnimationFrame(() => hero.value && (hero.value.style.transition = ''))
+    }
     const p = phase.value
     if (p !== 'intro' && p !== 'brand') updateLift()
     if (p === 'brand') setHero(logoPose(cur.r))
@@ -1199,8 +1250,9 @@ function onResize() {
     }
   })
 }
-// 清單內容變了（結果、公車、語言），版面跟著變 → 箭頭重新對準
-watch([rows, howRows, howNote, routeNote, searchNote, lang, age, mode], () => void nextTick(onResize))
+// 清單內容變了（結果、公車、語言、搜尋中的轉圈），版面跟著變 → 箭頭重新對準
+// （搜尋步驟整組垂直置中：轉圈出現時搜尋欄會往上移，沒跟著重算箭頭就會掉在搜尋欄下面）
+watch([rows, howRows, howNote, routeNote, searchNote, lang, age, mode, search.searching], () => void nextTick(onResize))
 
 onMounted(() => {
   document.title = '跟著箭頭走'
@@ -1322,10 +1374,25 @@ onBeforeUnmount(() => {
                 </svg>
               </button>
             </form>
-            <p v-if="search.searching.value" class="note" role="status">{{ S.searching }}</p>
-            <p v-else-if="searchNote" class="note warn" role="status">{{ searchNote }}</p>
-            <p v-if="hasResults && !search.searching.value" class="note">{{ search.nearUser.value ? S.sortedNear : S.sortedStation }}</p>
-            <ul v-if="hasResults" class="list results" :aria-busy="search.searching.value" @scroll.passive="onResize">
+            <div v-if="search.searching.value" class="search-spinner" role="status" :aria-label="S.searching"></div>
+            <p v-if="searchNote" class="note warn" role="status">{{ searchNote }}</p>
+            <!-- 外語搜尋：讓使用者看到用什麼中文搜的（즈산역 → 芝山站）；有其他可能就給按鈕 -->
+            <div v-if="search.translation.value && !search.searching.value" class="note translated" aria-live="polite">
+              <span>{{ search.translation.value.from }} → </span>
+              <b v-if="search.translation.value.to" lang="zh-TW">{{ search.translation.value.to }}</b>
+              <span v-else>?</span>
+              <button
+                v-for="alt in search.translation.value.alternatives"
+                :key="alt"
+                type="button"
+                class="alt"
+                lang="zh-TW"
+                @click="searchAlt(alt)"
+              >
+                {{ alt }}
+              </button>
+            </div>
+            <ul v-if="hasResults && !search.searching.value" class="list results" @scroll.passive="onResize">
               <template v-for="(r, i) in rows" :key="r.key">
                 <li v-if="r.type === 'hit' && r.head" class="group-h" aria-hidden="true">{{ r.head }}</li>
                 <li>
@@ -1344,7 +1411,7 @@ onBeforeUnmount(() => {
                     </span>
                     <span class="row-text">
                       <span class="row-main">{{ r.name }}</span>
-                      <span v-if="r.detail" class="row-sub">{{ r.detail }}</span>
+                      <span v-if="r.zh" class="row-zh" lang="zh-TW">{{ r.zh }}</span>
                     </span>
                     <span v-if="r.dist !== null" class="row-right">{{ listDistance(r.dist) }}</span>
                   </button>
@@ -1399,7 +1466,6 @@ onBeforeUnmount(() => {
                   </span>
                   <span class="row-text">
                     <span class="row-main">{{ r.title }}</span>
-                    <span v-if="r.detail" class="row-sub">{{ r.detail }}</span>
                     <span v-if="r.note" class="row-sub row-warn">{{ r.note }}</span>
                   </span>
                   <span v-if="r.right" class="row-right">{{ r.right }}</span>
@@ -1419,34 +1485,32 @@ onBeforeUnmount(() => {
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
               </button>
               <h2 id="h-route" class="step-h">
-                {{ S.routeTitle }}<span v-if="station" class="step-sub">{{ nameOf(station.name) }}<template v-if="stationFacing"> · {{ stationFacing }}</template></span>
+                {{ S.routeTitle }}<span v-if="stopGroup" class="step-sub">{{ nameOf(stopGroup.name) }}<template v-if="stationFacing"> · {{ stationFacing }}</template></span>
               </h2>
             </div>
             <ul class="list" @scroll.passive="onResize">
-              <li v-for="(r, i) in routeRows" :key="r.stopUid">
+              <li v-for="(r, i) in routeRows" :key="r.route.stopUid">
                 <button type="button" class="row" :class="{ picked: phase === 'route' && picked === i }" :data-i="i" @click="pickRoute(i)">
                   <span class="sweep" aria-hidden="true" />
-                  <span class="row-label"><b class="route-no">{{ nameOf(r.routeName) }}</b> {{ nameOf(r.headsign) }}</span>
+                  <span class="row-label"><b class="route-no">{{ nameOf(r.route.routeName) }}</b> {{ nameOf(r.route.headsign) }}</span>
                 </button>
               </li>
             </ul>
-            <p v-if="station && !routeRows.length" class="note warn">{{ S.noResult }}</p>
+            <p v-if="stopGroup && !routeRows.length" class="note warn">{{ S.noResult }}</p>
           </div>
         </section>
       </div>
       <p class="dock brand-text" aria-hidden="true">{{ BRAND }}</p>
     </div>
 
-    <RouterLink v-if="phase === 'search'" to="/about" class="about-link">{{ S.about }}</RouterLink>
-
     <!-- 導航：上方目的地與提示、中央箭頭（共用箭頭疊在 nav-slot 上）、下方距離與結束 -->
     <section class="nav" :inert="phase !== 'nav' || !!trip.card.value" :aria-label="S.end">
       <p class="dest">
         <span v-if="nav.simGps.value" class="sim-badge" lang="zh-TW">模擬</span>{{ destLine }}
       </p>
-      <div class="glass hint">
+      <div class="hint">
         <span class="hint-ico" :style="{ transform: `rotate(${hint.deg}deg)` }">
-          <ArrowMark :hollow="hollow && !navArrived" :done="navArrived" />
+          <ArrowMark navigation :hollow="hollow && !navArrived" :done="navArrived" />
         </span>
         <div class="hint-text">
           <p class="hint-main">{{ hint.main }}</p>
@@ -1460,28 +1524,22 @@ onBeforeUnmount(() => {
 
       <div class="nav-mid">
         <div ref="navSlot" class="nav-slot" />
+        <div v-if="!navArrived && !failed" class="eta">
+          <template v-if="remainingM !== null">
+            <p>{{ fill(S.remaining, { d: distanceWords(remainingM, lang) }) }}</p>
+            <p class="eta-minutes">{{ fill(S.aboutMin, { min: minutes ?? 1 }) }}</p>
+          </template>
+          <p v-else>—</p>
+        </div>
       </div>
 
       <div class="foot">
-        <button v-if="navArrived" type="button" class="finish" @click="finish">{{ A.done }}</button>
+        <button v-if="navArrived" type="button" class="glass end" @click="finish">{{ A.done }}</button>
         <template v-else-if="failed">
-          <button type="button" class="finish retry" @click="nav.restart()">{{ S.retry }}</button>
-          <button type="button" class="glass end" :aria-label="S.end" @click="endNav">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
-          </button>
+          <button type="button" class="glass end retry" @click="nav.restart()">{{ S.retry }}</button>
+          <button type="button" class="glass end" @click="endNav">{{ S.end }}</button>
         </template>
-        <template v-else>
-          <p class="glass eta">
-            <template v-if="remainingM !== null">
-              <b>{{ fill(S.remaining, { d: distanceWords(remainingM, lang) }) }}</b>
-              <span>{{ fill(S.aboutMin, { min: minutes ?? 1 }) }}</span>
-            </template>
-            <template v-else>—</template>
-          </p>
-          <button type="button" class="glass end" :aria-label="S.end" @click="endNav">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
-          </button>
-        </template>
+        <button v-else type="button" class="glass end" @click="endNav">{{ S.end }}</button>
       </div>
     </section>
     <p class="sr-only" aria-live="polite">{{ announce }}</p>
@@ -1489,7 +1547,7 @@ onBeforeUnmount(() => {
     <!-- 共用箭頭：外層管位置大小，內層箭頭管角度 -->
     <div ref="hero" class="hero" aria-hidden="true">
       <div ref="heroArrow" class="hero-arrow">
-        <ArrowMark :hollow="hollow && (phase === 'nav' || phase === 'launch')" :done="done" />
+        <ArrowMark :navigation="phase === 'nav' || (phase === 'launch' && launchMoving)" :hollow="hollow && phase === 'nav'" :done="done" />
       </div>
     </div>
 
@@ -1555,10 +1613,15 @@ onBeforeUnmount(() => {
   --glass: rgb(255 255 255 / 0.08);
   --glass-edge: rgb(255 255 255 / 0.14);
   --glass-rim: rgb(255 255 255 / 0.3);
+  /* 前面的步驟（清單、搜尋欄、右上膠囊）：城市通 TPColors 實色，不用玻璃 */
+  --surface: #22474e; /* primary800 */
+  --surface-press: #356c77; /* primary700 */
+  --surface-picked: #468d9b; /* primary600 */
   --idle: #30383d;
-  --go: #356c77;
+  /* 城市通 TPColors：primary600／primary700（白字對比 ≥ 3:1，primary500 太亮） */
+  --go: #468d9b;
   --warn: #74521b;
-  --arrived: #27500a;
+  --arrived: #356c77;
   --ease-out: cubic-bezier(0.2, 0.9, 0.1, 1);
   /* 對象的字級倍率（長者 1.2、兒童 1.1） */
   --fs: 1;
@@ -1570,7 +1633,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   color: var(--ink);
   /* 單色背景：首頁深色；導航換成規格的狀態色 */
-  background-color: #10171a;
+  background-color: #112629; /* TPColors.primary900 */
   transition: background-color 0.6s ease;
   touch-action: manipulation;
   user-select: none;
@@ -1585,9 +1648,11 @@ onBeforeUnmount(() => {
 .is-nav.tone-idle {
   background-color: var(--idle);
 }
+.is-launch.tone-warn,
 .is-nav.tone-warn {
   background-color: var(--warn);
 }
+.is-launch.tone-arrived,
 .is-nav.tone-arrived {
   background-color: var(--arrived);
 }
@@ -1607,8 +1672,8 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 .logo-slot {
-  width: 132px;
-  height: 132px;
+  width: 160px;
+  height: 160px;
 }
 .brand-text {
   font-size: 28px;
@@ -1619,6 +1684,8 @@ onBeforeUnmount(() => {
 .title {
   position: relative;
   margin-top: 20px;
+  /* letter-spacing 在最後一個字後面也留了空：吃掉它，文字的視覺中線才會對準箭頭 */
+  margin-right: -0.08em;
   color: var(--ink);
   transform: translate3d(0, 0, 0);
   transition:
@@ -1771,9 +1838,8 @@ onBeforeUnmount(() => {
   min-height: 36px;
   padding: 0 12px;
   border-radius: 999px;
-  background: var(--glass);
-  border: 1px solid var(--glass-edge);
-  border-top-color: var(--glass-rim);
+  background: var(--surface);
+  border: 1px solid transparent;
   color: var(--ink-2);
   font-size: 13px;
   font-weight: 600;
@@ -1810,7 +1876,7 @@ onBeforeUnmount(() => {
 }
 .pill:active,
 .back:active {
-  background: rgb(255 255 255 / 0.13);
+  background: var(--surface-press);
 }
 .pill:focus-visible,
 .back:focus-visible {
@@ -1868,9 +1934,8 @@ onBeforeUnmount(() => {
   padding: 0 18px;
   overflow: hidden;
   border-radius: 16px;
-  background: var(--glass);
-  border: 1px solid var(--glass-edge);
-  border-top-color: var(--glass-rim);
+  background: var(--surface);
+  border: 1px solid transparent;
   color: var(--ink);
   font-size: calc(18px * var(--fs));
   font-weight: 600;
@@ -1911,17 +1976,24 @@ onBeforeUnmount(() => {
   font-weight: 700;
   line-height: 1.3;
 }
-/* 地址很長（OSM 的完整地址），最多兩行 */
-.row-sub {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-  font-size: calc(14px * var(--fs));
-  font-weight: 500;
-  line-height: 1.4;
+/* 外語介面：名稱下面附中文原名，對得上招牌 */
+.row-zh {
+  font-size: calc(15px * var(--fs));
+  font-weight: 600;
+  line-height: 1.35;
   color: var(--ink-2);
+}
+.note.translated {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.note.translated .alt {
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: inherit;
 }
 .row-right {
   flex: none;
@@ -1964,12 +2036,12 @@ onBeforeUnmount(() => {
   font-weight: 800;
 }
 .row:active {
-  background: rgb(255 255 255 / 0.13);
+  background: var(--surface-press);
 }
 /* 被點的那列：亮起來（箭頭戳下去的同時） */
 .row.picked {
-  background: rgb(147 212 223 / 0.24);
-  border-color: rgb(147 212 223 / 0.75);
+  background: var(--surface-picked);
+  border-color: var(--arc);
 }
 .row:focus-visible {
   outline: 3px solid var(--arc);
@@ -2027,13 +2099,23 @@ onBeforeUnmount(() => {
   padding: 0 4px 0 16px;
   overflow: hidden;
   border-radius: 14px;
-  background: var(--glass);
-  border: 1px solid var(--glass-edge);
-  border-top-color: var(--glass-rim);
+  background: var(--surface);
+  border: 1px solid transparent;
 }
 .search:focus-within {
-  background: rgb(255 255 255 / 0.12);
-  border-color: rgb(147 212 223 / 0.7);
+  border-color: var(--arc);
+}
+.search-spinner {
+  width: 24px;
+  height: 24px;
+  margin: 20px auto;
+  border: 3px solid rgb(255 255 255 / 0.25);
+  border-top-color: var(--ink);
+  border-radius: 50%;
+  animation: search-spin 0.8s linear infinite;
+}
+@keyframes search-spin {
+  to { transform: rotate(360deg); }
 }
 /* 選好走法時亮色跟著箭頭從左填到右（滑動解鎖） */
 .sweep {
@@ -2100,20 +2182,6 @@ onBeforeUnmount(() => {
   stroke-linecap: round;
 }
 
-.about-link {
-  position: absolute;
-  left: 50%;
-  bottom: calc(14px + env(safe-area-inset-bottom));
-  z-index: 5;
-  transform: translateX(-50%);
-  padding: 8px 12px;
-  font-size: 13px;
-  color: var(--ink-2);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  white-space: nowrap;
-}
-
 /* ── 導航 ─────────────────────────── */
 .nav {
   position: absolute;
@@ -2163,7 +2231,7 @@ onBeforeUnmount(() => {
 }
 .hint-main {
   font-size: calc(30px * var(--fs));
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1.15;
   letter-spacing: 0.01em;
   overflow-wrap: anywhere;
@@ -2195,20 +2263,25 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 .nav-mid {
+  position: relative;
   flex: 1;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 .dbg-on .nav-mid {
   padding-bottom: 300px;
 }
 .nav-slot {
   position: relative;
+  flex: none;
   width: var(--hero, 240px);
   height: var(--hero, 240px);
 }
 .foot {
   display: flex;
+  justify-content: flex-end;
   gap: 12px;
   align-items: stretch;
   min-height: 64px;
@@ -2219,70 +2292,52 @@ onBeforeUnmount(() => {
     transform 0.2s ease;
 }
 .eta {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 6px 16px;
-  font-size: calc(15px * var(--fs));
-  line-height: 1.25;
+  position: absolute;
+  top: calc(50% + var(--hero, 240px) / 2 + 28px);
   text-align: center;
+  font-size: calc(26px * var(--fs));
+  font-weight: 400;
+  letter-spacing: 0.06em;
   font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transition: opacity 0.45s ease;
 }
-/* 剩餘距離在上（大字），約幾分鐘在下：各語言長短不一，上下排不會斷在奇怪的地方 */
-.eta b {
-  font-size: calc(21px * var(--fs));
-  font-weight: 800;
+.dbg-on .eta {
+  top: calc((100% - 300px) / 2 + var(--hero, 240px) / 2 + 28px);
 }
-.eta span {
+.eta-minutes {
+  margin-top: 8px;
   opacity: 0.85;
 }
 .end {
-  flex: none;
-  width: 64px;
+  flex: 1;
   display: grid;
   place-items: center;
-  cursor: pointer;
-  transition: transform 0.15s ease;
-}
-.end svg {
-  width: 26px;
-  height: 26px;
-  fill: none;
-  stroke: #fff;
-  stroke-width: 2.4;
-  stroke-linecap: round;
-}
-/* 主要動作：實心白 */
-.finish {
-  flex: 1;
-  border-radius: 20px;
-  background: #f1f3f4;
-  color: var(--arrived);
   font-size: calc(20px * var(--fs));
-  font-weight: 800;
+  font-weight: 600;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.16);
+  border-color: transparent;
   cursor: pointer;
   transition: transform 0.15s ease;
 }
-.finish.retry {
+.end.retry {
   color: var(--idle);
+  background: #f1f3f4;
 }
 .end:active,
-.finish:active,
 .pill-btn:active {
   transform: scale(0.96);
 }
 .end:focus-visible,
-.finish:focus-visible,
 .pill-btn:focus-visible {
   outline: 3px solid var(--arc);
   outline-offset: 3px;
 }
 .is-nav .dest,
 .is-nav .hint,
-.is-nav .foot {
+.is-nav .foot,
+.is-nav .eta {
   opacity: 1;
   transform: none;
   transition:
@@ -2378,6 +2433,12 @@ onBeforeUnmount(() => {
   outline: 3px solid #93d4df;
   outline-offset: -6px;
   border-radius: 16px;
+}
+
+@media (max-width: 600px) {
+  .av {
+    --point-gutter: 34px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

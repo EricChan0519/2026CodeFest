@@ -6,22 +6,29 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import type { Audience, Lang } from '@/lib/contract'
-import { askCard, buildArrival, type ArrivalTrip } from './arrival'
+import AskCardsDialog from './AskCardsDialog.vue'
+import { askCards, buildArrival, type ArrivalTrip, type Name } from './arrival'
 import { speakText } from './speech'
 
 const props = withDefaults(
-  defineProps<{ trip: ArrivalTrip; lang: Lang; audience: Audience; primaryLabel?: string | null; speakOnMount?: boolean }>(),
-  { primaryLabel: null, speakOnMount: true },
+  defineProps<{
+    trip: ArrivalTrip
+    lang: Lang
+    audience: Audience
+    primaryLabel?: string | null
+    speakOnMount?: boolean
+    /** 最終目的地：有的話多一張「我迷路了」的卡 */
+    place?: Name | null
+  }>(),
+  { primaryLabel: null, speakOnMount: true, place: null },
 )
 const emit = defineEmits<{ primary: [] }>()
 
 const arrival = computed(() => buildArrival(props.trip, props.lang, props.audience))
-const card = computed(() => askCard(props.trip, props.lang))
+const cards = computed(() => askCards(props.trip, props.lang, props.place ?? undefined))
 const showingCard = ref(false)
 
 const hearAgain = () => speakText(arrival.value.spoken, arrival.value.speechLang, arrival.value.rate)
-const readCard = () =>
-  card.value && speakText([card.value.zh, card.value.getOff].filter(Boolean).join(''), card.value.lang, 'slow')
 
 onMounted(() => {
   if (props.speakOnMount) hearAgain()
@@ -53,7 +60,7 @@ onMounted(() => {
 
     <div class="mt-6 flex flex-col gap-3">
       <button
-        v-if="card"
+        v-if="cards.length"
         class="min-h-16 rounded-[20px] bg-gray-50 px-4 text-xl font-bold text-arrived active:scale-[0.98]"
         @click="showingCard = true"
       >
@@ -69,28 +76,6 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- 給別人看：白底大字，旁人一眼能讀；問句一律是中文 -->
-    <div
-      v-if="showingCard && card"
-      class="fixed inset-0 z-30 flex flex-col overflow-y-auto bg-white px-4 pb-6 pt-6 text-gray-900"
-      role="dialog"
-      aria-modal="true"
-    >
-      <p class="text-lg text-gray-700">{{ arrival.labels.askHint }}</p>
-      <div class="flex flex-1 flex-col justify-center py-6" lang="zh-TW">
-        <p class="text-[clamp(2.25rem,10vw,3.5rem)] font-bold leading-snug">{{ card.zh }}</p>
-        <p v-if="card.getOff" class="mt-4 text-[clamp(1.75rem,8vw,2.5rem)] font-bold leading-snug">{{ card.getOff }}</p>
-        <p v-if="card.station" class="mt-5 text-2xl text-gray-700">{{ card.station }}</p>
-      </div>
-      <p v-if="card.own" class="mb-4 border-t border-gray-200 pt-4 text-xl text-gray-700">{{ card.own }}</p>
-      <div class="flex gap-3">
-        <button class="min-h-16 flex-1 rounded-[20px] border-2 border-gray-800 px-3 text-xl font-bold" @click="showingCard = false">
-          {{ arrival.labels.back }}
-        </button>
-        <button class="min-h-16 flex-1 rounded-[20px] bg-arrived px-3 text-xl font-bold text-white" @click="readCard">
-          {{ arrival.labels.readAloud }}
-        </button>
-      </div>
-    </div>
+    <AskCardsDialog v-if="showingCard && cards.length" :cards="cards" :lang="lang" @close="showingCard = false" />
   </main>
 </template>

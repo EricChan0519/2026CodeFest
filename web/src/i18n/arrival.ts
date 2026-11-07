@@ -35,6 +35,14 @@ export interface ArrivalStrings {
   changeLine: string
   /** 捷運出站口，{exit} 是出口名稱（M3、2） */
   exitVia: string
+  /** 問問卡：{stop} 是下車站名 */
+  askRemind: string
+  /** 問問卡：{place} 是目的地名稱 */
+  askLost: string
+  /** 問問卡分頁的名稱（使用者的語言） */
+  tabBus: string
+  tabRemind: string
+  tabLost: string
 }
 
 export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
@@ -60,6 +68,11 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     getOffNow: '到了，請在 {stop} 下車',
     changeLine: '在這裡換線',
     exitVia: '從 {exit} 出口出站',
+    askRemind: '到「{stop}」請提醒我下車，謝謝',
+    askLost: '我迷路了，請幫幫我。我要去「{place}」',
+    tabBus: '是這班車嗎',
+    tabRemind: '提醒我下車',
+    tabLost: '我迷路了',
   },
   en: {
     arrived: "You're here.",
@@ -83,6 +96,11 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     getOffNow: 'This is {stop}. Get off here',
     changeLine: 'Change lines here',
     exitVia: 'Exit via {exit}',
+    askRemind: 'Please tell me when we reach "{stop}" so I can get off. Thank you',
+    askLost: 'I am lost, please help me. I want to go to "{place}"',
+    tabBus: 'Is this my bus?',
+    tabRemind: 'Remind me to get off',
+    tabLost: 'I am lost',
   },
   th: {
     arrived: 'ถึงแล้ว',
@@ -106,6 +124,11 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     getOffNow: 'ถึง {stop} แล้ว ลงที่นี่',
     changeLine: 'เปลี่ยนสายที่นี่',
     exitVia: 'ออกทางออก {exit}',
+    askRemind: 'ถึง "{stop}" ช่วยบอกให้ฉันลงด้วย ขอบคุณ',
+    askLost: 'ฉันหลงทาง ช่วยฉันด้วย ฉันจะไป "{place}"',
+    tabBus: 'ใช่คันนี้ไหม',
+    tabRemind: 'บอกให้ลงรถ',
+    tabLost: 'ฉันหลงทาง',
   },
   vi: {
     arrived: 'Đã đến nơi.',
@@ -129,6 +152,11 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     getOffNow: 'Đến {stop} rồi, xuống ở đây',
     changeLine: 'Đổi tuyến tại đây',
     exitVia: 'Ra cửa {exit}',
+    askRemind: 'Đến "{stop}" xin nhắc tôi xuống xe, cảm ơn',
+    askLost: 'Tôi bị lạc, xin hãy giúp tôi. Tôi muốn đến "{place}"',
+    tabBus: 'Có phải xe này?',
+    tabRemind: 'Nhắc tôi xuống xe',
+    tabLost: 'Tôi bị lạc',
   },
   id: {
     arrived: 'Sudah sampai.',
@@ -152,6 +180,11 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     getOffNow: 'Sudah sampai {stop}, turun di sini',
     changeLine: 'Ganti jalur di sini',
     exitVia: 'Keluar lewat pintu {exit}',
+    askRemind: 'Tolong beri tahu saya saat sampai di "{stop}" supaya saya turun. Terima kasih',
+    askLost: 'Saya tersesat, tolong bantu saya. Saya mau ke "{place}"',
+    tabBus: 'Apakah ini busnya?',
+    tabRemind: 'Ingatkan saya turun',
+    tabLost: 'Saya tersesat',
   },
   km: {
     arrived: 'មកដល់ហើយ',
@@ -175,6 +208,11 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     getOffNow: 'ដល់ {stop} ហើយ ចុះនៅទីនេះ',
     changeLine: 'ប្តូរខ្សែនៅទីនេះ',
     exitVia: 'ចេញតាមច្រកចេញ {exit}',
+    askRemind: 'ដល់ "{stop}" សូមប្រាប់ខ្ញុំចុះផង អរគុណ',
+    askLost: 'ខ្ញុំវង្វេងផ្លូវ សូមជួយខ្ញុំផង។ ខ្ញុំចង់ទៅ "{place}"',
+    tabBus: 'តើឡាននេះត្រូវទេ?',
+    tabRemind: 'ប្រាប់ខ្ញុំចុះ',
+    tabLost: 'ខ្ញុំវង្វេងផ្លូវ',
   },
   ja: {
     arrived: '着きました。',
@@ -198,6 +236,11 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     getOffNow: '{stop} に着きました。ここで降ります',
     changeLine: 'ここで乗り換え',
     exitVia: '{exit} 出口から出る',
+    askRemind: '「{stop}」に着いたら降りるので教えてください。ありがとうございます',
+    askLost: '道に迷いました。助けてください。「{place}」へ行きたいです',
+    tabBus: 'このバスですか',
+    tabRemind: '降りる所を教えて',
+    tabLost: '道に迷いました',
   },
   ko: {
     arrived: '도착했어요.',
@@ -221,5 +264,10 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     getOffNow: '{stop}에 도착했어요. 여기서 내리세요',
     changeLine: '여기서 환승',
     exitVia: '{exit} 출구로 나가기',
+    askRemind: '"{stop}"에 도착하면 내릴 수 있게 알려 주세요. 감사합니다',
+    askLost: '길을 잃었어요. 도와주세요. "{place}"에 가고 싶어요',
+    tabBus: '이 버스가 맞나요',
+    tabRemind: '내릴 때 알려 주세요',
+    tabLost: '길을 잃었어요',
   },
 }

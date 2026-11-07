@@ -26,6 +26,17 @@ class PlaceSearchRequest(BaseModel):
     limit: int = Field(20, ge=1, le=50)
 
 
+class TranslateQueryRequest(BaseModel):
+    q: str = Field(min_length=1, max_length=60)
+
+
+class TranslateNamesRequest(BaseModel):
+    lang: Literal["en", "id", "vi", "th", "km", "ko", "ja"]
+    names: list[str] = Field(default_factory=list, max_length=100)
+    addresses: list[str] = Field(default_factory=list, max_length=100)
+    categories: list[str] = Field(default_factory=list, max_length=100)
+
+
 class LatLonIn(BaseModel):
     lat: float
     lon: float
