@@ -131,3 +131,46 @@ describe('planTransit bus and mixed', () => {
     for (const tab of [plans.mixed, plans.bus, plans.metro]) for (const p of tab) expect(p.rides.length).toBeLessThanOrEqual(3)
   })
 })
+
+describe('planTransit service hours', () => {
+  /** 小快照加上首末班：每站首班 06:00、末班 23:30 */
+  function withHours(): MetroIndex {
+    const m = structuredClone(metro)
+    for (const p of m.patterns) {
+      p.firstS = p.stops.map((_, i) => (i === p.stops.length - 1 ? null : 6 * 3600))
+      p.lastS = p.stops.map((_, i) => (i === p.stops.length - 1 ? null : 23 * 3600 + 30 * 60))
+    }
+    return m
+  }
+  const at = (h: number, m = 0) => new Date(2026, 10, 9, h, m) // 2026-11-09 星期一
+
+  it('marks plans whose last train has left', () => {
+    const plans = planTransit(NO_BUS, withHours(), XIMEN, ZHONGSHAN, { audience: 'visitor', now: at(23, 55) })
+    expect(plans.metro[0].service).toBe('ended')
+  })
+
+  it('marks plans before the first train', () => {
+    const plans = planTransit(NO_BUS, withHours(), XIMEN, ZHONGSHAN, { audience: 'visitor', now: at(5, 0) })
+    expect(plans.metro[0].service).toBe('not_started')
+  })
+
+  it('treats 00:30 as the same service night, after the last train', () => {
+    const plans = planTransit(NO_BUS, withHours(), XIMEN, ZHONGSHAN, { audience: 'visitor', now: new Date(2026, 10, 10, 0, 30) })
+    expect(plans.metro[0].service).toBe('ended')
+  })
+
+  it('is ok during service hours and when there are no service times', () => {
+    expect(planTransit(NO_BUS, withHours(), XIMEN, ZHONGSHAN, { audience: 'visitor', now: at(12) }).metro[0].service).toBe('ok')
+    expect(planTransit(NO_BUS, metro, XIMEN, ZHONGSHAN, { audience: 'visitor', now: at(23, 59) }).metro[0].service).toBe('ok')
+  })
+
+  it('uses the weekday or weekend bus window and lists runnable plans first', () => {
+    const net = busLine()
+    net.patterns[0].service = { weekday: [6 * 3600, 22 * 3600], weekend: [7 * 3600, 23 * 3600] }
+    const monday = planTransit(net, withHours(), XIMEN, SHUANGLIAN, { audience: 'visitor', now: at(22, 30) })
+    expect(monday.bus[0].service).toBe('ended')
+    expect(monday.mixed[0].service).toBe('ok')
+    const saturday = planTransit(net, null, XIMEN, SHUANGLIAN, { audience: 'visitor', now: new Date(2026, 10, 7, 22, 30) })
+    expect(saturday.bus[0].service).toBe('ok')
+  })
+})

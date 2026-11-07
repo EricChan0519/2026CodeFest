@@ -257,7 +257,7 @@ async function enterStep(s: StepName, from: Pose = cur) {
   steps[s] = 'in'
   await nextTick()
   // 搜尋：指著搜尋欄；怎麼去：公車已經算好就直接指著建議的第一班車（還在算的話，算好時由 watch 滑過去）
-  armRow = s === 'search' ? -1 : s === 'how' && !search.busLoading.value && howRows.value.length > 1 ? 1 : 0
+  armRow = s === 'search' ? -1 : s === 'how' && !search.busLoading.value ? firstPickable() : 0
   await play([{ p: from }, { p: pointPose(s, armRow, pointAngle(from.r)) }], dur(T_LIST), EASE_LIST)
   if (my !== seq) return
   busy.value = false
@@ -551,12 +551,20 @@ function transitRow(p: TransitPlan, t: { name: string; point: LatLon }): HowRow 
     right: fill(S.value.aboutMin, { min: Math.max(1, Math.round(p.durationS / 60)) }),
     choice: { kind: 'transit', plan: p, name: t.name, point: t.point },
     mode: modes.size > 1 ? 'mixed' : first.mode,
+    // 照現在的時間搭不到：反灰、不能選，寫出原因（不然選了會變成只帶你走路）
+    disabled: p.service !== 'ok',
+    note: p.service === 'ended' ? S.value.lastGone : p.service === 'not_started' ? S.value.notStarted : undefined,
   }
+}
+/** 第一個能選的搭車方案；都不能選時停在走路那列 */
+function firstPickable(): number {
+  const i = howRows.value.findIndex((r, idx) => idx > 0 && !r.disabled)
+  return i > 0 ? i : 0
 }
 function selectTab(t: PlanTab) {
   if (busy.value || phase.value !== 'how' || planTab.value === t) return
   planTab.value = t
-  armRow = howRows.value.length > 1 ? 1 : 0
+  armRow = firstPickable()
   void nextTick(onResize)
 }
 function busTitle(p: BusPlan): string {
@@ -602,6 +610,7 @@ const howNote = computed(() => {
     if (rides.length === 0 && planTab.value === 'bus') return S.value.noBusPlan
     if (rides.length === 0 && planTab.value === 'metro') return S.value.noMetroPlan
     if (rides.length === 0) return S.value.busNotWorth
+    if (rides.every((p) => p.service === 'ended')) return S.value.lastGone
     return S.value.estimateNote
   }
   switch (search.busNote.value) {
@@ -620,9 +629,10 @@ const howNote = computed(() => {
 watch(
   () => search.busLoading.value,
   async (loading) => {
-    if (loading || phase.value !== 'how' || howRows.value.length <= 1) return
+    const target = firstPickable()
+    if (loading || phase.value !== 'how' || target === 0) return
     await nextTick()
-    if (!busy.value && armRow === 0) await moveArrow('how', 1)
+    if (!busy.value && armRow === 0) await moveArrow('how', target)
   },
 )
 

@@ -29,7 +29,14 @@ export interface TransitPlan {
   rideS: number
   /** 全程步行公尺數（估算值，只用來顯示和排序） */
   walkM: number
+  /**
+   * 照現在的時間搭不搭得到：ended 末班車已過、not_started 首班車還沒開。
+   * 快照沒有首末班資料的路線一律當作 ok。畫面上不是 ok 的方案反灰、不能選。
+   */
+  service: ServiceState
 }
+
+export type ServiceState = 'ok' | 'ended' | 'not_started'
 
 export interface BusNetwork {
   stations: Station[]
@@ -57,6 +64,22 @@ export const EXCLUDED_BUS = /觀光巴士|通勤/
 export const BUS_METRO_TRANSFER_M = 300
 /** 每多上一次車加的排序懲罰（不算進 durationS），避免為了省一兩分鐘多轉一次車 */
 export const BOARD_PENALTY_S = 120
+
+/** 營運日從清晨 4 點算起，和快照的首末班秒數一致（00:30 是 24:30） */
+export const SERVICE_DAY_START_H = 4
+
+interface Clock {
+  /** 從營運日 0 點起的秒數 */
+  nowS: number
+  weekend: boolean
+}
+
+export function serviceClock(now: Date): Clock {
+  const h = now.getHours()
+  const late = h < SERVICE_DAY_START_H
+  const day = (now.getDay() + (late ? 6 : 0)) % 7
+  return { nowS: (late ? h + 24 : h) * 3600 + now.getMinutes() * 60 + now.getSeconds(), weekend: day === 0 || day === 6 }
+}
 
 export function metroUid(stationId: string): string {
   return `metro:${stationId}`
@@ -362,13 +385,23 @@ interface Segment {
   pat: Pat
   from: number
   to: number
+  /** 出發後幾秒走到上車站（還沒等車） */
+  reachS: number
+  waitS: number
 }
 
-function toRide(g: Graph, seg: Segment): Ride {
+function toRide(g: Graph, seg: Segment, clock: Clock): Ride {
   const { pat } = seg
   if (pat.mode === 'bus') {
     const stations = pat.nodes.slice(seg.from, seg.to + 1).map((n) => g.platforms[n].bus!)
-    return { mode: 'bus', board: stations[0], route: busRoute(stations[0], pat.bus!), alight: stations[stations.length - 1], stops: stations }
+    const ride: Ride = { mode: 'bus', board: stations[0], route: busRoute(stations[0], pat.bus!), alight: stations[stations.length - 1], stops: stations }
+    // 快照只有起點站的首末班，往後每站加上行車時間估算
+    const span = pat.bus!.service?.[clock.weekend ? 'weekend' : 'weekday']
+    if (span) {
+      ride.firstS = span[0] + seg.from * BUS_STOP_S
+      ride.lastS = span[1] + seg.from * BUS_STOP_S
+    }
+    return ride
   }
   const line = pat.line!
   const route: StationRoute = { routeName: { zh: line.name.zh ?? line.lineId, en: line.name.en }, direction: 255,
@@ -376,11 +409,26 @@ function toRide(g: Graph, seg: Segment): Ride {
   const stops = pat.nodes.slice(seg.from, seg.to + 1).map((n) => metroStationAsStation(g.platforms[n].metro!, route))
   const stopTimesS = [0]
   for (let i = seg.from; i < seg.to; i++) stopTimesS.push(stopTimesS[stopTimesS.length - 1] + pat.hopS[i])
-  return { mode: 'metro', board: stops[0], route: stops[0].routes[0], alight: stops[stops.length - 1], stops,
+  const ride: Ride = { mode: 'metro', board: stops[0], route: stops[0].routes[0], alight: stops[stops.length - 1], stops,
     lineColor: line.color, stopTimesS }
+  const first = pat.metro!.firstS?.[seg.from]
+  const last = pat.metro!.lastS?.[seg.from]
+  if (first != null) ride.firstS = first
+  if (last != null) ride.lastS = last
+  return ride
 }
 
-function reconstruct(g: Graph, s: Search, end: number, from: LatLon, to: LatLon, mps: number, finalM: number): TransitPlan | null {
+function serviceOf(rides: Ride[], segments: Segment[], clock: Clock): ServiceState {
+  let state: ServiceState = 'ok'
+  rides.forEach((r, i) => {
+    const reach = clock.nowS + segments[i].reachS
+    if (r.lastS !== undefined && reach > r.lastS) state = 'ended'
+    else if (state === 'ok' && r.firstS !== undefined && reach + segments[i].waitS < r.firstS) state = 'not_started'
+  })
+  return state
+}
+
+function reconstruct(g: Graph, s: Search, end: number, from: LatLon, to: LatLon, mps: number, finalM: number, clock: Clock): TransitPlan | null {
   const K = MAX_RIDES + 1
   const P = g.platforms.length
   const chain: number[] = []
@@ -410,7 +458,9 @@ function reconstruct(g: Graph, s: Search, end: number, from: LatLon, to: LatLon,
       waitS += step - BOARD_PENALTY_S
       const local = node - P
       const pat = g.pats.find((p) => local >= p.offset && local < p.offset + p.nodes.length)!
-      segments.push({ pat, from: local - pat.offset, to: local - pat.offset })
+      // 走到上車站的時間：之前每次上車的排序懲罰不是真的時間，要扣掉
+      const reachS = before - segments.length * BOARD_PENALTY_S
+      segments.push({ pat, from: local - pat.offset, to: local - pat.offset, reachS, waitS: step - BOARD_PENALTY_S })
     } else if (k === RIDE) {
       rideS += step
       segments[segments.length - 1].to += 1
@@ -418,7 +468,7 @@ function reconstruct(g: Graph, s: Search, end: number, from: LatLon, to: LatLon,
   }
   if (segments.length === 0) return null
 
-  const rides = segments.map((seg) => toRide(g, seg))
+  const rides = segments.map((seg) => toRide(g, seg, clock))
   // 捷運進出站：選離上一個位置最近的進站口、離下一個目標最近的出站口
   let here: LatLon = from
   rides.forEach((r, i) => {
@@ -442,7 +492,7 @@ function reconstruct(g: Graph, s: Search, end: number, from: LatLon, to: LatLon,
   walkS += finalS
   walkM += finalM
   return { rides, durationS: Math.round(walkS + waitS + rideS), walkS: Math.round(walkS), waitS: Math.round(waitS),
-    rideS: Math.round(rideS), walkM: Math.round(walkM * DETOUR) }
+    rideS: Math.round(rideS), walkM: Math.round(walkM * DETOUR), service: serviceOf(rides, segments, clock) }
 }
 
 /** 下車又馬上搭同一條路線（同一條捷運線的區間車也算）：坐著不動就好，不列 */
@@ -454,7 +504,7 @@ function signature(p: TransitPlan): string {
   return p.rides.map((r) => `${r.mode}:${r.route.routeName.zh}:${r.route.headsign.zh ?? ''}`).join('>')
 }
 
-function plansFor(g: Graph, from: LatLon, to: LatLon, mps: number, allow: (m: 'bus' | 'metro') => boolean): TransitPlan[] {
+function plansFor(g: Graph, from: LatLon, to: LatLon, mps: number, clock: Clock, allow: (m: 'bus' | 'metro') => boolean): TransitPlan[] {
   const K = MAX_RIDES + 1
   const s = search(g, from, mps, allow)
   const ends: { st: number; cost: number; finalM: number }[] = []
@@ -472,7 +522,7 @@ function plansFor(g: Graph, from: LatLon, to: LatLon, mps: number, allow: (m: 'b
   const out: TransitPlan[] = []
   const seen = new Set<string>()
   for (const e of ends) {
-    const plan = reconstruct(g, s, e.st, from, to, mps, e.finalM)
+    const plan = reconstruct(g, s, e.st, from, to, mps, e.finalM, clock)
     if (!plan || reboardsSameLine(plan)) continue
     const sig = signature(plan)
     if (seen.has(sig)) continue
@@ -486,13 +536,14 @@ function plansFor(g: Graph, from: LatLon, to: LatLon, mps: number, allow: (m: 'b
 function walkPlan(from: LatLon, to: LatLon, mps: number): TransitPlan {
   const walkM = distanceM(from, to) * DETOUR
   const walkS = Math.round(walkM / mps)
-  return { rides: [], durationS: walkS, walkS, waitS: 0, rideS: 0, walkM: Math.round(walkM) }
+  return { rides: [], durationS: walkS, walkS, waitS: 0, rideS: 0, walkM: Math.round(walkM), service: 'ok' }
 }
 
 function top(plans: TransitPlan[]): TransitPlan[] {
   const seen = new Set<string>()
+  // 搭得到的排前面，同樣搭得到（或都搭不到）再比時間
   return [...plans]
-    .sort((a, b) => a.durationS - b.durationS)
+    .sort((a, b) => Number(a.service !== 'ok') - Number(b.service !== 'ok') || a.durationS - b.durationS)
     .filter((p) => {
       const sig = signature(p)
       if (seen.has(sig)) return false
@@ -507,20 +558,22 @@ export function planTransit(
   metro: MetroIndex | null,
   from: LatLon,
   to: LatLon,
-  opts: { audience: Audience },
+  opts: { audience: Audience; now?: Date },
 ): Record<PlanTab, TransitPlan[]> {
   const mps = WALK_MPS[opts.audience]
+  const clock = serviceClock(opts.now ?? new Date())
   const walk = walkPlan(from, to, mps)
   const g = graphFor(bus, metro)
   // 搭車要比直接走過去快才列
   const worth = (p: TransitPlan) => p.durationS < walk.durationS
 
-  const busPlans = plansFor(g, from, to, mps, (m) => m === 'bus').filter(worth)
-  const metroPlans = metro ? plansFor(g, from, to, mps, (m) => m === 'metro').filter(worth) : []
-  const mixedPlans = plansFor(g, from, to, mps, () => true).filter(worth)
+  const busPlans = plansFor(g, from, to, mps, clock, (m) => m === 'bus').filter(worth)
+  const metroPlans = metro ? plansFor(g, from, to, mps, clock, (m) => m === 'metro').filter(worth) : []
+  const mixedPlans = plansFor(g, from, to, mps, clock, () => true).filter(worth)
 
   let mixed = top([...mixedPlans, ...busPlans, ...metroPlans])
-  if (walk.walkM < WALK_ONLY_M || mixed.length === 0 || walk.durationS <= mixed[0].durationS) {
+  const firstOk = mixed.find((p) => p.service === 'ok')
+  if (walk.walkM < WALK_ONLY_M || !firstOk || walk.durationS <= firstOk.durationS) {
     mixed = [walk, ...mixed].slice(0, PLANS_PER_TAB)
   }
   return { mixed, bus: top(busPlans), metro: top(metroPlans) }

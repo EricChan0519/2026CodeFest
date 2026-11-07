@@ -34,6 +34,9 @@ export interface Ride {
   alightPoint?: LatLon
   /** 捷運出站出口名稱 */
   alightExit?: string
+  /** 今天這個上車站的首班、末班時間（秒，營運日從 04:00 算）；沒有資料時不判斷 */
+  firstS?: number
+  lastS?: number
 }
 
 export type JourneyPhase = 'walk_to_stop' | 'at_stop' | 'ride' | 'walk_to_dest' | 'arrived'

@@ -51,6 +51,9 @@ export interface ArrowStrings {
   transitDetail: string
   /** 預估時間不是即時班表 */
   estimateNote: string
+  /** 方案反灰時的原因 */
+  lastGone: string
+  notStarted: string
   routeTitle: string
   back: string
   change: string
@@ -137,6 +140,8 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     noMetroPlan: '沒有只搭捷運的路線',
     transitDetail: '在 {stop} 上車 · 在 {alight} 下車',
     estimateNote: '時間是預估的，不是即時班表',
+    lastGone: '末班車已過',
+    notStarted: '首班車還沒開',
     routeTitle: '要搭哪一班？',
     back: '返回',
     change: '更改語言和使用者',
@@ -218,6 +223,8 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     noMetroPlan: 'No MRT-only route',
     transitDetail: 'Board at {stop} · Get off at {alight}',
     estimateNote: 'Times are estimates, not live timetables',
+    lastGone: 'Last service has left',
+    notStarted: 'First service has not started',
     routeTitle: 'Which bus?',
     back: 'Back',
     change: 'Change language and user',
@@ -299,6 +306,8 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     noMetroPlan: 'ไม่มีเส้นทาง MRT อย่างเดียว',
     transitDetail: 'ขึ้นที่ {stop} · ลงที่ {alight}',
     estimateNote: 'เวลาเป็นค่าประมาณ ไม่ใช่ตารางเวลาจริง',
+    lastGone: 'รถเที่ยวสุดท้ายออกไปแล้ว',
+    notStarted: 'รถเที่ยวแรกยังไม่ออก',
     routeTitle: 'จะขึ้นสายไหน?',
     back: 'กลับ',
     change: 'เปลี่ยนภาษาและผู้ใช้',
@@ -380,6 +389,8 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     noMetroPlan: 'Không có tuyến chỉ đi MRT',
     transitDetail: 'Lên ở {stop} · Xuống ở {alight}',
     estimateNote: 'Thời gian là ước tính, không phải lịch chạy thực tế',
+    lastGone: 'Chuyến cuối đã đi',
+    notStarted: 'Chuyến đầu chưa chạy',
     routeTitle: 'Đi tuyến nào?',
     back: 'Quay lại',
     change: 'Đổi ngôn ngữ và người dùng',
@@ -461,6 +472,8 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     noMetroPlan: 'Tidak ada rute MRT saja',
     transitDetail: 'Naik di {stop} · Turun di {alight}',
     estimateNote: 'Waktu adalah perkiraan, bukan jadwal langsung',
+    lastGone: 'Layanan terakhir sudah lewat',
+    notStarted: 'Layanan pertama belum mulai',
     routeTitle: 'Naik bus yang mana?',
     back: 'Kembali',
     change: 'Ganti bahasa dan pengguna',
@@ -542,6 +555,8 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     noMetroPlan: 'គ្មានផ្លូវ MRT តែមួយ',
     transitDetail: 'ឡើងនៅ {stop} · ចុះនៅ {alight}',
     estimateNote: 'ពេលវេលាជាការប៉ាន់ស្មាន មិនមែនកាលវិភាគផ្ទាល់ទេ',
+    lastGone: 'ជើងចុងក្រោយបានចេញហើយ',
+    notStarted: 'ជើងដំបូងមិនទាន់ចេញ',
     routeTitle: 'តើជិះខ្សែណា?',
     back: 'ត្រឡប់',
     change: 'ប្តូរភាសា និងអ្នកប្រើ',
@@ -623,6 +638,8 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     noMetroPlan: 'MRTだけのルートはありません',
     transitDetail: '{stop} で乗車 · {alight} で降車',
     estimateNote: '時間は目安で、リアルタイムの時刻表ではありません',
+    lastGone: '終電・終バスは出ました',
+    notStarted: '始発はまだです',
     routeTitle: 'どのバスに乗りますか？',
     back: '戻る',
     change: '言語と利用者を変更',
@@ -704,6 +721,8 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     noMetroPlan: 'MRT만 타는 경로가 없습니다',
     transitDetail: '{stop}에서 승차 · {alight}에서 하차',
     estimateNote: '시간은 예상치이며 실시간 시간표가 아닙니다',
+    lastGone: '막차가 끊겼습니다',
+    notStarted: '첫차가 아직 없습니다',
     routeTitle: '어느 버스를 타나요?',
     back: '뒤로',
     change: '언어와 사용자 변경',

@@ -40,6 +40,9 @@ export interface MetroPattern {
   stops: string[]
   /** runS[i]：stops[i] → stops[i+1] 的行車加停站秒數，長度 stops.length - 1 */
   runS: number[]
+  /** 每站往這個方向的首班、末班（秒，營運日從 04:00 算，00:10 記成 24:10）；最後一站或沒有資料是 null */
+  firstS?: (number | null)[]
+  lastS?: (number | null)[]
 }
 
 export interface MetroTransfer {
