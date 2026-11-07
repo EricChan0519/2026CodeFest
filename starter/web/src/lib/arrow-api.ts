@@ -4,6 +4,8 @@
  * 使用者座標只放 POST body，不放網址（ADR-0005）；search 只送使用者打的字。
  */
 import { api } from './api'
+import { loadPoiIndex, searchPois, type PoiHit } from '@team/lib/poiSearch'
+import { searchPlaces as geocode } from '@team/lib/geocode'
 
 export type LatLon = { lat: number; lon: number }
 
@@ -16,13 +18,23 @@ type Station = {
   distanceM?: number
 }
 
-/** 畫面用的地點：目前資料都是 TDX 公車站位 */
+/**
+ * 畫面用的地點，三種來源：
+ * - stop：TDX 公車站位（後端 /api/stations/*）
+ * - store：連鎖店（Overture Maps 快照，web/public/lab/poi_index.json，在手機上比對）
+ * - address：地址／地標（OpenStreetMap Nominatim，按搜尋才查）
+ */
+export type PlaceKind = 'stop' | 'store' | 'address'
 export type Place = LatLon & {
   id: string
+  kind: PlaceKind
   name: string
   nameEn: string | null
   category: string
+  /** stop：停靠路線 */
   routes: string[]
+  /** store：分店地址；address：行政區等補充說明 */
+  detail: string
   distanceM: number | null
 }
 
@@ -40,10 +52,12 @@ function toPlace(s: Station, from?: LatLon): Place {
   const routes = [...new Set(s.routes.map(r => r.routeName.zh))]
   return {
     id: s.stationUid,
+    kind: 'stop',
     name: s.name.zh,
     nameEn: s.name.en,
     category: '公車站牌',
     routes,
+    detail: '',
     lat: s.lat,
     lon: s.lon,
     distanceM: s.distanceM ?? (from ? Math.round(distanceM(from, s)) : null),
@@ -55,9 +69,42 @@ export async function nearbyPlaces(at: LatLon, radiusM = 500): Promise<Place[]> 
   return res.stations.map(s => toPlace(s))
 }
 
-export async function searchPlaces(q: string, from: LatLon): Promise<Place[]> {
+async function searchStops(q: string, from: LatLon): Promise<Place[]> {
   const res = await api<{ stations: Station[] }>(`/api/stations/search?q=${encodeURIComponent(q)}`)
-  return res.stations.map(s => toPlace(s, from)).sort((a, b) => (a.distanceM ?? 0) - (b.distanceM ?? 0))
+  return res.stations.map(s => toPlace(s, from))
+}
+
+function storeToPlace(p: PoiHit): Place {
+  const [lat, lon] = p.point
+  return { id: `poi:${lat},${lon}`, kind: 'store', name: p.name, nameEn: p.brand.en || null, category: '店家', routes: [], detail: p.address, lat, lon, distanceM: p.distanceM == null ? null : Math.round(p.distanceM) }
+}
+
+async function searchStores(q: string, from: LatLon): Promise<Place[]> {
+  const index = await loadPoiIndex()
+  return searchPois(index, q, { near: [from.lat, from.lon], limit: 20 }).map(storeToPlace)
+}
+
+/**
+ * 邊打邊查：公車站牌（後端）＋連鎖店（本機快照），依距離由近到遠合併。
+ * 其中一邊失敗仍顯示另一邊；兩邊都失敗才算錯誤。
+ */
+export async function searchPlaces(q: string, from: LatLon): Promise<Place[]> {
+  const [stops, stores] = await Promise.allSettled([searchStops(q, from), searchStores(q, from)])
+  if (stops.status === 'rejected' && stores.status === 'rejected') throw stops.reason
+  const all = [...(stops.status === 'fulfilled' ? stops.value : []), ...(stores.status === 'fulfilled' ? stores.value : [])]
+  return all.sort((a, b) => (a.distanceM ?? Infinity) - (b.distanceM ?? Infinity)).slice(0, 30)
+}
+
+/**
+ * 地址／地標：OpenStreetMap Nominatim。公開服務規定只能在使用者按下搜尋時查、每秒最多一次，
+ * 所以只在按 Enter 或「用地址搜尋」時呼叫。注意：輸入的地址會送到第三方（正式版應改走自己的後端，ADR-0005）。
+ */
+export async function searchAddress(q: string, from: LatLon): Promise<Place[]> {
+  const rows = await geocode(q, { limit: 5 })
+  return rows.map(r => {
+    const [lat, lon] = r.point
+    return { id: `addr:${lat},${lon}`, kind: 'address', name: r.name, nameEn: null, category: '地址', routes: [], detail: r.detail, lat, lon, distanceM: Math.round(distanceM(from, { lat, lon })) }
+  })
 }
 
 const audienceCode: Record<string, 'elder' | 'child' | 'visitor'> = { '長者': 'elder', '兒童': 'child', '外籍人士': 'visitor', '其他': 'visitor' }
@@ -66,7 +113,7 @@ export async function planRoute(from: LatLon, to: Place, audience: string): Prom
   const res = await api<{ routes: Route[] }>('/api/routes', {
     method: 'POST',
     timeoutMs: 20000,
-    body: JSON.stringify({ from, to: { lat: to.lat, lon: to.lon, stationUid: to.id }, audience: audienceCode[audience] ?? 'visitor' }),
+    body: JSON.stringify({ from, to: { lat: to.lat, lon: to.lon, ...(to.kind === 'stop' ? { stationUid: to.id } : {}) }, audience: audienceCode[audience] ?? 'visitor' }),
   })
   const route = res.routes.find(r => r.recommended) ?? res.routes[0]
   if (!route) throw new Error('no route')

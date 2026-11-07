@@ -5,7 +5,7 @@ import AppIcon from './components/AppIcon.vue'
 import CompassArrow from './components/CompassArrow.vue'
 import { requestCompassPermission } from './composables/useHeading'
 import type { ApiError } from './lib/api'
-import { FALLBACK_ORIGIN, currentPosition, formatDistance, nearbyPlaces, planRoute, searchPlaces, type LatLon, type NavStep, type Place, type PlannedRoute } from './lib/arrow-api'
+import { FALLBACK_ORIGIN, currentPosition, formatDistance, nearbyPlaces, planRoute, searchAddress, searchPlaces, type LatLon, type NavStep, type Place, type PlannedRoute } from './lib/arrow-api'
 
 type Page = 'welcome' | 'home' | 'search' | 'route' | 'nav' | 'arrived' | 'settings' | 'about' | 'origin'
 type Preferences = { audience: string; language: string; voice: boolean; vibration: boolean }
@@ -65,10 +65,25 @@ function runSearch(q: string) {
     catch { if (seq === searchSeq) searchState.value = 'error' }
   }, 300)
 }
-watch(query, value => { listPage.value = 0; runSearch(value.trim()) })
+watch(query, value => { listPage.value = 0; addressResults.value = []; addressState.value = 'idle'; runSearch(value.trim()) })
+
+/* ── 地址搜尋（OpenStreetMap Nominatim）：只在按 Enter／「用地址搜尋」時查，且間隔至少 1 秒（Nominatim 使用規定） ── */
+const addressResults = ref<Place[]>([])
+const addressState = ref<Load>('idle')
+let lastGeocodeAt = 0
+async function runAddressSearch() {
+  const q = query.value.trim()
+  if (!q || addressState.value === 'loading') return
+  addressState.value = 'loading'
+  const wait = Math.max(0, 1100 - (Date.now() - lastGeocodeAt))
+  if (wait) await new Promise(r => setTimeout(r, wait))
+  lastGeocodeAt = Date.now()
+  try { const list = await searchAddress(q, origin.value); if (query.value.trim() === q) { addressResults.value = list; addressState.value = 'ok'; listPage.value = 0 } }
+  catch { if (query.value.trim() === q) addressState.value = 'error' }
+}
 function retryList() { if (query.value.trim()) runSearch(query.value.trim()); else loadNearby() }
 /** 沒輸入時顯示附近站牌，有輸入時顯示搜尋結果 */
-const results = computed(() => (query.value.trim() ? searchResults.value : nearby.value))
+const results = computed(() => (query.value.trim() ? [...addressResults.value, ...searchResults.value] : nearby.value))
 const listState = computed(() => (query.value.trim() ? searchState.value : nearbyState.value))
 const visibleResults = computed(() => results.value.slice(listPage.value * 3, listPage.value * 3 + 3))
 
@@ -95,9 +110,11 @@ watch(() => [page.value, selected.value?.id, origin.value.lat, origin.value.lon,
 const englishFirst = computed(() => prefs.value.language !== '繁體中文')
 function placeName(place: Place) { return englishFirst.value && place.nameEn ? `${place.nameEn} · ${place.name}` : place.name }
 /** 站牌的副標：停靠的公車路線 */
+/** 副標：站牌顯示停靠公車，店家顯示分店地址，地址顯示行政區 */
+function placeSub(place: Place) { return place.kind === 'stop' ? placeRoutes(place) : place.detail }
 function placeRoutes(place: Place) { const max = prefs.value.audience === '長者' ? 3 : 6; const shown = place.routes.slice(0, max).join('、'); return `${t('公車')} ${shown}${place.routes.length > max ? '…' : ''}` }
 /** 列表副標一行：距離 · 停靠公車（目前結果都是站牌，不再重複顯示「公車站牌」） */
-function placeLine(place: Place) { return [placeDistance(place), placeRoutes(place)].filter(Boolean).join(' · ') }
+function placeLine(place: Place) { return [placeDistance(place), placeSub(place)].filter(Boolean).join(' · ') }
 function placeDistance(place: Place) { return place.distanceM == null ? '' : formatValue(formatDistance(place.distanceM)) }
 const audienceIcons = ['user', 'smile', 'globe', 'more']
 const categoryIcons: Record<string, string> = { '公共設施': 'building', '交通站點': 'train', '地址': 'home', '公車站牌': 'bus', '店家': 'store' }
@@ -106,7 +123,7 @@ const step = computed(() => steps.value[navStep.value] ?? { angle: 0, distance: 
 function t(text: string) { return translate(prefs.value.language, text) }
 function formatValue(text: string) { return text.replace('公尺', t('公尺')).replace('約', t('約')).replace('分鐘', t('分鐘')) }
 /** 目的地是地址（不是地名）時，抵達頁不再重複顯示副標；目前資料都是站牌 */
-function isAddress(place: Place) { return place.category === '地址' }
+function isAddress(place: Place) { return place.kind === 'address' }
 function displayPlace(value: string) { return value === '目前位置' ? t(value) : value }
 watch(() => prefs.value.language, value => { document.documentElement.lang = locale(value); document.title = t('跟著箭頭走') }, { immediate: true })
 watch(prefs, value => { try { localStorage.setItem('arrow-preferences', JSON.stringify(value)) } catch { /* settings remain in memory */ } }, { deep: true })
@@ -219,7 +236,7 @@ onUnmounted(() => window.removeEventListener('resize', fitText))
 
       <section v-else-if="page === 'search'" class="content">
         <h1>{{ t(searchOrigin ? '從哪裡出發？' : '想去哪裡？') }}</h1>
-        <label class="search-field"><AppIcon name="search" /><input v-model="query" autofocus :placeholder="t('輸入地址或地點')" :aria-label="t('搜尋地址或地點')"><button v-if="query" class="clear" :aria-label="t('清除搜尋')" @click="query = ''"><AppIcon name="x" :size="22" /></button></label>
+        <label class="search-field"><AppIcon name="search" /><input v-model="query" autofocus enterkeyhint="search" @keydown.enter.prevent="runAddressSearch" :placeholder="t('輸入地址或地點')" :aria-label="t('搜尋地址或地點')"><button v-if="query" class="clear" :aria-label="t('清除搜尋')" @click="query = ''"><AppIcon name="x" :size="22" /></button></label>
         <div class="section-row"><h2>{{ t('搜尋結果') }}</h2><span class="muted">{{ results.length }}</span></div>
         <p v-if="listState === 'idle' || listState === 'loading'" class="list-status" role="status">{{ t('載入中') }}</p>
         <div v-else-if="listState === 'error'" class="empty"><h2>{{ t('無法連線，請確認網路') }}</h2><button class="secondary" @click="retryList">{{ t('再試一次') }}</button></div>
@@ -231,6 +248,7 @@ onUnmounted(() => window.removeEventListener('resize', fitText))
           </button>
         </div>
         <div v-else class="empty"><span class="empty-icon"><AppIcon name="search" :size="24" /></span><h2>{{ t('找不到這個地點') }}</h2><button class="secondary" @click="query = ''">{{ t('清除搜尋') }}</button></div>
+        <button v-if="query.trim() && listState === 'ok' && addressState !== 'ok'" class="address-search" :disabled="addressState === 'loading'" @click="runAddressSearch"><AppIcon name="pin" :size="22" />{{ addressState === 'loading' ? t('載入中') : addressState === 'error' ? t('無法連線，請確認網路') : t('用地址搜尋') }}</button>
         <div v-if="listState === 'ok' && results.length > 3" class="pagination">
           <button class="text-button" :disabled="listPage === 0" @click="listPage--"><AppIcon name="chevron-left" :size="20" />{{ t('上一頁') }}</button>
           <span>{{ listPage + 1 }} / {{ Math.ceil(results.length / 3) }}</span>
@@ -242,7 +260,7 @@ onUnmounted(() => window.removeEventListener('resize', fitText))
         <h1>{{ t('準備好出發了嗎？') }}</h1>
         <div class="route-card">
           <div class="route-point"><span class="point start-point"></span><div><small>{{ t('從這裡出發') }}</small><strong>{{ displayPlace(origin.name) }}</strong></div><button class="text-button" @click="startSearch(true)">{{ t('更改') }}</button></div>
-          <div class="route-point dest"><span class="point end-point"></span><div><small>{{ t('要去的地方') }}</small><strong>{{ placeName(selected) }}</strong><p>{{ placeRoutes(selected) }}</p></div></div>
+          <div class="route-point dest"><span class="point end-point"></span><div><small>{{ t('要去的地方') }}</small><strong>{{ placeName(selected) }}</strong><p>{{ placeSub(selected) }}</p></div></div>
         </div>
         <div class="stats">
           <div class="stat"><AppIcon name="clock" /><div><small>{{ t('步行路線') }}</small>
@@ -302,7 +320,7 @@ onUnmounted(() => window.removeEventListener('resize', fitText))
       <div class="arrival-sheet">
         <strong>{{ selected ? placeName(selected) : '' }}</strong>
         <!-- 目的地本身就是地址時，不再重複顯示地址 -->
-        <p v-if="selected && !isAddress(selected)">{{ placeRoutes(selected) }}</p>
+        <p v-if="selected && !isAddress(selected)">{{ placeSub(selected) }}</p>
         <button class="primary arrival-done" @click="go('home')">{{ t('完成') }}</button>
       </div>
     </section>

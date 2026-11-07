@@ -80,6 +80,7 @@ const rows: Record<string, string[]> = {
   '向右轉': ['Turn right','เลี้ยวขวา','Rẽ phải','Belok kanan','បត់ស្ដាំ','右に曲がる','오른쪽으로 도세요'],
   '請向後轉': ['Please turn around','กรุณากลับหลัง','Hãy quay lại','Silakan berbalik','សូមបង្វិលក្រោយ','後ろを向いてください','뒤로 도세요'],
   '前面有樓梯': ['Stairs ahead','ข้างหน้ามีบันได','Phía trước có cầu thang','Ada tangga di depan','មានជណ្ដើរនៅខាងមុខ','この先に階段があります','앞에 계단이 있어요'],
+  '用地址搜尋': ['Search as an address','ค้นหาเป็นที่อยู่','Tìm theo địa chỉ','Cari sebagai alamat','ស្វែងរកជាអាសយដ្ឋាន','住所で検索','주소로 검색'],
 }
 export function translate(language: string, text: string): string { const index = languages.indexOf(language as typeof languages[number]); return index > 0 ? rows[text]?.[index - 1] || text : text }
 export function locale(language: string): string { return ['zh-TW','en','th','vi','id','km','ja','ko'][Math.max(0, languages.indexOf(language as typeof languages[number]))]! }

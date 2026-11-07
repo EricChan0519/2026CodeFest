@@ -349,3 +349,10 @@ h1 + .option-list, h1 + .search-entry, h1 + .search-field, h1 + .route-card, h1 
 .stat { flex-wrap: wrap; }
 .stat > div { flex: 1; min-width: 0; }
 .stat-retry { margin-left: auto; }
+
+/* 用地址搜尋（按了才查 OpenStreetMap） */
+.address-search {
+  display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 60px; margin-top: 12px;
+  border: 1px dashed var(--accent-line); border-radius: var(--radius); background: var(--accent-weak);
+  color: var(--accent); font-size: calc(20px * var(--fs)); font-weight: 700;
+}
