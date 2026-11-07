@@ -193,9 +193,11 @@ const dur = (ms: number): number => (reducedMotion() ? 0 : ms)
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 /**
  * logo 斜 45° 時，箭頭（含圓角筆畫）的外框寬 ≈ 箭頭方塊的 0.74。
- * 依「一鍵成行」實際寬度決定箭頭比例：箭頭左右剛好對齊標語的頭尾，不會只蓋到第三個字。
+ * 開場轉圈的大 logo 依「一箭成行」實際寬度決定大小：外框約標語寬的 LOGO_FRAC
+ * （標語放大、置中後，整句寬的 logo 太大，2026-11-08 回報）。
  */
 const LOGO_SPAN = 0.74
+const LOGO_FRAC = 0.55
 function logoK(): number {
   const ghost = titleEl.value?.querySelector<HTMLElement>('.ask-ghost')
   const slot = logoSlot.value
@@ -203,7 +205,7 @@ function logoK(): number {
   // 最後一個字後面的字距不算
   const textW = ghost.getBoundingClientRect().width - parseFloat(getComputedStyle(ghost).letterSpacing || '0')
   const slotW = slot.getBoundingClientRect().width
-  return textW > 0 && slotW > 0 ? textW / (LOGO_SPAN * slotW) : K_LOGO
+  return textW > 0 && slotW > 0 ? (textW * LOGO_FRAC) / (LOGO_SPAN * slotW) : K_LOGO
 }
 const logoPose = (r: number): Pose => poseAt(logoSlot.value!, size, r, logoK())
 /** 標語裡「箭」字的位置（量隱形整句裡的空格，打字中也不會跳） */
