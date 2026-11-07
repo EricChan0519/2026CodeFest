@@ -37,6 +37,17 @@ export interface ArrowStrings {
   /** 捷運、公車＋捷運（混搭） */
   howMetro: string
   howMixed: string
+  /** 怎麼去最上面那列：公車、捷運、走路混搭 */
+  howBest: string
+  /** 路線方框：依路線模式最合適的那條 */
+  recommended: string
+  close: string
+  /** 路線方框的步驟：{dist} 距離、{place} 走到哪裡 */
+  stepWalk: string
+  /** {route} 路線、{dir} 往哪裡（可能是空的）、{n} 站數、{stop} 下車站 */
+  stepRide: string
+  /** 捷運站名，{stop} 是站名（台電大樓 → 台電大樓站） */
+  metroStation: string
   /** {min} */
   aboutMin: string
   busLoading: string
@@ -64,7 +75,6 @@ export interface ArrowStrings {
   routeTitle: string
   back: string
   change: string
-  about: string
   /** {n} */
   meters: string
   km: string
@@ -137,6 +147,12 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     howBus: '公車',
     howMetro: '捷運',
     howMixed: '公車＋捷運',
+    howBest: '最佳',
+    recommended: '推薦',
+    close: '關閉',
+    stepWalk: '走 {dist}到「{place}」',
+    stepRide: '搭 {route}{dir}，坐 {n} 站到「{stop}」',
+    metroStation: '{stop}站',
     aboutMin: '約 {min} 分鐘',
     busLoading: '正在找可以搭的公車…',
     busNotWorth: '搭公車不會比較快，走過去就好',
@@ -156,7 +172,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     routeTitle: '要搭哪一班？',
     back: '返回',
     change: '更改語言和使用者',
-    about: '關於這個服務',
     meters: '{n} 公尺',
     km: '{n} 公里',
     almost: '快到了',
@@ -224,6 +239,12 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     howBus: 'Bus',
     howMetro: 'MRT',
     howMixed: 'Bus + MRT',
+    howBest: 'Best',
+    recommended: 'Recommended',
+    close: 'Close',
+    stepWalk: 'Walk {dist} to {place}',
+    stepRide: 'Take {route}{dir}, {n} stops to {stop}',
+    metroStation: '{stop} Station',
     aboutMin: 'About {min} min',
     busLoading: 'Looking for buses…',
     busNotWorth: 'A bus is not faster. Walking is best',
@@ -243,7 +264,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     routeTitle: 'Which bus?',
     back: 'Back',
     change: 'Change language and user',
-    about: 'About this service',
     meters: '{n} m',
     km: '{n} km',
     almost: 'Almost there',
@@ -311,6 +331,12 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     howBus: 'รถเมล์',
     howMetro: 'MRT',
     howMixed: 'รถเมล์ + MRT',
+    howBest: 'ดีที่สุด',
+    recommended: 'แนะนำ',
+    close: 'ปิด',
+    stepWalk: 'เดิน {dist} ไปที่ {place}',
+    stepRide: 'นั่ง {route}{dir} {n} ป้าย ถึง {stop}',
+    metroStation: 'สถานี{stop}',
     aboutMin: 'ประมาณ {min} นาที',
     busLoading: 'กำลังหารถเมล์…',
     busNotWorth: 'นั่งรถเมล์ไม่เร็วกว่า เดินไปดีกว่า',
@@ -330,7 +356,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     routeTitle: 'จะขึ้นสายไหน?',
     back: 'กลับ',
     change: 'เปลี่ยนภาษาและผู้ใช้',
-    about: 'เกี่ยวกับบริการนี้',
     meters: '{n} เมตร',
     km: '{n} กม.',
     almost: 'ใกล้ถึงแล้ว',
@@ -398,6 +423,12 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     howBus: 'Xe buýt',
     howMetro: 'Tàu điện MRT',
     howMixed: 'Xe buýt + MRT',
+    howBest: 'Tốt nhất',
+    recommended: 'Đề xuất',
+    close: 'Đóng',
+    stepWalk: 'Đi bộ {dist} đến {place}',
+    stepRide: 'Đi {route}{dir}, {n} trạm đến {stop}',
+    metroStation: 'Ga {stop}',
     aboutMin: 'Khoảng {min} phút',
     busLoading: 'Đang tìm xe buýt…',
     busNotWorth: 'Đi xe buýt không nhanh hơn. Nên đi bộ',
@@ -417,7 +448,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     routeTitle: 'Đi tuyến nào?',
     back: 'Quay lại',
     change: 'Đổi ngôn ngữ và người dùng',
-    about: 'Về dịch vụ này',
     meters: '{n} m',
     km: '{n} km',
     almost: 'Sắp đến',
@@ -485,6 +515,12 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     howBus: 'Bus',
     howMetro: 'MRT',
     howMixed: 'Bus + MRT',
+    howBest: 'Terbaik',
+    recommended: 'Disarankan',
+    close: 'Tutup',
+    stepWalk: 'Jalan {dist} ke {place}',
+    stepRide: 'Naik {route}{dir}, {n} halte ke {stop}',
+    metroStation: 'Stasiun {stop}',
     aboutMin: 'Sekitar {min} menit',
     busLoading: 'Mencari bus…',
     busNotWorth: 'Naik bus tidak lebih cepat. Jalan kaki saja',
@@ -504,7 +540,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     routeTitle: 'Naik bus yang mana?',
     back: 'Kembali',
     change: 'Ganti bahasa dan pengguna',
-    about: 'Tentang layanan ini',
     meters: '{n} m',
     km: '{n} km',
     almost: 'Hampir sampai',
@@ -572,6 +607,12 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     howBus: 'バス',
     howMetro: 'MRT',
     howMixed: 'バス＋MRT',
+    howBest: 'ベスト',
+    recommended: 'おすすめ',
+    close: '閉じる',
+    stepWalk: '{place}まで{dist}歩く',
+    stepRide: '{route}{dir}に乗り、{n}駅先の{stop}まで',
+    metroStation: '{stop}駅',
     aboutMin: '約 {min} 分',
     busLoading: 'バスを探しています…',
     busNotWorth: 'バスは速くなりません。歩くのがおすすめです',
@@ -591,7 +632,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     routeTitle: 'どのバスに乗りますか？',
     back: '戻る',
     change: '言語と利用者を変更',
-    about: 'このサービスについて',
     meters: '{n} m',
     km: '{n} km',
     almost: 'もうすぐです',
@@ -659,6 +699,12 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     howBus: '버스',
     howMetro: 'MRT',
     howMixed: '버스 + MRT',
+    howBest: '최적',
+    recommended: '추천',
+    close: '닫기',
+    stepWalk: '{place}까지 {dist} 걷기',
+    stepRide: '{route}{dir} 타고 {n}정거장, {stop}까지',
+    metroStation: '{stop}역',
     aboutMin: '약 {min}분',
     busLoading: '탈 수 있는 버스를 찾는 중…',
     busNotWorth: '버스가 더 빠르지 않아요. 걸어가는 게 좋아요',
@@ -678,7 +724,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     routeTitle: '어느 버스를 타나요?',
     back: '뒤로',
     change: '언어와 사용자 변경',
-    about: '이 서비스 소개',
     meters: '{n}m',
     km: '{n}km',
     almost: '거의 다 왔어요',
