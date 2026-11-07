@@ -165,3 +165,31 @@ class TestRealSnapshot:
         rows = real.search("國小", TIANMU, limit=50)
         d = [r["distanceM"] for r in rows]
         assert len(rows) == 50 and d == sorted(d)
+
+    def test_mrt_station_phrased_the_other_way(self, real):
+        # 2026-11-07 回報：「芝山捷運站」查到中山、龍山寺、圓山捷運站
+        for q in ("芝山捷運站", "捷運芝山", "芝山mrt"):
+            rows = names(real.search(q, (25.0478, 121.517), limit=20))
+            assert rows and all("芝山" in n for n in rows), (q, rows[:5])
+
+
+def test_fuzzy_requires_the_place_name_part():
+    idx = PlaceIndex.from_doc({**DOC, "places": DOC["places"] + [
+        ["中山捷運站", 25.05, 121.52, "", 0, 90],
+        ["捷運芝山站 候車區", 25.10, 121.52, "", 0, 90],
+    ]})
+    out = names(idx.search("芝山捷運站", TAIPEI_STATION))
+    assert "捷運芝山站 候車區" in out and "中山捷運站" not in out
+
+
+def test_the_place_itself_comes_before_names_that_only_mention_it():
+    # 2026-11-07 回報：「士林站」最前面是「接睫毛/…/士林站/…」（比較近），捷運士林站反而在後面
+    idx = PlaceIndex.from_doc({**DOC, "categories": ["生活服務", "車站", "公車站"], "places": [
+        ["璞美學-接睫毛/民權西路站/中山站/雙連站/劍潭站/士林站/大橋頭站", 25.0630, 121.5200, "", 0, 90],
+        ["大都會士林站", 25.0940, 121.5260, "", 2, 90],
+        ["捷運士林站", 25.0935, 121.5262, "", 1, 90],
+        ["公車士林站", 25.0950, 121.5250, "", 2, 90],
+    ]})
+    out = names(idx.search("士林站", TAIPEI_STATION))
+    assert out[:2] == ["捷運士林站", "公車士林站"]
+    assert out[-1].startswith("璞美學")

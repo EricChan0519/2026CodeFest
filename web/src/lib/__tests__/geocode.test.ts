@@ -58,6 +58,8 @@ describe('searchPlaces', () => {
     const url = String(f.mock.calls[0]![0])
     expect(url).toContain('nominatim.openstreetmap.org/search')
     expect(url).toContain('countrycodes=tw')
+    expect(url).toContain('bounded=1')
+    expect(decodeURIComponent(url)).toContain('viewbox=121.40,25.22,121.70,24.95')
     expect(decodeURIComponent(url)).toContain('q=天母運動公園')
     expect(r[0]!.name).toBe('天母運動公園')
   })
@@ -65,5 +67,13 @@ describe('searchPlaces', () => {
   it('throws on HTTP errors', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 429 }))
     await expect(searchPlaces('x地')).rejects.toThrow('GEOCODE_HTTP_429')
+  })
+
+  it('asks for the standard MRT name first (芝山捷運站 → 捷運芝山站)', async () => {
+    const f = vi.fn().mockResolvedValue({ ok: true, json: async () => [{ lat: '25.1', lon: '121.5', display_name: '芝山, 士林區' }] })
+    vi.stubGlobal('fetch', f)
+    await searchPlaces('芝山捷運站')
+    expect(decodeURIComponent(String(f.mock.calls[0]![0]))).toContain('q=捷運芝山站')
+    expect(f).toHaveBeenCalledTimes(1)
   })
 })

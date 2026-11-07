@@ -116,6 +116,55 @@ export function askCard(trip: ArrivalTrip, lang: Lang) {
   }
 }
 
+export interface AskCardView {
+  id: 'bus' | 'remind' | 'lost'
+  /** 分頁名稱（使用者的語言） */
+  tab: string
+  /** 給旁人看的中文大字 */
+  zh: string
+  /** 中文補充（下車站、我在哪） */
+  details: string[]
+  /** 使用者語言的翻譯；中文介面不需要 */
+  own: string | null
+}
+
+/**
+ * 給別人看的三張卡，一律中文：問是不是這班車、請提醒我下車、我迷路了。
+ * 沒有資料的卡不出現（沒有下車站就沒有「提醒我下車」，沒有目的地就沒有「我迷路了」）。
+ */
+export function askCards(trip: ArrivalTrip, lang: Lang, place?: Name): AskCardView[] {
+  const zh = ARRIVAL_STRINGS['zh-TW']
+  const s = ARRIVAL_STRINGS[lang]
+  const own = (text: string) => (lang === 'zh-TW' ? null : text)
+  const cards: AskCardView[] = []
+
+  const bus = askCard(trip, lang)
+  if (bus) {
+    cards.push({ id: 'bus', tab: s.tabBus, zh: bus.zh, details: [bus.getOff, bus.station].filter((x): x is string => !!x), own: bus.own })
+  }
+  const alightZh = trip.alight ? trip.alight.zh || trip.alight.en : null
+  if (trip.alight && alightZh) {
+    cards.push({
+      id: 'remind',
+      tab: s.tabRemind,
+      zh: fill(zh.askRemind, { stop: alightZh }),
+      details: [],
+      own: own(fill(s.askRemind, { stop: displayName(trip.alight, lang) ?? alightZh })),
+    })
+  }
+  const placeZh = place ? place.zh || place.en : null
+  if (place && placeZh) {
+    cards.push({
+      id: 'lost',
+      tab: s.tabLost,
+      zh: fill(zh.askLost, { place: placeZh }),
+      details: [],
+      own: own(fill(s.askLost, { place: displayName(place, lang) ?? placeZh })),
+    })
+  }
+  return cards
+}
+
 const QUERY_KEYS = {
   stationZh: ['station', 'zh'],
   stationEn: ['station', 'en'],

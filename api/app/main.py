@@ -23,7 +23,8 @@ from app.route_rules import TPE
 from app import elevation, routes_service
 from app.routes_service import plan_routes
 from app.places import PlaceIndex
-from app.schemas import AroundRequest, NearbyRequest, PlaceSearchRequest, RoutesRequest
+from app.schemas import AroundRequest, NearbyRequest, PlaceSearchRequest, RoutesRequest, TranslateNamesRequest, TranslateQueryRequest
+from app import localize, translate
 from app.stations import StationIndex
 
 app = FastAPI(title="Arrow Nav API")
@@ -101,6 +102,25 @@ def landmarks_search(req: PlaceSearchRequest, index: PlaceIndex = Depends(get_pl
     """地標、餐廳、學校…（不含連鎖店，連鎖店在前端的 poi_index.json）。座標只放 body、不記錄（ADR-0005）"""
     near = (req.lat, req.lon) if req.lat is not None and req.lon is not None else None
     return {"places": index.search(req.q, near, req.limit), "source": index.source}
+
+
+@app.post("/api/translate/query")
+def translate_query(req: TranslateQueryRequest):
+    """外語地點搜尋字串 → 中文搜尋字串（規則＋開放資料，不用 AI 模型）。中文字串原樣回傳空的 queries。"""
+    return {**translate.translate_query(req.q), "sources": translate.sources()}
+
+
+@app.post("/api/translate/names")
+def translate_names(req: TranslateNamesRequest):
+    """搜尋結果的名稱、地址、類別 → 使用者的語言（每一筆都有）。
+    名稱 exact=false 表示有一部分是用讀音寫的（認得的詞翻譯，其他照唸）。"""
+    lang = req.lang
+    return {
+        "lang": lang,
+        "names": [localize.localize_name(n[:60], lang) for n in req.names],
+        "addresses": [{"zh": a, "text": localize.localize_address(a[:120], lang)} for a in req.addresses],
+        "categories": [{"zh": c, "text": localize.localize_category(c[:20], lang)} for c in req.categories],
+    }
 
 
 @app.post("/api/around")

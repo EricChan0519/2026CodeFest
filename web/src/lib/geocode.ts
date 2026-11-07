@@ -54,6 +54,41 @@ export function parseNominatim(rows: NominatimRow[]): Place[] {
   return out
 }
 
+/**
+ * 捷運站的另一種說法，給 Nominatim 查不到時重試一次：
+ * 「芝山捷運站」「捷運 芝山」「芝山 MRT」→「捷運芝山站」；本來就是「捷運芝山站」→「芝山站」。
+ * 不是捷運站的說法回 null。
+ */
+export function mrtAlternative(q: string): string | null {
+  const s = q.trim().replace(/\s+/g, '')
+  const canonical = s.match(/^捷運(.+?)站$/)
+  if (canonical) return `${canonical[1]}站`
+  const m = s.match(/^(.+?)捷運站?$/) ?? s.match(/^捷運(.+?)$/) ?? s.match(/^(.+?)(?:站)?mrt(?:station)?$/i)
+  const name = m?.[1]?.replace(/站$/, '')
+  return name ? `捷運${name}站` : null
+}
+
+/** 大臺北：lon 121.40–121.70、lat 24.95–25.22（Nominatim viewbox 格式：左,上,右,下） */
+export const GREATER_TAIPEI_VIEWBOX = '121.40,25.22,121.70,24.95'
+
+/** 公開 Nominatim 每秒最多一次 */
+const NOMINATIM_GAP_MS = 1100
+
+async function queryNominatim(query: string, limit: number, signal: AbortSignal): Promise<Place[]> {
+  const url = new URL(NOMINATIM_URL)
+  url.searchParams.set('q', query)
+  url.searchParams.set('format', 'jsonv2')
+  url.searchParams.set('countrycodes', 'tw')
+  url.searchParams.set('limit', String(limit))
+  url.searchParams.set('accept-language', 'zh-TW')
+  // 只查大臺北（和後端地點快照同一個範圍）：「中山站」不要跑出臺中、高雄的中山站（2026-11-07 回報）
+  url.searchParams.set('viewbox', GREATER_TAIPEI_VIEWBOX)
+  url.searchParams.set('bounded', '1')
+  const res = await fetch(url, { signal })
+  if (!res.ok) throw new Error(`GEOCODE_HTTP_${res.status}`)
+  return parseNominatim((await res.json()) as NominatimRow[])
+}
+
 export async function searchPlaces(q: string, opts: { timeoutMs?: number; limit?: number } = {}): Promise<Place[]> {
   const query = q.trim()
   if (!query) return []
@@ -64,15 +99,15 @@ export async function searchPlaces(q: string, opts: { timeoutMs?: number; limit?
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
-    const url = new URL(NOMINATIM_URL)
-    url.searchParams.set('q', query)
-    url.searchParams.set('format', 'jsonv2')
-    url.searchParams.set('countrycodes', 'tw')
-    url.searchParams.set('limit', String(limit))
-    url.searchParams.set('accept-language', 'zh-TW')
-    const res = await fetch(url, { signal: ctrl.signal })
-    if (!res.ok) throw new Error(`GEOCODE_HTTP_${res.status}`)
-    return parseNominatim((await res.json()) as NominatimRow[])
+    // 「芝山捷運站」這種說法，Nominatim 會模糊配到別的捷運站（圓山、大直）：先用標準寫法「捷運芝山站」查
+    const alt = mrtAlternative(query)
+    const canonicalFirst = alt !== null && !/^捷運.+站$/.test(query.replace(/\s+/g, ''))
+    const first = await queryNominatim(canonicalFirst ? alt : query, limit, ctrl.signal)
+    const second = canonicalFirst ? query : alt
+    if (first.length > 0 || !second) return first
+    // 查不到再換個說法查一次（只多一次，而且隔開一秒，符合 Nominatim 的使用規定）
+    await new Promise((r) => setTimeout(r, NOMINATIM_GAP_MS))
+    return await queryNominatim(second, limit, ctrl.signal)
   } catch (e) {
     if ((e as Error).name === 'AbortError') throw new Error('搜尋逾時，請稍後再試')
     throw e
