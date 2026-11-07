@@ -228,6 +228,37 @@ export interface SensorSource {
 - 沒有結果時回 `places: []`，不是 404。
 - 地點快照讀不到時回 503 `DATA_UNAVAILABLE`。
 
+### `POST /api/around`
+
+某一點附近有沒有路燈、監視器、派出所。座標放 body、不記錄（ADR-0005），所以用 POST，不是 GET。
+
+```json
+{ "lat": 25.118, "lon": 121.5266, "radiusM": 50, "policeRadiusM": 150 }
+```
+
+`radiusM` 預設 50（5–300），用在路燈和監視器；`policeRadiusM` 預設 150（10–1000），用在派出所。
+
+```json
+{
+  "radiusM": 50,
+  "policeRadiusM": 150,
+  "lamps": { "nearby": true, "cells": 13 },
+  "cameras": 2,
+  "police": [{ "name": "範例派出所", "distanceM": 92 }],
+  "sources": [{ "name": "臺北市路燈位置分布圖", "updatedAt": "2026-11-07T16:03:38+08:00" }]
+}
+```
+
+| 欄位 | 說明 |
+|---|---|
+| `lamps` | `cells` 是半徑內有路燈的約 30 公尺方格數，`nearby` 是 `cells > 0`。**不是路燈盞數，也不是亮度** |
+| `cameras` | 半徑內的監視器數（警察局設置的）。座標只準到數十公尺，不代表拍得到這一點 |
+| `police` | 半徑內的派出所與分局，依距離由近到遠；沒有就是 `[]` |
+| 任一項是 `null` | 該快照不存在或損壞（或監視器地址轉座標的涵蓋率低於 50%）。**不是 0**，畫面不能寫成「沒有」 |
+| `sources` | 只列有用到的資料 |
+
+不在服務範圍（臺北）回 400 `OUT_OF_AREA`。回應不會帶回使用者的座標。
+
 ### `POST /api/routes`
 
 ```json
@@ -298,7 +329,7 @@ export interface SensorSource {
 | `routes[].reasons` | 只有量得到改善才有。代碼見 [02](02-route-candidates.md) |
 | `routes[].geometry` | `[lat, lon]`，不要傳 polyline 字串 |
 | `routes[].maneuvers[].kind` | `depart`、`straight`、`slight_left`、`slight_right`、`left`、`right`、`uturn`、`stairs`、`arrive` |
-| `routes[].metrics` | **階段 1 是 `null`**。沒有資料的欄位是 `null`，例如高程網格不存在時 `climbM`、`maxGradePct` 是 `null`，監視器沒通過 V5 時 `cameras` 是 `null`。算法見 [02](02-route-candidates.md#量測欄位) |
+| `routes[].metrics` | `cameras` 是路線 50 公尺內的監視器數，`policeNearby` 是 150 公尺內的派出所數。**階段 1 是 `null`**。沒有資料的欄位是 `null`，例如高程網格不存在時 `climbM`、`maxGradePct` 是 `null`，監視器沒通過 V5 時 `cameras` 是 `null`。算法見 [02](02-route-candidates.md#量測欄位) |
 | `routes[].diff` | 和 `fastest` 比較，`fastest` 本身是 `null`。`distanceM`、`durationS` 是**多走**多少；`steps`、`climbM`、`maxGradePct`、`unsignalizedCrossings` 是**少了**多少；`cameras`、`policeNearby` 是**多了**多少 |
 | `notes` | `no_better_route`、`simulated_night` |
 | `sources` | 只列這次回應用到的資料；前端關於頁另列全部 |

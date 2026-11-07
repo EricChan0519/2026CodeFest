@@ -1,6 +1,8 @@
-"""Measure a route against snapshots: stairs, crossing types and street lamp density.
+"""Measure a route (or one point) against snapshots: stairs, crossing types, street lamps, CCTV, police offices.
 
-lit_ratio is lamp density, not measured brightness. Missing snapshots give None, never an error.
+lit_ratio is lamp density, not measured brightness. Camera positions come from address matching and are
+accurate to tens of metres, and say nothing about what a camera can see. Missing snapshots give None,
+never an error.
 """
 import json
 import math
@@ -14,6 +16,12 @@ from app import elevation
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 
 CROSSING_BUFFER_M = 8.0
+# Camera coordinates come from address matching (street, lane or intersection level),
+# so 30 m would miss most of them; 50 m is the shortest distance that is still honest.
+CAMERA_BUFFER_M = 50.0
+POLICE_BUFFER_M = 150.0
+# scripts/build_safety_points.py reports how many camera addresses it could place; below this we say "unknown".
+MIN_CAMERA_COVERAGE = 0.5
 LIT_SAMPLE_EVERY_M = 20.0
 # Same grid as scripts/build_lamp_grid.py.
 LAMP_CELL_LAT = 0.00027
@@ -32,6 +40,8 @@ class Metrics:
     signal_crossings: int | None
     unknown_crossings: int | None
     max_grade_pct: float | None = None
+    cameras: int | None = None
+    police_nearby: int | None = None
 
 
 def cell_of(lat: float, lon: float) -> str:
@@ -128,18 +138,56 @@ def _segments(geometry: list[LatLon]) -> list[tuple[LatLon, LatLon]]:
     return list(zip(geometry, geometry[1:])) if len(geometry) > 1 else [(p, p) for p in geometry]
 
 
-def _count_crossings(geometry: list[LatLon], index: dict) -> dict[str, int]:
-    pad = CROSSING_BUFFER_M / _M_PER_DEG_LAT * 1.5
-    found: set[tuple[float, float, str]] = set()
+def _near_points(geometry: list[LatLon], index: dict, radius_m: float) -> dict[tuple, float]:
+    """Index entries (lat, lon, ...) within radius_m of the path, each with its shortest distance in metres."""
+    pad = radius_m / _M_PER_DEG_LAT * 1.5
+    found: dict[tuple, float] = {}
     for a, b in _segments(geometry):
         lat_low, lon_low = _index_key(min(a[0], b[0]) - pad, min(a[1], b[1]) - pad)
         lat_high, lon_high = _index_key(max(a[0], b[0]) + pad, max(a[1], b[1]) + pad)
         for i in range(lat_low, lat_high + 1):
             for j in range(lon_low, lon_high + 1):
-                for crossing in index.get((i, j), ()):
-                    if crossing not in found and _distance_to_segment_m(crossing[:2], a, b) <= CROSSING_BUFFER_M:
-                        found.add(crossing)
+                for entry in index.get((i, j), ()):
+                    d = _distance_to_segment_m(entry[:2], a, b)
+                    if d <= radius_m and d < found.get(entry, math.inf):
+                        found[entry] = d
+    return found
+
+
+def _count_crossings(geometry: list[LatLon], index: dict) -> dict[str, int]:
+    found = _near_points(geometry, index, CROSSING_BUFFER_M)
     return {kind: sum(c[2] == kind for c in found) for kind in _KINDS}
+
+
+@dataclass(frozen=True)
+class _Safety:
+    cameras: dict | None  # None when too few camera addresses could be placed
+    police: dict
+    updated_at: str | None
+
+
+@lru_cache(maxsize=1)
+def _load_safety() -> _Safety | None:
+    data = _read_json("safety_points.json")
+    if data is None:
+        return None
+    try:
+        cameras: dict = {}
+        for lat, lon in data["cameras"]:
+            cameras.setdefault(_index_key(lat, lon), []).append((float(lat), float(lon)))
+        police: dict = {}
+        seen: set[tuple[float, float]] = set()
+        for lat, lon, name in data["police"]:
+            place = (round(lat, 4), round(lon, 4))  # a branch and its station at one address count once
+            if place not in seen:
+                seen.add(place)
+                police.setdefault(_index_key(lat, lon), []).append((float(lat), float(lon), str(name)))
+        coverage = (data.get("cameraCoverage") or {}).get("coverage")
+        enough = not isinstance(coverage, (int, float)) or coverage >= MIN_CAMERA_COVERAGE
+        updated_at = data.get("updatedAt")
+    except (KeyError, TypeError, ValueError):
+        return None
+    return _Safety(cameras if enough else None, police, updated_at if isinstance(updated_at, str) else None)
 
 
 def _samples(geometry: list[LatLon]) -> list[LatLon]:
@@ -184,6 +232,8 @@ def measure(route: EngineRoute) -> Metrics:
     heights = [elevation.height(*point) for point in samples]
     heights = heights if heights and all(h is not None for h in heights) else None
     distance = sum(math.hypot(*_to_metres(a, b)) for a, b in zip(route.geometry, route.geometry[1:]))
+    safety = _load_safety()
+    cameras = safety.cameras if safety else None
     return Metrics(
         steps=sum(m.kind == "stairs" for m in route.maneuvers),
         climb_m=climb_m(heights),
@@ -192,4 +242,57 @@ def measure(route: EngineRoute) -> Metrics:
         unsignalized_crossings=counts["unsignalized"] if counts else None,
         signal_crossings=counts["signal"] if counts else None,
         unknown_crossings=counts["unknown"] if counts else None,
+        cameras=len(_near_points(route.geometry, cameras, CAMERA_BUFFER_M)) if cameras is not None else None,
+        police_nearby=len(_near_points(route.geometry, safety.police, POLICE_BUFFER_M)) if safety else None,
     )
+
+
+def _lamp_cells_within(point: LatLon, cells: frozenset[str], radius_m: float) -> int:
+    """Lamp cells whose rectangle comes within radius_m of the point."""
+    lat_reach = radius_m / _M_PER_DEG_LAT
+    lon_reach = lat_reach / math.cos(math.radians(point[0]))
+    i_low, i_high = math.floor((point[0] - lat_reach) / LAMP_CELL_LAT), math.floor((point[0] + lat_reach) / LAMP_CELL_LAT)
+    j_low, j_high = math.floor((point[1] - lon_reach) / LAMP_CELL_LON), math.floor((point[1] + lon_reach) / LAMP_CELL_LON)
+    count = 0
+    for i in range(i_low, i_high + 1):
+        for j in range(j_low, j_high + 1):
+            if f"{i}:{j}" not in cells:
+                continue
+            nearest = (
+                min(max(point[0], i * LAMP_CELL_LAT), (i + 1) * LAMP_CELL_LAT),
+                min(max(point[1], j * LAMP_CELL_LON), (j + 1) * LAMP_CELL_LON),
+            )
+            if math.hypot(*_to_metres(point, nearest)) <= radius_m:
+                count += 1
+    return count
+
+
+def nearby(lat: float, lon: float, radius_m: float = CAMERA_BUFFER_M, police_radius_m: float = POLICE_BUFFER_M) -> dict:
+    """Street lamps, cameras and police offices around one point. A missing snapshot gives None for that part."""
+    point = (lat, lon)
+    cells = _load_lamp_cells()
+    safety = _load_safety()
+    lamps = None
+    if cells is not None:
+        count = _lamp_cells_within(point, cells, radius_m)
+        lamps = {"nearby": count > 0, "cells": count}
+    cameras = None
+    if safety and safety.cameras is not None:
+        cameras = len(_near_points([point], safety.cameras, radius_m))
+    police = None
+    if safety:
+        found = sorted((d, entry[2]) for entry, d in _near_points([point], safety.police, police_radius_m).items())
+        police = [{"name": name, "distanceM": round(d)} for d, name in found]
+    return {"lamps": lamps, "cameras": cameras, "police": police}
+
+
+def source_updated_at() -> dict[str, str | None]:
+    """updatedAt of the snapshots that are loaded, keyed "lamps" and "safety"."""
+    out: dict[str, str | None] = {}
+    lamp = _read_json("lamp_grid.json")
+    if lamp is not None and _load_lamp_cells() is not None:
+        out["lamps"] = lamp.get("updatedAt") if isinstance(lamp.get("updatedAt"), str) else None
+    safety = _load_safety()
+    if safety:
+        out["safety"] = safety.updated_at
+    return out

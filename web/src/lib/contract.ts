@@ -32,6 +32,28 @@ export interface Metrics {
   unsignalizedCrossings: number | null
   signalCrossings: number | null
   unknownCrossings: number | null
+  /** 路線 50 公尺內的監視器數；快照不存在或涵蓋率太低時是 null */
+  cameras?: number | null
+  /** 路線 150 公尺內的派出所數 */
+  policeNearby?: number | null
+}
+
+export interface AroundRequest {
+  lat: number
+  lon: number
+  radiusM?: number
+  policeRadiusM?: number
+}
+
+/** POST /api/around：某一點附近的路燈、監視器、派出所。null 是「沒有資料」，不是 0。 */
+export interface AroundResponse {
+  radiusM: number
+  policeRadiusM: number
+  /** cells 是有路燈的約 30 公尺方格數，不是盞數或亮度 */
+  lamps: { nearby: boolean; cells: number } | null
+  cameras: number | null
+  police: { name: string; distanceM: number }[] | null
+  sources: { name: string; updatedAt: string | null }[]
 }
 
 export interface RouteDiff {

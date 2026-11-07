@@ -16,6 +16,8 @@ class Metrics:
     signal_crossings: int | None
     unknown_crossings: int | None
     max_grade_pct: float | None = None
+    cameras: int | None = None
+    police_nearby: int | None = None
 
 
 def measure(route: EngineRoute) -> Metrics:

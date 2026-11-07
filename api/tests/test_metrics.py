@@ -20,9 +20,11 @@ def snapshots(tmp_path, monkeypatch):
     monkeypatch.setattr(metrics, "DATA_DIR", tmp_path)
     metrics._load_crossings.cache_clear()
     metrics._load_lamp_cells.cache_clear()
+    metrics._load_safety.cache_clear()
     yield tmp_path
     metrics._load_crossings.cache_clear()
     metrics._load_lamp_cells.cache_clear()
+    metrics._load_safety.cache_clear()
 
 
 def write_crossings(path, signal=(), unsignalized=(), unknown=()):
@@ -111,3 +113,67 @@ def test_climb_sums_only_rises():
 
 def test_climb_none_when_no_data():
     assert climb_m(None) is None
+
+
+def write_safety(path, cameras=(), police=(), coverage=0.85):
+    (path / "safety_points.json").write_text(json.dumps({
+        "updatedAt": "2026-11-07T19:00:00+08:00", "police": [list(p) for p in police],
+        "cameras": [list(c) for c in cameras], "cameraCoverage": {"coverage": coverage}}))
+
+
+def test_cameras_within_50m_of_the_route_are_counted(snapshots):
+    write_safety(snapshots, cameras=[
+        (25.0405, 121.50020),   # about 20 m east
+        (25.0402, 121.49955),   # about 42 m west
+        (25.0405, 121.50080),   # about 74 m east: outside
+        (25.0420, 121.50000),   # 100 m past the end: outside
+    ])
+    assert measure(route()).cameras == 2
+
+
+def test_police_offices_within_150m_are_counted_once_per_address(snapshots):
+    write_safety(snapshots, police=[
+        (25.0405, 121.50100, "近的派出所"),            # about 100 m east
+        (25.0405, 121.50100, "同址分局"),              # same address: counts once
+        (25.0405, 121.50300, "遠的派出所"),            # about 290 m east
+    ])
+    assert measure(route()).police_nearby == 1
+
+
+def test_missing_safety_snapshot_gives_none(snapshots):
+    m = measure(route())
+    assert m.cameras is None and m.police_nearby is None
+
+
+def test_low_camera_coverage_hides_cameras_but_keeps_police(snapshots):
+    write_safety(snapshots, cameras=[(25.0405, 121.5002)], police=[(25.0405, 121.5010, "派出所")], coverage=0.4)
+    m = measure(route())
+    assert m.cameras is None and m.police_nearby == 1
+
+
+def test_corrupt_safety_snapshot_gives_none(snapshots):
+    (snapshots / "safety_points.json").write_text('{"cameras": [[1]], "police": []}')
+    m = measure(route())
+    assert m.cameras is None and m.police_nearby is None
+
+
+def test_nearby_point_lamps_cameras_and_police(snapshots):
+    write_lamps(snapshots, [cell_of(*START)])
+    write_safety(snapshots, cameras=[(25.04010, 121.50000), (25.0420, 121.5000)],
+                 police=[(25.0405, 121.5010, "派出所"), (25.0400, 121.5009, "更近的派出所")])
+    found = metrics.nearby(*START)
+    assert found["lamps"] == {"nearby": True, "cells": 1}
+    assert found["cameras"] == 1
+    assert [p["name"] for p in found["police"]] == ["更近的派出所", "派出所"]
+    assert found["police"][0]["distanceM"] == pytest.approx(92, abs=3)
+
+
+def test_nearby_point_lamp_radius_is_respected(snapshots):
+    far = cell_of(START[0] + 0.0006, START[1])      # about 55 m north
+    write_lamps(snapshots, [far])
+    assert metrics.nearby(*START, radius_m=30)["lamps"] == {"nearby": False, "cells": 0}
+    assert metrics.nearby(*START, radius_m=80)["lamps"] == {"nearby": True, "cells": 1}
+
+
+def test_nearby_point_without_snapshots_is_all_none(snapshots):
+    assert metrics.nearby(*START) == {"lamps": None, "cameras": None, "police": None}

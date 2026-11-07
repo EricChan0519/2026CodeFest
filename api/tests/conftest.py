@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.adapters.fake import FakeEngine
-from app import elevation, metrics_stub, routes_service
+from app import elevation, metrics, metrics_stub, routes_service
 from app.main import app, get_measure, get_now, get_routing_engine, get_station_index
 from app.route_rules import TPE
 from app.stations import StationIndex
@@ -28,6 +28,19 @@ def isolate_snapshots(monkeypatch, tmp_path):
     yield
     routes_service.lamp_grid_updated_at.cache_clear()
     elevation._load.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def isolate_metrics_data(monkeypatch, tmp_path):
+    # 不讀 repo 裡的路燈、監視器、派出所快照；要快照的測試自己寫進 tmp_path
+    empty = tmp_path / "metrics_data"
+    empty.mkdir()
+    monkeypatch.setattr(metrics, "DATA_DIR", empty)
+    for loader in (metrics._load_crossings, metrics._load_lamp_cells, metrics._load_safety):
+        loader.cache_clear()
+    yield empty
+    for loader in (metrics._load_crossings, metrics._load_lamp_cells, metrics._load_safety):
+        loader.cache_clear()
 
 
 @pytest.fixture

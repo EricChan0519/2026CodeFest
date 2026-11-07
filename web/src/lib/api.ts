@@ -6,6 +6,8 @@
  * 不需要等後端。使用者座標只放 POST body，不放網址（ADR-0005）。
  */
 import type {
+  AroundRequest,
+  AroundResponse,
   NearbyRequest,
   RoutesRequest,
   RoutesResponse,
@@ -66,6 +68,19 @@ const endpoints = {
   search: async (q: string): Promise<StationsResponse> => {
     if (isMockApi()) return (await import('../mocks/stations-search.json')).default as unknown as StationsResponse
     return request<StationsResponse>(`/api/stations/search?q=${encodeURIComponent(q)}`)
+  },
+  around: async (req: AroundRequest): Promise<AroundResponse> => {
+    if (isMockApi()) {
+      return {
+        radiusM: req.radiusM ?? 50,
+        policeRadiusM: req.policeRadiusM ?? 150,
+        lamps: { nearby: true, cells: 6 },
+        cameras: 2,
+        police: [{ name: '範例派出所', distanceM: 92 }],
+        sources: [],
+      }
+    }
+    return post<AroundResponse>('/api/around', req)
   },
   routes: async (req: RoutesRequest): Promise<RoutesResponse> => {
     if (isMockApi()) return (await import('../mocks/routes-one.json')).default as unknown as RoutesResponse

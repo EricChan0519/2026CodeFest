@@ -18,11 +18,15 @@ try:  # B 交付 app/metrics.py 後自動改用；Metrics 與 measure 要來自�
 except ImportError:
     from app.metrics_stub import Metrics, measure as default_measure
 from app.schemas import RoutesRequest
+from app.metrics import source_updated_at
 
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 LAMP_SOURCE_NAME = "臺北市路燈位置分布圖"
+CAMERA_SOURCE_NAME = "臺北市政府警察局錄影監視系統設置區位"
+POLICE_SOURCE_NAME = "臺北市政府警察局名稱及地址"
+ADDRESS_SOURCE_NAME = "Overture Maps（門牌座標）"
 
 
 @lru_cache
@@ -36,15 +40,24 @@ def lamp_grid_updated_at() -> str | None:
     return value if isinstance(value, str) else None
 
 
+def safety_sources() -> list[dict]:
+    """有監視器與派出所快照時才列；座標來自 Overture 的門牌資料，要標示出處。"""
+    updated = source_updated_at()
+    if "safety" not in updated:
+        return []
+    return [{"name": name, "updatedAt": updated["safety"]}
+            for name in (CAMERA_SOURCE_NAME, POLICE_SOURCE_NAME, ADDRESS_SOURCE_NAME)]
+
+
 def route_sources() -> list[dict]:
-    """OpenStreetMap 日期由部署時的 OSM_UPDATED_AT 提供；有路燈快照時才列路燈資料。"""
+    """OpenStreetMap 日期由部署時的 OSM_UPDATED_AT 提供；有路燈、監視器與派出所快照時才列。"""
     sources = [{"name": "OpenStreetMap", "updatedAt": os.environ.get("OSM_UPDATED_AT") or None}]
     lamp = lamp_grid_updated_at()
     if lamp:
         sources.append({"name": LAMP_SOURCE_NAME, "updatedAt": lamp})
     if elevation.available():
         sources.append({"name": "內政部20公尺網格數值地形模型", "updatedAt": elevation.updated_at()})
-    return sources
+    return sources + safety_sources()
 
 
 def route_to_dict(route, id, recommended, reasons, metrics, diff):
@@ -62,7 +75,8 @@ def metrics_to_dict(m):
             "maxGradePct": round(m.max_grade_pct, 1) if m.max_grade_pct is not None else None,
             "litRatio": round(m.lit_ratio, 2) if m.lit_ratio is not None else None,
             "unsignalizedCrossings": m.unsignalized_crossings,
-            "signalCrossings": m.signal_crossings, "unknownCrossings": m.unknown_crossings}
+            "signalCrossings": m.signal_crossings, "unknownCrossings": m.unknown_crossings,
+            "cameras": m.cameras, "policeNearby": m.police_nearby}
 
 
 async def plan_routes(req: RoutesRequest, engine: RoutingEngine, now: datetime, measure=None) -> dict:

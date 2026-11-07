@@ -11,6 +11,13 @@ class NearbyRequest(BaseModel):
     radiusM: int = Field(500, ge=1, le=2000)
 
 
+class AroundRequest(BaseModel):
+    lat: float
+    lon: float
+    radiusM: int = Field(50, ge=5, le=300)
+    policeRadiusM: int = Field(150, ge=10, le=1000)
+
+
 class LatLonIn(BaseModel):
     lat: float
     lon: float

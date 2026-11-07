@@ -17,7 +17,7 @@ def test_route_shape(client, fake_engine):
     assert body["context"] == {"audience":"visitor", "period":"day", "simulated":False}
     assert body["notes"] == [] and len(body["routes"]) == 1
     route = body["routes"][0]
-    assert (route["id"], route["recommended"], route["reasons"], route["metrics"], route["diff"]) == ("fastest", True, ["fastest"], {"steps": None, "climbM": None, "maxGradePct": None, "litRatio": None, "unsignalizedCrossings": None, "signalCrossings": None, "unknownCrossings": None}, None)
+    assert (route["id"], route["recommended"], route["reasons"], route["metrics"], route["diff"]) == ("fastest", True, ["fastest"], {"steps": None, "climbM": None, "maxGradePct": None, "litRatio": None, "unsignalizedCrossings": None, "signalCrossings": None, "unknownCrossings": None, "cameras": None, "policeNearby": None}, None)
     assert route["geometry"][0] == [25.123456,121.512345]
     assert "shape" not in response.text and "polyline" not in response.text
     assert fake_engine.last["costing"].walking_speed_kmh == 5.1 and fake_engine.last["alternates"] == 0

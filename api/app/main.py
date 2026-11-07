@@ -16,11 +16,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.engine import get_engine
-from app.errors import install_error_handlers
+from app import metrics
+from app.errors import ApiError, install_error_handlers
+from app.geo import in_area
 from app.route_rules import TPE
 from app import elevation, routes_service
 from app.routes_service import plan_routes
-from app.schemas import NearbyRequest, RoutesRequest
+from app.schemas import AroundRequest, NearbyRequest, RoutesRequest
 from app.stations import StationIndex
 
 app = FastAPI(title="Arrow Nav API")
@@ -85,6 +87,20 @@ def stations_nearby(req: NearbyRequest, index: StationIndex = Depends(get_statio
 @app.get("/api/stations/search")
 def stations_search(q: str = Query(max_length=50), index: StationIndex = Depends(get_station_index)):
     return {"stations": index.search(q), "source": index.source}
+
+
+@app.post("/api/around")
+def around(req: AroundRequest):
+    """某一點附近的路燈、監視器、派出所。座標只放 body、不記錄（ADR-0005）；沒有快照的部分回 null。"""
+    if not in_area(req.lat, req.lon):
+        raise ApiError("OUT_OF_AREA", 400)
+    found = metrics.nearby(req.lat, req.lon, req.radiusM, req.policeRadiusM)
+    sources = []
+    if found["lamps"] is not None:
+        sources.append({"name": routes_service.LAMP_SOURCE_NAME, "updatedAt": metrics.source_updated_at().get("lamps")})
+    if found["cameras"] is not None or found["police"] is not None:
+        sources += routes_service.safety_sources()
+    return {"radiusM": req.radiusM, "policeRadiusM": req.policeRadiusM, **found, "sources": sources}
 
 
 @app.post("/api/routes")
