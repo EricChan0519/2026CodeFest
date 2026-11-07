@@ -1541,7 +1541,7 @@ onBeforeUnmount(() => {
       @click="secretKey"
     />
 
-    <DebugSheet v-if="debugOpen" :trip="trip" :can-demo="phase === 'search' && !busy" @close="debugOpen = false" @demo="demoTrip" />
+    <DebugSheet v-if="debugOpen" :trip="trip" :search="search" :can-demo="phase === 'search' && !busy" @close="debugOpen = false" @demo="demoTrip" @time-change="target && search.planTo(target.point, audience)" />
   </div>
 </template>
 

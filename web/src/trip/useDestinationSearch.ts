@@ -134,6 +134,8 @@ export function useDestinationSearch(locator: Locator) {
   const busOptions = shallowRef<BusPlan[]>([])
   /** 公車＋捷運規劃的三個分頁；還沒算或算不出來時是 null */
   const transit = shallowRef<Record<PlanTab, TransitPlan[]> | null>(null)
+  const debugTransitTime = ref<Date | null>(null)
+  const debugOrigin = ref<LatLon | null>(null)
   const busLoading = ref(false)
   const busNote = ref<BusNote>(null)
   /** 直接走過去約幾分鐘（直線距離估算）；拿不到位置時是 null */
@@ -148,7 +150,7 @@ export function useDestinationSearch(locator: Locator) {
     walkMin.value = null
     busLoading.value = true
     try {
-      const [idx, user, metro] = await Promise.all([loadStopIndex(), locator.current(), loadMetroIndex()])
+      const [idx, user, metro] = await Promise.all([loadStopIndex(), debugOrigin.value ? Promise.resolve(debugOrigin.value) : locator.current(), loadMetroIndex()])
       if (mySeq !== busSeq) return
       if (!user) {
         busNote.value = 'no_position'
@@ -160,7 +162,7 @@ export function useDestinationSearch(locator: Locator) {
         return
       }
       busOptions.value = planBus(idx.stations, idx.patterns, user, target)
-      transit.value = planTransit({ stations: idx.stations, patterns: idx.patterns }, metro, user, target, { audience })
+      transit.value = planTransit({ stations: idx.stations, patterns: idx.patterns }, metro, user, target, { audience, now: debugTransitTime.value ?? undefined })
       const anyRide = transit.value.mixed.some((p) => p.rides.length > 0)
       if (!anyRide) busNote.value = 'not_worth'
     } catch {
@@ -195,6 +197,8 @@ export function useDestinationSearch(locator: Locator) {
     clear,
     busOptions,
     transit,
+    debugTransitTime,
+    debugOrigin,
     busLoading,
     busNote,
     walkMin,

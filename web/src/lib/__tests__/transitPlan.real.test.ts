@@ -21,6 +21,13 @@ describe.skipIf(!stopRaw || !metro)('planTransit on the real snapshots', () => {
   const idx = stopRaw ? buildStopIndex(stopRaw) : null
   const bus = { stations: idx?.stations ?? [], patterns: idx?.patterns ?? [] }
 
+  it('finds metro from the reported Taipei Main Station location to Taipower Building', () => {
+    const plans = planTransit(bus, metro!, [25.05278, 121.52028], [25.017467, 121.530876], {
+      audience: 'visitor', now: new Date(2026, 10, 8, 12),
+    })
+    expect(plans.metro.some(p => p.rides.some(r => r.alight.name.zh === '台電大樓'))).toBe(true)
+  })
+
   it('Taipei Main Station → Taipei 101 has bus, metro and mixed plans', () => {
     const t0 = performance.now()
     const plans = planTransit(bus, metro!, TAIPEI_MAIN, TAIPEI_101, { audience: 'visitor' })
