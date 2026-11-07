@@ -886,15 +886,25 @@ const showRecal = computed(() => {
 })
 const failed = computed(() => view.value?.state === 'failed' && !navArrived.value)
 
-/** 目的地直線方向（相對手機上緣）：箭頭外圈的小圓點。沿路線的指示方向在箭頭上，直線方向在圓點上 */
+/**
+ * 箭頭外圈的小圓點：從現在位置看「最後的目的地」的直線方向（相對手機上緣）。
+ * 箭頭跟著路線走（下一個要走的點），圓點不看路線，只看目的地在哪；
+ * 走去公車站時也指著最後的目的地，不是公車站。只到站牌（沒有最後目的地）時才指站牌。
+ */
+const destinationPoint = computed<LatLon | null>(() => {
+  const fin = trip.journey.value?.final.point
+  if (fin) return fin
+  const a = nav.active.value
+  const here = view.value?.here
+  if (!a || !a.points.length) return null
+  if (!here) return a.points[0]!
+  return a.points.reduce((best, p) => (distanceM(here, p) < distanceM(here, best) ? p : best))
+})
 const destinationDeg = computed<number | null>(() => {
   const v = view.value
-  const a = nav.active.value
-  if (!v || !a || navArrived.value || v.state === 'arrived' || !v.here || v.headingDeg === null || v.headingLost) return null
-  const here = v.here
-  const nearest = a.points.reduce((best, p) => (distanceM(here, p) < distanceM(here, best) ? p : best), a.points[0])
-  if (!nearest) return null
-  return bearingDeg(here, nearest) - v.headingDeg
+  const dest = destinationPoint.value
+  if (!v || !dest || navArrived.value || v.state === 'arrived' || !v.here || v.headingDeg === null || v.headingLost) return null
+  return bearingDeg(v.here, dest) - v.headingDeg
 })
 /** 給 CSS rotate() 用，走最短方向，不會倒轉一整圈 */
 const destinationRotation = ref(0)
@@ -1974,7 +1984,8 @@ onBeforeUnmount(() => {
 }
 .destination-orbit {
   position: absolute;
-  inset: 0;
+  /* 圓點軌道比箭頭方塊大一圈，跟箭頭尖端分開，不會看起來黏在箭頭上 */
+  inset: -22px;
   pointer-events: none;
   transition: transform 0.25s linear;
 }
@@ -1982,9 +1993,9 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 0;
   left: 50%;
-  width: 14px;
-  height: 14px;
-  border: 4px solid rgb(255 255 255 / 0.35);
+  width: 24px;
+  height: 24px;
+  border: 6px solid rgb(255 255 255 / 0.35);
   border-radius: 50%;
   background: #fff;
   background-clip: padding-box;
@@ -2003,7 +2014,8 @@ onBeforeUnmount(() => {
     transform 0.2s ease;
 }
 .eta {
-  margin-top: 28px;
+  /* 留出圓點軌道（方塊外 22px＋圓點半徑）的空間，目的地在背後時圓點不會壓到字 */
+  margin-top: 44px;
   text-align: center;
   font-size: calc(26px * var(--fs));
   font-weight: 400;
