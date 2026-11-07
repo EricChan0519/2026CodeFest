@@ -1301,7 +1301,7 @@ onBeforeUnmount(() => {
         <!-- 搜尋＋結果 -->
         <section class="step" :class="`st-${steps.search}`" data-step="search" :inert="steps.search !== 'in'" aria-labelledby="h-search">
           <div class="step-body" :class="{ grow: hasResults || searchNote }">
-            <div class="step-top">
+            <div class="step-top has-pill">
               <h2 id="h-search" class="step-h">{{ S.searchTitle }}</h2>
               <button type="button" class="pill" :aria-label="S.change" @click="changeSettings">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.6 2.6 2.6 15.4 0 18M12 3c-2.6 2.6-2.6 15.4 0 18" /></svg>
@@ -1731,6 +1731,14 @@ onBeforeUnmount(() => {
   min-width: 0;
   margin: 0;
 }
+/* 標題＋設定膠囊：膠囊放不下就換到下一行（靠右），不要把「English · General · Fastest」截成「Fas…」 */
+.step-top.has-pill {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+.step-top.has-pill .step-h {
+  flex: 1 0 auto;
+}
 .step-h {
   display: flex;
   flex-wrap: wrap;
@@ -1764,7 +1772,13 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  max-width: 55%;
+}
+/* 寬度照內容；換行後還是太寬（極窄的螢幕）才截斷 */
+.pill {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
 }
 .pill span {
   overflow: hidden;
