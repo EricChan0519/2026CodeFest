@@ -155,7 +155,8 @@ current += delta
 |---|---|---|
 | `lookaheadM` | 20 | 路線上的前視距離 |
 | `turnPassM` | `max(8, 0.5 × accuracyM)` | 離轉彎點多近就算通過 |
-| `headingAlpha` | 0.2 | 朝向平滑係數 |
+| `headingTauMs` | 80 | 朝向平滑時間常數；係數 = 1 − e^(−dt/τ)，不受事件頻率影響（60 Hz 時約 0.2） |
+| `arrowTauMs` | 50 | 箭頭每一幀追目標角度的時間常數（取代 CSS transition） |
 | `declinationDeg` | −4.7 | 磁偏角（待實測） |
 | `arriveRadiusM` | `max(15, accuracyM)` | 抵達範圍 |
 | `arriveHits` | 2 | 連續幾次才算抵達 |
