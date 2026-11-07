@@ -64,7 +64,6 @@ export interface ArrowStrings {
   routeTitle: string
   back: string
   change: string
-  about: string
   /** {n} */
   meters: string
   km: string
@@ -156,7 +155,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     routeTitle: '要搭哪一班？',
     back: '返回',
     change: '更改語言和使用者',
-    about: '關於這個服務',
     meters: '{n} 公尺',
     km: '{n} 公里',
     almost: '快到了',
@@ -243,7 +241,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     routeTitle: 'Which bus?',
     back: 'Back',
     change: 'Change language and user',
-    about: 'About this service',
     meters: '{n} m',
     km: '{n} km',
     almost: 'Almost there',
@@ -330,7 +327,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     routeTitle: 'จะขึ้นสายไหน?',
     back: 'กลับ',
     change: 'เปลี่ยนภาษาและผู้ใช้',
-    about: 'เกี่ยวกับบริการนี้',
     meters: '{n} เมตร',
     km: '{n} กม.',
     almost: 'ใกล้ถึงแล้ว',
@@ -417,7 +413,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     routeTitle: 'Đi tuyến nào?',
     back: 'Quay lại',
     change: 'Đổi ngôn ngữ và người dùng',
-    about: 'Về dịch vụ này',
     meters: '{n} m',
     km: '{n} km',
     almost: 'Sắp đến',
@@ -504,7 +499,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     routeTitle: 'Naik bus yang mana?',
     back: 'Kembali',
     change: 'Ganti bahasa dan pengguna',
-    about: 'Tentang layanan ini',
     meters: '{n} m',
     km: '{n} km',
     almost: 'Hampir sampai',
@@ -591,7 +585,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     routeTitle: 'តើជិះខ្សែណា?',
     back: 'ត្រឡប់',
     change: 'ប្តូរភាសា និងអ្នកប្រើ',
-    about: 'អំពីសេវានេះ',
     meters: '{n} ម៉ែត្រ',
     km: '{n} គ.ម.',
     almost: 'ជិតដល់ហើយ',
@@ -678,7 +671,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     routeTitle: 'どのバスに乗りますか？',
     back: '戻る',
     change: '言語と利用者を変更',
-    about: 'このサービスについて',
     meters: '{n} m',
     km: '{n} km',
     almost: 'もうすぐです',
@@ -765,7 +757,6 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     routeTitle: '어느 버스를 타나요?',
     back: '뒤로',
     change: '언어와 사용자 변경',
-    about: '이 서비스 소개',
     meters: '{n}m',
     km: '{n}km',
     almost: '거의 다 왔어요',

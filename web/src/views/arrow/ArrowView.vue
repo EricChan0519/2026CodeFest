@@ -1425,8 +1425,6 @@ onBeforeUnmount(() => {
       <p class="dock brand-text" aria-hidden="true">{{ BRAND }}</p>
     </div>
 
-    <RouterLink v-if="phase === 'search'" to="/about" class="about-link">{{ S.about }}</RouterLink>
-
     <!-- 導航：上方目的地與提示、中央箭頭（共用箭頭疊在 nav-slot 上）、下方距離與結束 -->
     <section class="nav" :inert="phase !== 'nav' || !!trip.card.value" :aria-label="S.end">
       <p class="dest">
@@ -2060,20 +2058,6 @@ onBeforeUnmount(() => {
   stroke: currentColor;
   stroke-width: 2.4;
   stroke-linecap: round;
-}
-
-.about-link {
-  position: absolute;
-  left: 50%;
-  bottom: calc(14px + env(safe-area-inset-bottom));
-  z-index: 5;
-  transform: translateX(-50%);
-  padding: 8px 12px;
-  font-size: 13px;
-  color: var(--ink-2);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  white-space: nowrap;
 }
 
 /* ── 導航 ─────────────────────────── */
