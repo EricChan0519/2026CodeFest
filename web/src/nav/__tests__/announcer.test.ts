@@ -16,6 +16,8 @@ const base: NavView = {
   nextTurn: null,
   progress: 0.2,
   headingDeg: 0,
+  headingCheck: 'unknown',
+  headingOffsetDeg: null,
   routeId: null,
 }
 const view = (o: Partial<NavView>): NavView => ({ ...base, ...o })

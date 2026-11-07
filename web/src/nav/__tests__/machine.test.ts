@@ -243,6 +243,108 @@ describe('replay + machine + announcer', () => {
   })
 })
 
+describe('machine: heading noise and resync', () => {
+  const mag = (trueDeg: number) => trueDeg - NAV_CONFIG.declinationDeg
+
+  it('one wild heading sample does not make the arrow jump', () => {
+    const { m, pos, advance } = setup()
+    m.start()
+    m.onPosition(pos(0, 50))
+    for (let i = 0; i < 20; i++) {
+      advance(1 / 30)
+      m.onHeading(mag(0))
+    }
+    const before = m.getView().cssRotation
+    advance(1 / 30)
+    m.onHeading(mag(170))
+    expect(Math.abs(m.getView().cssRotation - before)).toBeLessThan(2)
+  })
+
+  it('silent compass asks for a resync once, then respects the cooldown', () => {
+    const { m, advance } = setup()
+    const reasons: string[] = []
+    m.onResync((r) => reasons.push(r))
+    m.start()
+    m.onHeading(0)
+    advance(NAV_CONFIG.headingStaleS + 0.5)
+    m.tick()
+    expect(reasons).toEqual(['heading_silent'])
+    advance(1)
+    m.tick()
+    expect(reasons).toHaveLength(1)
+    advance(NAV_CONFIG.resyncCooldownS)
+    m.tick()
+    expect(reasons).toHaveLength(2)
+  })
+
+  it('a frozen compass value (events keep coming, value never changes) asks for a resync', () => {
+    const { m, advance } = setup()
+    const reasons: string[] = []
+    m.onResync((r) => reasons.push(r))
+    m.start()
+    for (let i = 0; i < NAV_CONFIG.headingFrozenS + 2; i++) {
+      advance(1)
+      m.onHeading(123.456)
+      m.tick()
+    }
+    expect(reasons).toContain('heading_frozen')
+  })
+
+  it('a live compass never asks for a resync', () => {
+    const { m, advance } = setup()
+    const reasons: string[] = []
+    m.onResync((r) => reasons.push(r))
+    m.start()
+    for (let i = 0; i < 30; i++) {
+      advance(1)
+      m.onHeading(100 + (i % 2) * 0.3)
+      m.tick()
+    }
+    expect(reasons).toHaveLength(0)
+  })
+
+  it('resync() makes the next heading take effect immediately', () => {
+    const { m, advance } = setup()
+    m.start()
+    m.onHeading(mag(0))
+    advance(0.1)
+    m.onHeading(mag(0))
+    m.resync()
+    advance(0.1)
+    m.onHeading(mag(200))
+    expect(m.getView().headingDeg!).toBeGreaterThan(199)
+    expect(m.getView().headingDeg!).toBeLessThan(201)
+  })
+
+  it('walking while the compass points sideways flags the heading and resyncs once', () => {
+    const { m, pos, advance } = setup()
+    const reasons: string[] = []
+    m.onResync((r) => reasons.push(r))
+    m.start()
+    for (let i = 0; i < 60; i++) {
+      advance(1)
+      m.onHeading(mag(90)) // 羅盤說朝東，實際往北走
+      m.onPosition(pos(0, 20 + i * 1.4))
+      m.tick()
+    }
+    expect(m.getView().headingCheck).toBe('suspect')
+    expect(reasons.filter((r) => r === 'course_mismatch')).toHaveLength(1)
+  })
+
+  it('courseCheck: false disables the walking-direction check', () => {
+    let t = 1_000_000
+    const m = createNavMachine({ route: STRAIGHT, now: () => t, courseCheck: false })
+    m.start()
+    for (let i = 0; i < 60; i++) {
+      t += 1000
+      m.onHeading(mag(90))
+      const [lat, lon] = pt(0, 20 + i * 1.4)
+      m.onPosition({ lat, lon, accuracyM: 8, ts: t })
+    }
+    expect(m.getView().headingCheck).toBe('unknown')
+  })
+})
+
 describe('machine: heading responsiveness', () => {
   // 部分 Android WebView 的羅盤事件只有 10 Hz 左右；平滑要依時間，不可依事件數
   it('follows a 90° turn within 300 ms even when events arrive at 10 Hz', () => {

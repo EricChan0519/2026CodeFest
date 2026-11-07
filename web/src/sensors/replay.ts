@@ -65,6 +65,11 @@ export class ReplaySensorSource implements SensorSource {
     this.handlers = null
   }
 
+  /** 位置來自路線不用重接，只有真實羅盤需要 */
+  resync(): void {
+    this.opts.headingSource?.resync?.()
+  }
+
   setPaused(p: boolean) {
     this.paused = p
   }

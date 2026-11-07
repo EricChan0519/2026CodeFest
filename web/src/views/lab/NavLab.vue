@@ -13,7 +13,7 @@ import { easeRotation } from '@/nav/arrow'
 import { NAV_CONFIG } from '@/nav/config'
 import type { Cue } from '@/nav/announcer'
 import { createNavMachine } from '@/nav/machine'
-import type { NavMachine, NavState, NavView } from '@/nav/machine'
+import type { NavMachine, NavState, NavView, ResyncReason } from '@/nav/machine'
 import { DEFAULT_DESTINATION, nearestPoint } from '@/nav/destination'
 import { ORIGIN_TAIPEI, straightRoute, twoLegRoute } from '@/nav/synth'
 import { fetchWalkRoute } from '@/lib/walkRoute'
@@ -43,6 +43,16 @@ let source: SensorSource | null = null
 let replay: ReplaySensorSource | null = null
 let tickTimer: number | null = null
 let destination: LatLon | null = null
+let lastTickAt = 0
+/** 每秒的計時器隔超過這麼久才回來，代表頁面被凍結過 */
+const RESUME_GAP_MS = 3000
+const RESYNC_TEXT: Record<ResyncReason, string> = {
+  manual: '手動',
+  resumed: '回到畫面',
+  heading_silent: '羅盤沒有資料',
+  heading_frozen: '羅盤數值卡住',
+  course_mismatch: '羅盤與實際走向不符',
+}
 const wake = new WakeLockHolder()
 const announcer = createAnnouncer()
 
@@ -181,7 +191,7 @@ async function begin() {
     destination = route.geometry.at(-1)!
     replay = new ReplaySensorSource({ geometry: route.geometry, speedMps: 1.4, headingSource: heading })
     source = replay
-    machine = createNavMachine({ route })
+    machine = createNavMachine({ route, courseCheck: false }) // 位置是模擬的，不能拿來驗證羅盤
   } else {
     replay = null
     source = new WebSensorSource()
@@ -216,7 +226,14 @@ async function begin() {
     }, 700)
   })
 
+  // 機器發現感測器沒資料、卡住、或羅盤與 GPS 走向不符：自動重新接上
+  m.onResync((reason) => {
+    log(`自動重新定位：${RESYNC_TEXT[reason]}`)
+    source?.resync?.()
+  })
+
   m.start()
+  lastTickAt = Date.now()
   source.start({
     onHeading: (d) => {
       if (!useManualHeading.value) m.onHeading(d)
@@ -228,6 +245,10 @@ async function begin() {
     },
   })
   tickTimer = window.setInterval(() => {
+    const now = Date.now()
+    // 計時器被凍結過（WebView 進背景、換頁後回來，不一定有 visibilitychange）：感測器多半也卡住了
+    if (now - lastTickAt > RESUME_GAP_MS) recalibrate('resumed')
+    lastTickAt = now
     if (useManualHeading.value) m.onHeading(manualHeading.value) // 手動朝向要持續餵，不然會被判斷成沒有羅盤
     m.tick()
   }, 1000)
@@ -254,6 +275,34 @@ async function fetchRealRoute(m: NavMachine, from: LatLon, candidate: string | n
     m.routeResult(null)
   }
 }
+
+/**
+ * 重新定位：忘掉舊的朝向、重新接上羅盤與 GPS、重新取得螢幕常亮。
+ * 使用者按按鈕、頁面回到前景、計時器被凍結過都會走這裡。
+ */
+function recalibrate(reason: 'manual' | 'resumed') {
+  if (!machine || !source) return
+  log(`重新定位：${RESYNC_TEXT[reason]}`)
+  machine.resync()
+  source.resync?.()
+  void wake.on()
+  lastTickAt = Date.now()
+}
+
+function onVisibility() {
+  if (document.visibilityState === 'visible' && running.value) recalibrate('resumed')
+}
+
+function onPageShow(e: PageTransitionEvent) {
+  if (e.persisted && running.value) recalibrate('resumed')
+}
+
+document.addEventListener('visibilitychange', onVisibility)
+window.addEventListener('pageshow', onPageShow)
+onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', onVisibility)
+  window.removeEventListener('pageshow', onPageShow)
+})
 
 function stopAll() {
   if (tickTimer) window.clearInterval(tickTimer)
@@ -391,8 +440,23 @@ onBeforeUnmount(() => window.clearInterval(speedTimer))
         <div class="mt-2 min-h-16 text-3xl">{{ sentence }}</div>
       </div>
 
-      <div class="flex justify-between px-6 pb-4">
+      <div
+        v-if="view.headingCheck === 'suspect' && !view.headingLost && view.state !== 'arrived'"
+        class="mx-4 mb-3 rounded-lg bg-amber-200 px-3 py-2 text-center text-lg font-bold text-[#30383D]"
+        role="status"
+      >
+        方向可能不準，請拿著手機畫 8 字，再按「重新定位」
+      </div>
+
+      <div class="flex items-center justify-between px-6 pb-4">
         <button class="h-16 w-16 rounded-full bg-white text-2xl text-[#30383D]" aria-label="結束" @click="end">✕</button>
+        <button
+          class="h-16 rounded-full bg-white px-6 text-lg font-bold text-[#30383D]"
+          aria-label="重新定位"
+          @click="recalibrate('manual')"
+        >
+          重新定位
+        </button>
         <button
           class="h-16 w-16 rounded-full bg-white text-sm text-[#30383D]"
           aria-label="除錯面板"
@@ -409,6 +473,8 @@ onBeforeUnmount(() => window.clearInterval(speedTimer))
           <div>精度 {{ view.accuracyM?.toFixed(0) ?? '—' }} m</div>
           <div>朝向(真北) {{ view.headingDeg?.toFixed(0) ?? '—' }}°</div>
           <div>箭頭 {{ view.arrowDeg?.toFixed(0) ?? '—' }}°</div>
+          <div>羅盤檢查 {{ view.headingCheck }}</div>
+          <div>羅盤偏差 {{ view.headingOffsetDeg?.toFixed(0) ?? '—' }}°</div>
           <div>進度 {{ Math.round(view.progress * 100) }}%</div>
           <div>下個轉彎 {{ view.nextTurn ? `${view.nextTurn.kind} ${view.nextTurn.distanceM.toFixed(0)}m` : '—' }}</div>
           <div class="col-span-2">{{ wakeNote }}</div>

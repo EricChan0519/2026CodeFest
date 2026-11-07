@@ -5,11 +5,14 @@
  */
 import type { LatLon, RouteOption, SensorErrorCode } from '@/lib/contract'
 import type { PositionFix } from '@/sensors/source'
-import { alphaForDt, arrowAngle, directionKey, nextCssRotation, smoothHeading } from './arrow'
-import type { DirectionKey, HeadingVec } from './arrow'
+import { arrowAngle, directionKey, nextCssRotation } from './arrow'
+import type { DirectionKey } from './arrow'
 import { NAV_CONFIG, arriveRadiusM, offRouteM } from './config'
 import type { NavConfig } from './config'
-import { bearingDeg, norm360 } from './geo'
+import { createCourseCheck } from './courseCheck'
+import type { CourseVerdict } from './courseCheck'
+import { angleDiff, bearingDeg, norm360 } from './geo'
+import { createHeadingFilter } from './headingFilter'
 import { createTracker } from './tracker'
 import type { TrackState, Tracker } from './tracker'
 
@@ -24,6 +27,9 @@ export type NavState =
   | 'failed'
 
 export type FailReason = 'location_denied' | 'location_off' | 'route_failed'
+
+/** 為什麼要重新接上感測器／重新定位 */
+export type ResyncReason = 'manual' | 'resumed' | 'heading_silent' | 'heading_frozen' | 'course_mismatch'
 
 export type NavRoute = Pick<RouteOption, 'geometry' | 'maneuvers'> & { id?: string }
 
@@ -51,6 +57,10 @@ export interface NavView {
   progress: number
   /** 平滑後的真北朝向，除錯用 */
   headingDeg: number | null
+  /** 羅盤 vs GPS 走向的定期檢查：unknown 還沒資料；ok 正常；suspect 可能不準（請使用者畫 8 字） */
+  headingCheck: CourseVerdict
+  /** 最近一次檢查的平均偏差（走向 − 朝向，度），除錯用 */
+  headingOffsetDeg: number | null
   routeId: string | null
 }
 
@@ -58,6 +68,8 @@ export interface NavMachineOptions {
   route?: NavRoute | null
   cfg?: NavConfig
   now?: () => number
+  /** 是否用 GPS 走向定期檢查羅盤；位置是模擬的（replay）時要關掉。預設開 */
+  courseCheck?: boolean
 }
 
 export interface NavMachine {
@@ -66,8 +78,15 @@ export interface NavMachine {
   /** 相對磁北的朝向，磁偏角在這裡加 */
   onHeading(magneticDeg: number): void
   onError(code: SensorErrorCode): void
-  /** 外部每秒呼叫一次，處理逾時 */
+  /** 外部每秒呼叫一次，處理逾時；偵測到感測器沒資料或卡住時會觸發 onResync */
   tick(): void
+  /**
+   * 重新定位：忘掉平滑中的朝向、重算方向檢查。呼叫端要另外請感測器重新接上（SensorSource.resync）。
+   * 使用者按「重新定位」、頁面回到前景時呼叫。
+   */
+  resync(): void
+  /** 機器覺得該重新接上感測器時通知（沒有朝向事件、數值卡住、方向檢查不符），呼叫端去 source.resync() */
+  onResync(fn: (reason: ResyncReason) => void): () => void
   /** 回覆 fetchRoute；null 表示失敗 */
   routeResult(route: NavRoute | null): void
   subscribe(fn: (v: NavView) => void): () => void
@@ -86,8 +105,15 @@ export function createNavMachine(opts: NavMachineOptions = {}): NavMachine {
   let track: TrackState | null = null
   let lastPos: PositionFix | null = null
   let lastPosAt = 0
-  let hv: HeadingVec | null = null
+  const filter = createHeadingFilter(cfg)
+  const course = createCourseCheck(cfg)
+  const courseEnabled = opts.courseCheck !== false
+  let started = false
   let lastHeadingAt: number | null = null
+  let lastRaw: number | null = null
+  let lastRawChangeAt = 0
+  let lastResyncAt: number | null = null
+  let lastCourseResyncAt: number | null = null
   let noCompass = false
   let startedAt = 0
   let offCount = 0
@@ -97,9 +123,24 @@ export function createNavMachine(opts: NavMachineOptions = {}): NavMachine {
   let view: NavView
   const viewSubs = new Set<(v: NavView) => void>()
   const effectSubs = new Set<(e: NavEffect) => void>()
+  const resyncSubs = new Set<(r: ResyncReason) => void>()
 
   function emitEffect(e: NavEffect) {
     effectSubs.forEach((f) => f(e))
+  }
+
+  function emitResync(reason: ResyncReason, now: number) {
+    lastResyncAt = now
+    resyncSubs.forEach((f) => f(reason))
+  }
+
+  /** 方向檢查發現羅盤與走向不符：重新接上感測器一次（有冷卻），之後重新取樣驗證 */
+  function maybeCourseResync(now: number) {
+    if (lastCourseResyncAt !== null && now - lastCourseResyncAt < cfg.courseResyncCooldownS * 1000) return
+    lastCourseResyncAt = now
+    filter.reset()
+    course.clearSamples()
+    emitResync('course_mismatch', now)
   }
 
   function setRoute(r: NavRoute) {
@@ -166,9 +207,10 @@ export function createNavMachine(opts: NavMachineOptions = {}): NavMachine {
     let arrowDeg: number | null = null
     let direction: DirectionKey | null = null
     const headingLost = noCompass || clock() - (lastHeadingAt ?? startedAt) > cfg.headingLostS * 1000
-    if (hasArrowState && lastPos && hv && target && !headingLost) {
+    const hdeg = filter.value
+    if (hasArrowState && lastPos && hdeg !== null && target && !headingLost) {
       const bearing = bearingDeg([lastPos.lat, lastPos.lon], target)
-      arrowDeg = arrowAngle(bearing, hv.deg)
+      arrowDeg = arrowAngle(bearing, hdeg)
       css = nextCssRotation(css, arrowDeg)
       direction = directionKey(arrowDeg)
     }
@@ -193,7 +235,9 @@ export function createNavMachine(opts: NavMachineOptions = {}): NavMachine {
       hollowArrow: state === 'weak_signal' || state === 'rerouting',
       nextTurn: track?.nextTurn ?? null,
       progress: total > 0 && track ? Math.min(1, track.alongM / total) : 0,
-      headingDeg: hv ? hv.deg : null,
+      headingDeg: hdeg,
+      headingCheck: course.verdict,
+      headingOffsetDeg: course.offsetDeg,
       routeId: route?.id ?? null,
     }
   }
@@ -207,7 +251,9 @@ export function createNavMachine(opts: NavMachineOptions = {}): NavMachine {
 
   return {
     start() {
+      started = true
       startedAt = clock()
+      lastRawChangeAt = startedAt
       lastPosAt = startedAt
       failReason = null
       if (route) {
@@ -224,6 +270,7 @@ export function createNavMachine(opts: NavMachineOptions = {}): NavMachine {
       const now = clock()
       lastPos = p
       lastPosAt = now
+      if (courseEnabled && course.pushPosition(p, now) === 'suspect') maybeCourseResync(now)
       if (state === 'locating') {
         state = 'routing'
         emitEffect({ type: 'fetchRoute', from: [p.lat, p.lon], candidate: null })
@@ -235,8 +282,10 @@ export function createNavMachine(opts: NavMachineOptions = {}): NavMachine {
 
     onHeading(magneticDeg) {
       const now = clock()
-      const alpha = lastHeadingAt === null ? 1 : alphaForDt(now - lastHeadingAt, cfg.headingTauMs)
-      hv = smoothHeading(hv, norm360(magneticDeg + cfg.declinationDeg), alpha)
+      if (lastRaw === null || Math.abs(angleDiff(magneticDeg, lastRaw)) > 0.05) lastRawChangeAt = now
+      lastRaw = magneticDeg
+      const h = filter.update(norm360(magneticDeg + cfg.declinationDeg), now)
+      if (courseEnabled) course.pushHeading(h)
       lastHeadingAt = now
       publish()
     },
@@ -260,7 +309,29 @@ export function createNavMachine(opts: NavMachineOptions = {}): NavMachine {
       ) {
         state = 'weak_signal'
       }
+      // 感測器沒資料或數值卡住：請外部重新接上（有冷卻，避免一直重接）
+      if (started && !noCompass && state !== 'failed' && state !== 'arrived') {
+        const cooled = lastResyncAt === null || now - lastResyncAt >= cfg.resyncCooldownS * 1000
+        const silent = now - (lastHeadingAt ?? startedAt) > cfg.headingStaleS * 1000
+        const frozen = lastHeadingAt !== null && now - lastRawChangeAt > cfg.headingFrozenS * 1000
+        if (cooled && (silent || frozen)) emitResync(silent ? 'heading_silent' : 'heading_frozen', now)
+      }
       publish()
+    },
+
+    resync() {
+      const now = clock()
+      filter.reset() // 下一筆朝向直接採用，不從舊值慢慢轉
+      course.reset()
+      lastRaw = null
+      lastRawChangeAt = now
+      lastResyncAt = now // 自動偵測先等一個冷卻時間，避免剛重接就又觸發
+      publish()
+    },
+
+    onResync(fn) {
+      resyncSubs.add(fn)
+      return () => resyncSubs.delete(fn)
     },
 
     routeResult(r) {

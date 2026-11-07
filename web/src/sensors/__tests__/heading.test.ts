@@ -14,6 +14,18 @@ describe('headingFromOrientation', () => {
     expect(headingFromOrientation(180, 90, 0)).toBeCloseTo(180)
   })
 
+  it('has no jump when beta crosses the old hard switch at 60°', () => {
+    const jump = (a: number, b: number) => Math.abs(((a - b + 540) % 360) - 180)
+    for (const [alpha, gamma] of [[30, 25], [200, -30], [310, 15]] as const) {
+      let prev = headingFromOrientation(alpha, 40, gamma)
+      for (let beta = 41; beta <= 85; beta++) {
+        const h = headingFromOrientation(alpha, beta, gamma)
+        expect(jump(h, prev)).toBeLessThan(6) // 每 1° beta 的變化要小
+        prev = h
+      }
+    }
+  })
+
   it('stays within 0-360', () => {
     for (let a = 0; a < 360; a += 15) {
       for (const b of [-80, -30, 0, 30, 80]) {

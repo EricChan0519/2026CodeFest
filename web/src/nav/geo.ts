@@ -30,6 +30,12 @@ export function bearingDeg(a: LatLon, b: LatLon): number {
 /** 角度正規化到 [0, 360) */
 export const norm360 = (d: number): number => ((d % 360) + 360) % 360
 
+/** a − b 的最短帶號角度差，範圍 (−180, 180]：正值代表 a 在 b 的順時針方向 */
+export function angleDiff(a: number, b: number): number {
+  const d = norm360(a - b)
+  return d > 180 ? d - 360 : d
+}
+
 /** 以 origin 為原點的局部平面座標（公尺），x 向東、y 向北。幾百公尺內誤差可忽略。 */
 export function toLocalXY(origin: LatLon, p: LatLon): [number, number] {
   return [rad(p[1] - origin[1]) * Math.cos(rad(origin[0])) * R, rad(p[0] - origin[0]) * R]
