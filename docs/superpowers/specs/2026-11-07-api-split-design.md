@@ -75,7 +75,8 @@ class RoutingUnavailable(Exception): ...    # A 轉成 503 ROUTING_UNAVAILABLE
 class RoutingEngine(Protocol):
     async def route(self, origin: LatLon, dest: LatLon,
                     costing: PedestrianCosting, alternates: int = 0) -> list[EngineRoute]:
-        """第一筆是主路線，之後是 alternates。至少回一筆，否則丟 RouteNotFound。"""
+        """第一筆是主路線，之後是 alternates。至少回一筆，否則丟 RouteNotFound。
+        alternates 只是上限：Valhalla 可能回得比要求少（短路線常只有主路線），呼叫端不可假設筆數。"""
     async def ping(self) -> bool:
         """/api/health?deep=1 使用。不丟例外，失敗回 False。"""
 
@@ -110,6 +111,7 @@ def measure(route: EngineRoute) -> Metrics:
 | `ROUTING_ENGINE` | `fake`（預設，本機與測試）、`valhalla`、`osrm` | A 的 `get_engine` |
 | `ROUTING_URL` | `routing` 服務網址 | B 的 adapter |
 | `ROUTING_TIMEOUT_S` | 預設 8 | B 的 adapter；逾時丟 `RoutingUnavailable` |
+| `ROUTING_AUTH` | `none`（預設）、`iam`（routing 是私有服務，用 ID token 呼叫） | B 的 adapter |
 | `APP_VERSION` | commit 短碼，沒有時用 `K_REVISION` | A 的 `/api/health` |
 
 ## 4. `POST /api/routes` 的資料流
@@ -125,9 +127,17 @@ flowchart LR
 ```
 
 - **階段 1：** 只算 `fastest`；`metrics`、`diff` 都是 `null`；`reasons` 是 `["fastest"]`。
-- **階段 2：** 規則表、去重門檻、繞路上限、原因判斷都依 02，數值放在 `route_rules.py`。兒童候選用 `alternates=2`，A 依 `measure()` 的 `unsignalized_crossings` 取最少的一條。
+- **階段 2：** 規則表、去重門檻、繞路上限、原因判斷都依 02，數值放在 `route_rules.py`。兒童候選用 `alternates=2`，A 依 `measure()` 的 `unsignalized_crossings` 取最少的一條。Valhalla 不一定回替代路線（實測短路線要 2 條只回主路線），A 必須能只用回來的筆數挑選；只有一條時就用它，再走一般的去重與 `no_better_route` 判斷。
 - `candidate` 有值時只算那一條；`simulate: "night"` 時 `period` 是 `night`，`notes` 加上 `simulated_night`。
 - `to.stationUid` 不參與路徑計算，只用座標算路。
+
+### 部署（`api`）
+
+```bash
+gcloud run deploy api --source api --region asia-east1 --allow-unauthenticated --max-instances 2 \n  --set-env-vars ROUTING_ENGINE=valhalla,ROUTING_URL=https://routing-239765207532.asia-east1.run.app,ROUTING_AUTH=iam
+```
+
+`routing` 不開放公開呼叫；`api` 的服務帳號要有 `routing` 的 `roles/run.invoker`。
 
 ## 5. 錯誤與隱私
 

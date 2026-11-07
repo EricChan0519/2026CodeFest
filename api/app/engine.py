@@ -40,7 +40,8 @@ class RoutingUnavailable(Exception): ...    # A 轉成 503 ROUTING_UNAVAILABLE
 class RoutingEngine(Protocol):
     async def route(self, origin: LatLon, dest: LatLon,
                     costing: PedestrianCosting, alternates: int = 0) -> list[EngineRoute]:
-        """第一筆是主路線，之後是 alternates。至少回一筆，否則丟 RouteNotFound。"""
+        """第一筆是主路線，之後是 alternates。至少回一筆，否則丟 RouteNotFound。
+        alternates 只是上限：Valhalla 可能回得比要求少（短路線常只有主路線），呼叫端不可假設筆數。"""
     async def ping(self) -> bool:
         """/api/health?deep=1 使用。不丟例外，失敗回 False。"""
 
@@ -48,7 +49,7 @@ def get_engine() -> RoutingEngine:
     """依 ROUTING_ENGINE 選擇引擎。
 
     B 的 ValhallaEngine、OsrmEngine 使用無參數建構，並自行讀取
-    ROUTING_URL 與 ROUTING_TIMEOUT_S。
+    ROUTING_URL、ROUTING_TIMEOUT_S、ROUTING_AUTH。
     """
     name = os.environ.get("ROUTING_ENGINE", "fake").strip().lower()
     if name == "fake":
