@@ -33,7 +33,8 @@ import type { StopGroup } from '@/lib/stopSearch'
 import { createLocator } from '@/lib/locator'
 import type { ModeRoute } from '@/lib/modeRoute'
 import { estimateBusMin } from '@/lib/transferBus'
-import type { PlanTab, TransitPlan } from '@/lib/transitPlan'
+import { busCandidates, comparable, metroCandidates, pickByMode, pickOption } from '@/lib/howOptions'
+import type { HowStatus } from '@/lib/howOptions'
 import type { Cue } from '@/nav/announcer'
 import { easeRotation } from '@/nav/arrow'
 import { NAV_CONFIG } from '@/nav/config'
@@ -580,7 +581,6 @@ async function pickResult(i: number) {
     return
   }
   target.value = { name: r.name, point: r.point }
-  planTab.value = 'mixed'
   void search.planTo(r.point, audience.value)
   void walkPlan.planTo(r.point)
   await goStep('search', 'how')
@@ -591,51 +591,38 @@ interface HowRow {
   key: string
   title: string
   right: string
-  choice: TripChoice
   /** 公車或捷運（決定圖示）；走路沒有 */
-  mode?: 'bus' | 'metro' | 'mixed' | null
-  /** 不能選（例如末班車已過），灰色顯示，note 說明原因 */
-  disabled?: boolean
-  note?: string
-  /** 預估秒數，公車＋捷運規劃時用來把走路和搭車排在一起 */
-  sortS?: number
+  mode?: 'bus' | 'metro' | null
+  /** 選不了：none 路線無公車／捷運、ended 末班車已過、not_started 首班車還沒開；loading 還在算 */
+  status?: HowStatus | 'loading'
+  /** choice 是 null 時不能選 */
+  choice: TripChoice | null
+  /** 依路線模式挑推薦時用 */
+  cmp?: { durationS: number; walkS: number; rides: number }
 }
-/** 怎麼去的分頁：最快（混搭）、只搭公車、只搭捷運 */
-const planTab = ref<PlanTab>('mixed')
-const PLAN_TABS: PlanTab[] = ['mixed', 'bus', 'metro']
-function tabLabel(t: PlanTab): string {
-  return t === 'mixed' ? S.value.tabFastest : t === 'bus' ? S.value.tabBus : S.value.tabMetro
-}
-/** 搭車那一列的名稱只寫搭什麼（公車、捷運、公車＋捷運），搭哪一班導航時再說 */
-function transitTitle(p: TransitPlan): string {
-  const modes = new Set(p.rides.map((r) => r.mode))
-  return modes.size > 1 ? S.value.howMixed : p.rides[0]!.mode === 'metro' ? S.value.howMetro : S.value.howBus
-}
-function transitRow(p: TransitPlan, t: { name: string; point: LatLon }): HowRow {
-  const modes = new Set(p.rides.map((r) => r.mode))
-  return {
-    key: `transit-${planTab.value}`,
-    title: transitTitle(p),
-    right: fill(S.value.aboutMin, { min: Math.max(1, Math.round(p.durationS / 60)) }),
-    choice: { kind: 'transit', plan: p, name: t.name, point: t.point },
-    mode: modes.size > 1 ? 'mixed' : p.rides[0]!.mode,
-    sortS: p.durationS,
+/** 選不了時方框上的黃字 */
+function statusLabel(r: HowRow): string {
+  const s = S.value
+  switch (r.status) {
+    case 'none':
+      return r.mode === 'metro' ? s.noMetroPlan : s.noBusPlan
+    case 'ended':
+      return s.lastGone
+    case 'not_started':
+      return s.notStarted
+    default:
+      return ''
   }
 }
 /**
- * 箭頭要指的那一列。公車＋捷運規劃：列表已經依時間排好，指第一個能選的（最快的，可能是走路）。
- * 只有舊的公車規劃時：走路列之後第一班車。
+ * 箭頭要指的那一列：能選的裡面，依使用者的路線模式最合適的那個
+ * （快速 → 最快；安全、平緩 → 不超過最快 1.2 倍時間內少走路、少轉車）。
  */
 function firstPickable(): number {
-  const skip = search.transit.value ? 0 : walkRows.value.length
-  const i = howRows.value.findIndex((r, idx) => idx >= skip && !r.disabled)
-  return i > 0 ? i : 0
-}
-function selectTab(t: PlanTab) {
-  if (busy.value || phase.value !== 'how' || planTab.value === t) return
-  planTab.value = t
-  armRow = firstPickable()
-  void nextTick(onResize)
+  const rows = howRows.value
+  const idx = rows.map((r, i) => ({ r, i })).filter(({ r }) => r.choice && r.cmp)
+  const best = pickByMode(idx.map(({ r }) => r.cmp!), mode.value)
+  return best < 0 ? 0 : idx[best]!.i
 }
 /** 約幾分鐘（路線的時間；長者用 3.5 km/h 算） */
 const routeMin = (r: ModeRoute) => Math.max(1, Math.round(r.durationS / 60))
@@ -657,7 +644,7 @@ const walkRows = computed<HowRow[]>(() => {
         title: s.howWalk,
         right: search.walkMin.value ? fill(s.aboutMin, { min: search.walkMin.value }) : '',
         choice: { kind: 'walk', name: t.name, point: t.point },
-        sortS: search.walkMin.value ? search.walkMin.value * 60 : undefined,
+        cmp: search.walkMin.value ? { durationS: search.walkMin.value * 60, walkS: search.walkMin.value * 60, rides: 0 } : undefined,
       },
     ]
   }
@@ -668,7 +655,7 @@ const walkRows = computed<HowRow[]>(() => {
       title: s.howWalk,
       right: fill(s.aboutMin, { min: routeMin(route) }),
       choice: { kind: 'walk', name: t.name, point: t.point, route, from: plan.from, mode: isMode ? plan.mode : 'fast' },
-      sortS: route.durationS,
+      cmp: { durationS: route.durationS, walkS: route.durationS, rides: 0 },
     },
   ]
 })
@@ -681,62 +668,52 @@ const routeNote = computed(() => {
   return parts.filter(Boolean).join(' · ')
 })
 /**
- * 搭車：只列最快的一個搭法，搭哪一班、在哪下車導航時再說。
- * 有公車＋捷運規劃時，依分頁（最快／只搭公車／只搭捷運）列那一頁最快、現在還搭得到的方案，和走路依時間排，快的在上面。
+ * 怎麼去固定三列：走路、公車、捷運，只寫名稱和約幾分鐘。
+ * 公車、捷運各列依路線模式最合適、現在搭得到的方案；附近沒有站或末班車已過時反黑、在方框上寫原因（不能選）。
  */
 const howRows = computed<HowRow[]>(() => {
   const t = target.value
   if (!t) return []
   const s = S.value
   const plans = search.transit.value
-  if (plans) {
-    // 末班車已過、還沒發車的不列（全部都搭不到時下面的說明會寫）；規劃器的「走路」方案已經由走路列顯示，不重複
-    const best = plans[planTab.value]
-      .filter((p) => p.rides.length > 0 && p.service === 'ok')
-      .sort((a, b) => a.durationS - b.durationS)[0]
-    const rows = [...walkRows.value, ...(best ? [transitRow(best, t)] : [])]
-    return rows
-      .map((r, i) => ({ r, i }))
-      .sort((a, b) => (a.r.sortS ?? Infinity) - (b.r.sortS ?? Infinity) || a.i - b.i)
-      .map(({ r }) => r)
+  const from = search.transitFrom.value
+  const ride = (m: 'bus' | 'metro'): HowRow => {
+    const key = m
+    const title = m === 'bus' ? s.howBus : s.howMetro
+    if (search.busLoading.value) return { key, title, right: '…', choice: null, mode: m, status: 'loading' }
+    if (plans && from) {
+      const o = pickOption(m === 'bus' ? busCandidates(plans) : metroCandidates(plans), from, t.point, mode.value)
+      if (o.status !== 'ok' || !o.plan) return { key, title, right: '', choice: null, mode: m, status: o.status }
+      return {
+        key,
+        title,
+        right: fill(s.aboutMin, { min: Math.max(1, Math.round(o.plan.durationS / 60)) }),
+        choice: { kind: 'transit', plan: o.plan, name: t.name, point: t.point },
+        mode: m,
+        cmp: comparable(o.plan),
+      }
+    }
+    // 沒有捷運資料、只算得出舊的公車規劃
+    const best = m === 'bus' ? search.busOptions.value.map((p) => ({ p, s: Math.round(estimateBusMin(p) * 60) })).sort((a, b) => a.s - b.s)[0] : undefined
+    if (!best) return { key, title, right: '', choice: null, mode: m, status: 'none' }
+    return {
+      key,
+      title,
+      right: fill(s.aboutMin, { min: Math.max(1, Math.round(best.s / 60)) }),
+      choice: { kind: 'bus', plan: best.p, name: t.name, point: t.point },
+      mode: m,
+      cmp: { durationS: best.s, walkS: 0, rides: best.p.rides.length },
+    }
   }
-  const best = search.busOptions.value
-    .map((p) => ({ p, min: Math.max(1, Math.round(estimateBusMin(p))) }))
-    .sort((a, b) => a.min - b.min)[0]
-  const bus: HowRow[] = best
-    ? [{ key: 'bus', title: s.howBus, right: fill(s.aboutMin, { min: best.min }), choice: { kind: 'bus', plan: best.p, name: t.name, point: t.point }, mode: 'bus' }]
-    : []
-  return [...walkRows.value, ...bus]
-})
-const howNote = computed(() => {
-  if (search.busLoading.value) return S.value.busLoading
-  const plans = search.transit.value
-  if (plans) {
-    const rides = plans[planTab.value].filter((p) => p.rides.length > 0)
-    if (rides.length === 0 && planTab.value === 'bus') return S.value.noBusPlan
-    if (rides.length === 0 && planTab.value === 'metro') return S.value.noMetroPlan
-    if (rides.length === 0) return S.value.busNotWorth
-    if (rides.every((p) => p.service === 'ended')) return S.value.lastGone
-    return S.value.estimateNote
-  }
-  switch (search.busNote.value) {
-    case 'not_worth':
-      return S.value.busNotWorth
-    case 'no_position':
-      return S.value.busNoPosition
-    case 'failed':
-    case 'old_index':
-      return S.value.busFailed
-    default:
-      return ''
-  }
+  return [...walkRows.value, ride('bus'), ride('metro')]
 })
 // 公車算好了：箭頭往下滑到建議的第一班車
 watch(
   () => search.busLoading.value,
   async (loading) => {
+    if (loading || phase.value !== 'how') return
     const target = firstPickable()
-    if (loading || phase.value !== 'how' || target === 0) return
+    if (target === 0) return
     await nextTick()
     if (!busy.value && armRow === 0) await moveArrow('how', target)
   },
@@ -759,7 +736,7 @@ function back(from: 'how' | 'route') {
 
 function pickHow(i: number) {
   const r = howRows.value[i]
-  if (r && !r.disabled && !busy.value && phase.value === 'how') void launch('how', i, r.choice)
+  if (r?.choice && !busy.value && phase.value === 'how') void launch('how', i, r.choice)
 }
 
 function pickRoute(i: number) {
@@ -1212,7 +1189,7 @@ function onResize() {
 }
 // 清單內容變了（結果、公車、語言、搜尋中的轉圈），版面跟著變 → 箭頭重新對準
 // （搜尋步驟整組垂直置中：轉圈出現時搜尋欄會往上移，沒跟著重算箭頭就會掉在搜尋欄下面）
-watch([rows, howRows, howNote, routeNote, searchNote, lang, age, mode, search.searching], () => void nextTick(onResize))
+watch([rows, howRows, routeNote, searchNote, lang, age, mode, search.searching], () => void nextTick(onResize))
 
 onMounted(() => {
   document.title = '跟著箭頭走'
@@ -1377,28 +1354,14 @@ onBeforeUnmount(() => {
                 {{ S.howTitle }}<span class="step-sub">{{ target?.name }}</span>
               </h2>
             </div>
-            <div v-if="search.transit.value" class="tabs" role="tablist" :aria-label="S.howTitle">
-              <button
-                v-for="t in PLAN_TABS"
-                :key="t"
-                type="button"
-                role="tab"
-                class="tab"
-                :class="{ on: planTab === t }"
-                :aria-selected="planTab === t"
-                @click="selectTab(t)"
-              >
-                {{ tabLabel(t) }}
-              </button>
-            </div>
             <ul class="list" @scroll.passive="onResize">
               <li v-for="(r, i) in howRows" :key="r.key">
                 <button
                   type="button"
                   class="row tall"
-                  :class="{ picked: phase === 'how' && picked === i, off: r.disabled }"
+                  :class="{ picked: phase === 'how' && picked === i, off: !r.choice && r.status !== 'loading' }"
                   :data-i="i"
-                  :aria-disabled="r.disabled || undefined"
+                  :aria-disabled="!r.choice || undefined"
                   @click="pickHow(i)"
                 >
                   <span class="sweep" aria-hidden="true" />
@@ -1410,12 +1373,12 @@ onBeforeUnmount(() => {
                   <span class="row-text">
                     <span class="row-main">{{ r.title }}</span>
                   </span>
-                  <span v-if="r.right" class="row-right">{{ r.right }}</span>
+                  <span v-if="statusLabel(r)" class="row-right row-warn">{{ statusLabel(r) }}</span>
+                  <span v-else-if="r.right" class="row-right">{{ r.right }}</span>
                 </button>
               </li>
             </ul>
             <p v-if="routeNote" class="note" :class="{ warn: walkPlan.plan.value?.fallback }" role="status">{{ routeNote }}</p>
-            <p v-if="howNote" class="note" :class="{ warn: !search.busLoading.value }" role="status">{{ howNote }}</p>
           </div>
         </section>
 
@@ -1970,41 +1933,22 @@ onBeforeUnmount(() => {
   outline: 3px solid var(--arc);
   outline-offset: 2px;
 }
-/* 不能選的列（末班車已過）：反灰，不會亮起 */
+/* 選不了的列（路線無公車、末班車已過）：方框反黑、名稱變淡，黃字寫原因 */
 .row.off {
-  opacity: 0.45;
+  background: rgb(0 0 0 / 0.35);
+  border-color: transparent;
   cursor: not-allowed;
 }
 .row.off:active {
-  background: var(--glass);
+  background: rgb(0 0 0 / 0.35);
 }
-/* 怎麼去的分頁：最快／只搭公車／只搭捷運 */
-.tabs {
-  flex: none;
-  display: flex;
-  gap: 6px;
-  margin: 4px 0 8px;
+.row.off .row-ico,
+.row.off .row-main {
+  opacity: 0.45;
 }
-.tab {
-  flex: 1;
-  min-height: calc(40px * var(--fs));
-  padding: 0 6px;
-  border-radius: 12px;
-  background: var(--glass);
-  border: 1px solid var(--glass-edge);
-  color: var(--ink-2);
-  font-size: calc(15px * var(--fs));
+.row-right.row-warn {
+  color: var(--note-warn);
   font-weight: 700;
-  cursor: pointer;
-}
-.tab.on {
-  background: rgb(147 212 223 / 0.24);
-  border-color: rgb(147 212 223 / 0.75);
-  color: var(--ink);
-}
-.tab:focus-visible {
-  outline: 3px solid var(--arc);
-  outline-offset: 2px;
 }
 
 /* 搜尋欄：細一點，右端是放大鏡 */

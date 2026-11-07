@@ -139,6 +139,8 @@ export function useDestinationSearch(locator: Locator) {
   const busOptions = shallowRef<BusPlan[]>([])
   /** 公車＋捷運規劃的三個分頁；還沒算或算不出來時是 null */
   const transit = shallowRef<Record<PlanTab, TransitPlan[]> | null>(null)
+  /** 公車＋捷運規劃的出發點（使用者位置或 debug 位置） */
+  const transitFrom = shallowRef<LatLon | null>(null)
   const debugTransitTime = ref<Date | null>(null)
   const debugOrigin = ref<LatLon | null>(null)
   const busLoading = ref(false)
@@ -166,6 +168,7 @@ export function useDestinationSearch(locator: Locator) {
         busNote.value = 'old_index'
         return
       }
+      transitFrom.value = user
       busOptions.value = planBus(idx.stations, idx.patterns, user, target)
       transit.value = planTransit({ stations: idx.stations, patterns: idx.patterns }, metro, user, target, { audience, now: debugTransitTime.value ?? undefined })
       const anyRide = transit.value.mixed.some((p) => p.rides.length > 0)
@@ -203,6 +206,7 @@ export function useDestinationSearch(locator: Locator) {
     clear,
     busOptions,
     transit,
+    transitFrom,
     debugTransitTime,
     debugOrigin,
     busLoading,
