@@ -17,8 +17,10 @@ def _segment(a: LatLon, b: LatLon) -> list[LatLon]:
 
 
 class FakeEngine:
-    def __init__(self, mode: Literal["ok", "no_route", "down"] = "ok"):
+    def __init__(self, mode: Literal["ok", "no_route", "down"] = "ok", max_alternates: int | None = None):
+        """max_alternates：模擬 Valhalla 回的替代路線比要求少（None＝照要求回）。"""
         self.mode = mode
+        self.max_alternates = max_alternates
         self.calls: list[dict] = []
 
     @property
@@ -35,6 +37,8 @@ class FakeEngine:
             raise RouteNotFound()
         if self.mode == "down":
             raise RoutingUnavailable()
+        if self.max_alternates is not None:
+            alternates = min(alternates, self.max_alternates)
         if haversine_m(origin, dest) < 1:
             return [EngineRoute(0, 0, [origin], [Maneuver("depart", 0, 0, "範例路"),
                     Maneuver("arrive", 0, 0, None)]) for _ in range(1 + alternates)]

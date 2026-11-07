@@ -81,3 +81,10 @@ def test_axis_aligned_route(dest):
     route = run(FakeEngine().route((25.0, 121.0), dest, PedestrianCosting()))[0]
     assert [m.kind for m in route.maneuvers] == ["depart", "arrive"]
     assert abs(route.maneuvers[0].distance_to_next_m - route.distance_m) < 0.01
+
+
+@pytest.mark.parametrize("cap,want", [(0, 1), (1, 2), (None, 3)])
+def test_fake_returns_fewer_alternates_than_requested(cap, want):
+    engine = FakeEngine(max_alternates=cap)
+    routes = run(engine.route((25.04, 121.51), (25.042, 121.513), PedestrianCosting(), alternates=2))
+    assert len(routes) == want and engine.last["alternates"] == 2
