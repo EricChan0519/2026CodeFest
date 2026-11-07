@@ -52,6 +52,15 @@ describe('checkMetroIndex', () => {
   })
 })
 
+// 正式快照（scripts/build_metro_index.py 產生）存在時也要符合合約
+const snapshots = import.meta.glob('../../../public/lab/metro_index.json', { eager: true, import: 'default' })
+
+describe.skipIf(Object.keys(snapshots).length === 0)('web/public/lab/metro_index.json snapshot', () => {
+  it('matches the contract', () => {
+    for (const data of Object.values(snapshots)) expect(checkMetroIndex(data as MetroIndex)).toEqual([])
+  })
+})
+
 describe('metro_index.mini.json fixture', () => {
   it('matches the contract', () => {
     expect(checkMetroIndex(mini as MetroIndex)).toEqual([])
