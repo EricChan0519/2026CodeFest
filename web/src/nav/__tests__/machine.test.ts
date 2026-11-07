@@ -4,11 +4,20 @@ import type { PositionFix } from '@/sensors/source'
 import { createAnnouncer } from '../announcer'
 import type { Cue } from '../announcer'
 import { NAV_CONFIG } from '../config'
+import { bearingDeg } from '../geo'
 import { createNavMachine } from '../machine'
-import type { NavEffect } from '../machine'
-import { L_SHAPE, STRAIGHT, pt } from '../__fixtures__/routes'
+import type { NavEffect, NavRoute } from '../machine'
+import { ACUTE_LEFT, LEFT_THEN_RIGHT, LR_END, L_SHAPE, STRAIGHT, acuteLeg2, pt } from '../__fixtures__/routes'
 
-function setup(route: typeof STRAIGHT | null = STRAIGHT) {
+/** 真北角度 → onHeading 吃的磁北角度 */
+const mag = (trueDeg: number) => trueDeg - NAV_CONFIG.declinationDeg
+/** 兩個角度差多少（0–180） */
+const angleDiff = (a: number, b: number) => {
+  const d = Math.abs((((a - b) % 360) + 360) % 360)
+  return Math.min(d, 360 - d)
+}
+
+function setup(route: NavRoute | null = STRAIGHT) {
   let t = 1_000_000
   const clock = () => t
   const m = createNavMachine({ route, now: clock })
@@ -175,6 +184,28 @@ describe('machine: off route', () => {
     expect(m.getView().state).toBe('navigating')
   })
 
+  it('reroute failure: back_to_route, arrow points to the nearest route point, not the end', () => {
+    const { m, pos, advance } = setup()
+    m.start()
+    m.onHeading(mag(0))
+    m.onPosition(pos(0, 10))
+    for (let i = 0; i < 3; i++) m.onPosition(pos(60, 12 + i))
+    m.routeResult(null)
+    advance(1)
+    m.onHeading(mag(0))
+    m.onPosition(pos(60, 14))
+    const v = m.getView()
+    expect(v.state).toBe('back_to_route')
+    // 最近的路線點在正西方（0, 14）；終點 (0, 200) 在西北北
+    const toRoute = bearingDeg(pt(60, 14), pt(0, 14))
+    const toEnd = bearingDeg(pt(60, 14), pt(0, 200))
+    expect(angleDiff(v.arrowDeg!, toRoute)).toBeLessThan(3)
+    expect(angleDiff(v.arrowDeg!, toEnd)).toBeGreaterThan(30)
+    // 還是原本那條路線
+    expect(v.routeId).toBeNull()
+    expect(v.distanceM).toBeCloseTo(60, 0)
+  })
+
   it('a successful reroute goes back to navigating on the new route', () => {
     const { m, pos } = setup()
     m.start()
@@ -182,6 +213,52 @@ describe('machine: off route', () => {
     for (let i = 0; i < 3; i++) m.onPosition(pos(60, 12 + i))
     m.routeResult(L_SHAPE)
     expect(m.getView().state).toBe('navigating')
+  })
+})
+
+describe('machine: arrow follows the route, not the destination', () => {
+  it('L route (left then right), facing the first leg at the start: arrow ≈ 0°', () => {
+    const { m, pos } = setup(LEFT_THEN_RIGHT)
+    m.start()
+    m.onHeading(mag(0))
+    m.onPosition(pos(0, 0))
+    const v = m.getView()
+    expect(angleDiff(v.arrowDeg!, 0)).toBeLessThan(2)
+    expect(v.direction).toBe('straight')
+    // 若箭頭指終點，會偏左約 27°
+    const toEnd = bearingDeg(pt(0, 0), LR_END)
+    expect(angleDiff(v.arrowDeg!, toEnd)).toBeGreaterThan(20)
+  })
+
+  it('within turnPassM of the first corner the arrow and nextTurn switch to the second leg', () => {
+    const { m, pos } = setup(LEFT_THEN_RIGHT)
+    m.start()
+    m.onHeading(mag(0))
+    m.onPosition(pos(0, 30))
+    expect(m.getView().nextTurn?.kind).toBe('left')
+    m.onPosition(pos(0, 53))
+    const v = m.getView()
+    expect(v.nextTurn).toMatchObject({ kind: 'right', index: 12 })
+    // 目標點在第二段 (-20, 60)，面向北時箭頭偏左
+    expect(angleDiff(v.arrowDeg!, bearingDeg(pt(0, 53), pt(-20, 60)))).toBeLessThan(2)
+    expect(v.direction).toBe('left')
+  })
+
+  it('GPS 10 m past the corner but projected before it: no "turn around"', () => {
+    const { m, pos, advance } = setup(ACUTE_LEFT)
+    m.start()
+    m.onHeading(mag(0))
+    m.onPosition(pos(0, 20, 20))
+    m.onPosition(pos(0, 40, 20))
+    // 已經轉過去，面向第二段（210°）；GPS 往東偏 3 公尺
+    advance(1)
+    m.onHeading(mag(210))
+    expect(angleDiff(m.getView().headingDeg!, 210)).toBeLessThan(1)
+    const [e, n] = acuteLeg2(10)
+    m.onPosition(pos(e + 3, n, 20))
+    const v = m.getView()
+    expect(v.direction).not.toBe('turn_around')
+    expect(angleDiff(v.arrowDeg!, 0)).toBeLessThan(25)
   })
 })
 
@@ -243,12 +320,53 @@ describe('replay + machine + announcer', () => {
   })
 })
 
+describe('replay an L route (left then right)', () => {
+  it('announces each turn once, left then right, never says turn around, arrives once', () => {
+    let t = 1_000_000
+    const clock = () => t
+    const m = createNavMachine({ route: LEFT_THEN_RIGHT, now: clock })
+    const ann = createAnnouncer({ now: clock })
+    const cues: Cue[] = []
+    const states: string[] = []
+    m.subscribe((v) => {
+      cues.push(...ann.update(v))
+      if (states.at(-1) !== v.state) states.push(v.state)
+    })
+
+    const replay = new ReplaySensorSource({ geometry: LEFT_THEN_RIGHT.geometry, speedMps: 1.4, now: clock })
+    let prev: PositionFix | null = null
+    m.start()
+    replay.start({
+      onHeading: () => {},
+      onPosition: (p) => {
+        // 朝向 = 這一步行進的方向（人面向自己走的方向）
+        if (prev) m.onHeading(mag(bearingDeg([prev.lat, prev.lon], [p.lat, p.lon])))
+        else m.onHeading(mag(0))
+        prev = p
+        m.onPosition(p)
+      },
+      onError: (c) => m.onError(c),
+    })
+    for (let i = 0; i < 400 && m.getView().state !== 'arrived'; i++) {
+      t += 1000
+      replay.tick(1)
+    }
+    replay.stop()
+
+    expect(m.getView().state).toBe('arrived')
+    expect(states.filter((s) => s === 'arrived')).toHaveLength(1)
+    expect(states).not.toContain('rerouting')
+    expect(cues.filter((c) => c.key === 'turn_ahead').map((c) => c.turn)).toEqual(['left', 'right'])
+    expect(cues.filter((c) => c.key === 'turn_around')).toHaveLength(0)
+    expect(cues.filter((c) => c.key === 'arrived')).toHaveLength(1)
+  })
+})
+
 describe('machine: heading responsiveness', () => {
   // 部分 Android WebView 的羅盤事件只有 10 Hz 左右；平滑要依時間，不可依事件數
   it('follows a 90° turn within 300 ms even when events arrive at 10 Hz', () => {
     const { m, advance } = setup()
     m.start()
-    const mag = (trueDeg: number) => trueDeg - NAV_CONFIG.declinationDeg
     m.onHeading(mag(0))
     for (let i = 0; i < 3; i++) {
       advance(0.1)
@@ -260,7 +378,6 @@ describe('machine: heading responsiveness', () => {
   it('still smooths jitter at 60 Hz (one noisy sample moves less than a third)', () => {
     const { m, advance } = setup()
     m.start()
-    const mag = (trueDeg: number) => trueDeg - NAV_CONFIG.declinationDeg
     m.onHeading(mag(0))
     for (let i = 0; i < 30; i++) {
       advance(1 / 60)

@@ -60,3 +60,40 @@ export const STRAIGHT: Shape = {
     { kind: 'arrive', atIndex: 20, distanceToNextM: 0, street: null },
   ],
 }
+
+/**
+ * L 形路線（先左轉再右轉）：北走 60，左轉西走 60，右轉北走 60。
+ * 轉角在 index 6（左）、12（右），終點 index 18。終點在起點的西北方，
+ * 所以「指向終點」和「指向第一段」的箭頭差很多（約 27°）。
+ */
+export const LEFT_THEN_RIGHT: Shape = {
+  geometry: densify([[0, 0], [0, 60], [-60, 60], [-60, 120]]),
+  maneuvers: [
+    { kind: 'depart', atIndex: 0, distanceToNextM: 60, street: null },
+    { kind: 'left', atIndex: 6, distanceToNextM: 60, street: null },
+    { kind: 'right', atIndex: 12, distanceToNextM: 60, street: null },
+    { kind: 'arrive', atIndex: 18, distanceToNextM: 0, street: null },
+  ] satisfies Maneuver[],
+}
+export const LR_FIRST_TURN = pt(0, 60)
+export const LR_SECOND_TURN = pt(-60, 60)
+export const LR_END = pt(-60, 120)
+
+/**
+ * 銳角左轉：北走 60，在轉角折回往 210°（南南西）走 60。
+ * 第二段離第一段很近，GPS 稍微偏東時，投影會落在第一段（轉角前）。
+ */
+export const ACUTE_LEFT: Shape = {
+  geometry: densify([[0, 0], [0, 60], acuteLeg2(60)]),
+  maneuvers: [
+    { kind: 'depart', atIndex: 0, distanceToNextM: 60, street: null },
+    { kind: 'left', atIndex: 6, distanceToNextM: 60, street: null },
+    { kind: 'arrive', atIndex: 12, distanceToNextM: 0, street: null },
+  ] satisfies Maneuver[],
+}
+export const ACUTE_TURN_POINT = pt(0, 60)
+/** 沿 ACUTE_LEFT 第二段走 m 公尺的點（東、北公尺） */
+export function acuteLeg2(m: number): [number, number] {
+  const h = (210 * Math.PI) / 180
+  return [m * Math.sin(h), 60 + m * Math.cos(h)]
+}

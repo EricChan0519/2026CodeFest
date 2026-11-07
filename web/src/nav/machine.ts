@@ -131,7 +131,7 @@ export function createNavMachine(opts: NavMachineOptions = {}): NavMachine {
     if (state === 'weak_signal') state = 'navigating'
 
     const here: LatLon = [p.lat, p.lon]
-    track = tracker.update(here)
+    track = tracker.update(here, p.accuracyM)
 
     // 抵達：連續 arriveHits 次進入範圍
     arriveCount = track.distToEndM <= arriveRadiusM(p.accuracyM) ? arriveCount + 1 : 0

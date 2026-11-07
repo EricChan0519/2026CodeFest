@@ -38,3 +38,9 @@ export const arriveRadiusM = (accuracyM: number): number => Math.max(15, accurac
 
 /** 偏離距離：max(30, 1.5 × accuracy) */
 export const offRouteM = (accuracyM: number): number => Math.max(30, 1.5 * accuracyM)
+
+/**
+ * 離轉彎點多近就算通過：max(8, 0.5 × accuracy)。
+ * 通過後目標點改成下一段的前視點，不會退回（04「箭頭依路徑轉彎」）。
+ */
+export const turnPassM = (accuracyM: number): number => Math.max(8, 0.5 * accuracyM)

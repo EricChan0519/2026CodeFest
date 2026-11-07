@@ -1,6 +1,9 @@
 /**
  * 合成路線，只給 /lab 實驗頁和 ?demo=1 用，不代表真實步行路線。
  * 真實路線一律來自 POST /api/routes。
+ *
+ * 刻意沒有「直線連到終點」的路線：重算失敗只能用手上的路線把人帶回去（04）。
+ * 直線路線會讓箭頭一直指著終點，就是 17:10 實測看到的問題。
  */
 import type { LatLon, Maneuver, RouteOption } from '@/lib/contract'
 import { deg, distanceM, fromLocalXY, rad } from './geo'
@@ -48,19 +51,6 @@ export function twoLegRoute(
     { kind: 'arrive', atIndex: geometry.length - 1, distanceToNextM: 0, street: null },
   ]
   return { id: 'synthetic', geometry, maneuvers }
-}
-
-/** 從 from 直線走到 to，模擬「重新規劃」的結果 */
-export function straightRoute(from: LatLon, to: LatLon): SynthRoute {
-  const geometry = densify([from, to])
-  return {
-    id: 'synthetic',
-    geometry,
-    maneuvers: [
-      { kind: 'depart', atIndex: 0, distanceToNextM: distanceM(from, to), street: null },
-      { kind: 'arrive', atIndex: geometry.length - 1, distanceToNextM: 0, street: null },
-    ],
-  }
 }
 
 /** 兩點之間的方位角，給 twoLegRoute 朝向預設用 */

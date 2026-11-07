@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { NAV_CONFIG, arriveRadiusM, offRouteM } from '../config'
+import { NAV_CONFIG, arriveRadiusM, offRouteM, turnPassM } from '../config'
 
 describe('NAV_CONFIG', () => {
   it('matches the starting values in 04-nav-logic', () => {
@@ -21,5 +21,10 @@ describe('NAV_CONFIG', () => {
   it('off-route distance is max(30, 1.5 x accuracy)', () => {
     expect(offRouteM(5)).toBe(30)
     expect(offRouteM(30)).toBe(45)
+  })
+
+  it('turn pass distance is max(8, 0.5 x accuracy)', () => {
+    expect(turnPassM(5)).toBe(8)
+    expect(turnPassM(30)).toBe(15)
   })
 })

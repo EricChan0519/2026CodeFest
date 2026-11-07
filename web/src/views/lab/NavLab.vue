@@ -15,7 +15,7 @@ import type { Cue } from '@/nav/announcer'
 import { createNavMachine } from '@/nav/machine'
 import type { NavMachine, NavState, NavView } from '@/nav/machine'
 import { DEFAULT_DESTINATION, nearestPoint } from '@/nav/destination'
-import { ORIGIN_TAIPEI, straightRoute, twoLegRoute } from '@/nav/synth'
+import { ORIGIN_TAIPEI, twoLegRoute } from '@/nav/synth'
 import { fetchWalkRoute } from '@/lib/walkRoute'
 import type { WalkRoute } from '@/lib/walkRoute'
 import { ReplaySensorSource } from '@/sensors/replay'
@@ -42,7 +42,6 @@ let machine: NavMachine | null = null
 let source: SensorSource | null = null
 let replay: ReplaySensorSource | null = null
 let tickTimer: number | null = null
-let destination: LatLon | null = null
 const wake = new WakeLockHolder()
 const announcer = createAnnouncer()
 
@@ -178,7 +177,6 @@ async function begin() {
     machine = createNavMachine({ route: null })
   } else if (mode.value === 'replay') {
     const route = twoLegRoute(ORIGIN_TAIPEI, 0, { leg1M: 80, leg2M: 60, turn: 'right' })
-    destination = route.geometry.at(-1)!
     replay = new ReplaySensorSource({ geometry: route.geometry, speedMps: 1.4, headingSource: heading })
     source = replay
     machine = createNavMachine({ route })
@@ -203,16 +201,18 @@ async function begin() {
       void fetchRealRoute(m, e.from, e.candidate)
       return
     }
-    // 模擬「API 回覆」：真實模式第一次是合成路線，重新規劃是直線回到終點
+    // 模擬「API 回覆」：真實模式第一次是合成路線。
+    // 合成路線沒有路線服務可以重算，重新規劃一律當作失敗 → back_to_route，
+    // 箭頭指最近的路線點，用手上的路線把人帶回去。絕對不畫直線到終點（04）。
     window.setTimeout(() => {
-      if (e.candidate === null) {
+      if (machine !== m) return // 使用者已經結束
+      if (m.getView().state === 'routing') {
         // 第一次取得路線（真實模式）
         const route = twoLegRoute(e.from, m.getView().headingDeg ?? 0, { leg1M: 80, leg2M: 60, turn: 'right' })
-        destination = route.geometry.at(-1)!
         return m.routeResult(route)
       }
-      if (rerouteFails.value || destination === null) return m.routeResult(null)
-      m.routeResult(straightRoute(e.from, destination))
+      log('合成路線無法重算，帶你回原路線')
+      m.routeResult(null)
     }, 700)
   })
 
@@ -239,7 +239,12 @@ async function begin() {
 /** 向 Valhalla 要從目前位置到目的地站牌的步行路線（避開階梯、小巷）；重新規劃也走這裡 */
 async function fetchRealRoute(m: NavMachine, from: LatLon, candidate: string | null) {
   const to = nearestPoint(DEFAULT_DESTINATION, from)
-  destination = to
+  if (candidate !== null && rerouteFails.value) {
+    // 模擬重算失敗：不給新路線，箭頭指最近的路線點
+    log('（模擬）重算失敗，帶你回原路線')
+    m.routeResult(null)
+    return
+  }
   try {
     const route = await fetchWalkRoute(from, to, { id: candidate ?? 'walk-valhalla' })
     if (machine !== m) return // 使用者已經結束
@@ -262,7 +267,6 @@ function stopAll() {
   source = null
   replay = null
   machine = null
-  destination = null
   void wake.off()
   running.value = false
 }
@@ -430,10 +434,11 @@ onBeforeUnmount(() => window.clearInterval(speedTimer))
           <label class="flex items-center gap-2">速度 ×{{ speedX }}
             <input v-model.number="speedX" type="range" min="1" max="8" step="1" class="flex-1" />
           </label>
-          <label class="flex items-center gap-2">
-            <input v-model="rerouteFails" type="checkbox" /> 重新規劃會失敗（測 back_to_route）
-          </label>
+          <div class="text-sm opacity-80">合成路線不能重算：走偏後會帶你回原路線（back_to_route）</div>
         </template>
+        <label v-if="mode === 'route'" class="flex items-center gap-2">
+          <input v-model="rerouteFails" type="checkbox" /> 重新規劃會失敗（測 back_to_route）
+        </label>
 
         <label class="flex items-center gap-2">
           <input v-model="useManualHeading" type="checkbox" @change="onManualHeading" /> 手動朝向（沒有羅盤時）

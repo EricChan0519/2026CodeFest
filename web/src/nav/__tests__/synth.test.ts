@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { bearingDeg, distanceM } from '../geo'
-import { straightRoute, twoLegRoute } from '../synth'
+import * as synth from '../synth'
+import { twoLegRoute } from '../synth'
 import { ORIGIN } from '../__fixtures__/routes'
 
 describe('synth routes', () => {
@@ -14,9 +15,7 @@ describe('synth routes', () => {
     expect(r.maneuvers.at(-1)?.atIndex).toBe(g.length - 1)
   })
 
-  it('straight route connects the two points', () => {
-    const r = straightRoute(ORIGIN, twoLegRoute(ORIGIN, 0).geometry.at(-1)!)
-    expect(r.geometry[0]).toEqual(ORIGIN)
-    expect(r.maneuvers.map((m) => m.kind)).toEqual(['depart', 'arrive'])
+  it('has no straight-line route to the end (reroute must never draw one)', () => {
+    expect(Object.keys(synth)).not.toContain('straightRoute')
   })
 })
