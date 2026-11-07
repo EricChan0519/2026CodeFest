@@ -253,7 +253,7 @@ export interface SensorSource {
 
 ## 前端 mock
 
-API-A 15:30 前提供下列檔案，前端用 `VITE_API_MOCK=1` 切換：
+API 負責人 15:30 前提供下列檔案，前端用 `VITE_API_MOCK=1` 切換：
 
 ```text
 web/src/mocks/stations-nearby.json
