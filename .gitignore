@@ -53,3 +53,6 @@ ephemeral/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Build-time caches (Overture extract, geocode results)
+scripts/.cache/

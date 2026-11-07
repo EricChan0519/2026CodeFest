@@ -91,8 +91,8 @@ flowchart LR
 | `maxGradePct` | 40 公尺視窗內最大的（高差 ÷ 40）× 100，取到 0.1 |
 | `litRatio` | 每 20 公尺取一點，附近 30 公尺內有路燈的比例 |
 | `unsignalizedCrossings`、`signalCrossings`、`unknownCrossings` | 路線 8 公尺內各類路口數 |
-| `cameras` | 路線 30 公尺內的監視器數 |
-| `policeNearby` | 路線 150 公尺內的派出所數 |
+| `cameras` | 路線 **50 公尺**內的監視器數。監視器座標是地址對照出來的，只準到巷口或數十公尺，30 公尺會漏掉大半；半徑是 `metrics.py` 的 `CAMERA_BUFFER_M` |
+| `policeNearby` | 路線 150 公尺內的派出所數；同一地址的分局與派出所只算一個 |
 
 快照不存在時對應欄位是 `null`，不丟例外。`null` 的欄位不能拿來給原因。
 
@@ -109,13 +109,13 @@ flowchart LR
 | 路燈 | [臺北市路燈位置分布圖](https://data.gov.tw/dataset/128270) | `TWD97X`、`TWD97Y`，148,135 筆，51 MB | TWD97 轉 WGS84，建置時轉成網格 |
 | 道路照明標籤 | OpenStreetMap `lit` | 約 14,843 條 | Valhalla `use_lit` 使用 |
 | **高程** | [內政部 20 公尺網格數值地形模型](https://data.gov.tw/dataset/35430)（政府資料開放授權第 1 版） | 平面坐標＋高程；坐標系看 `schema_hdr.csv`（預期 TWD97） | `scripts/build_elevation.py` 裁切臺北，產生 `api/data/elevation_grid.bin`＋`.json`（量測用），以及 `routing/elevation/N24E121.hgt`、`N25E121.hgt`（Valhalla 用，V4） |
-| **派出所** | [臺北市政府警察局名稱及地址](https://data.gov.tw/dataset/130095)（政府資料開放授權第 1 版） | `name`、`display_addr`、`poi_addr`，112 筆，**沒有座標** | `scripts/build_safety_points.py`：先比對 OSM `amenity=police`，比不到用 Nominatim |
-| **監視器** | [臺北市政府警察局錄影監視系統設置區位](https://data.gov.tw/dataset/130094)（政府資料開放授權第 1 版） | `編號`、`所屬單位`、`安裝地址`、`攝影方向`，約上萬筆，**沒有座標** | 同一支腳本；依地址去重；Nominatim 只收門牌層級結果；印出覆蓋率（V5） |
+| **派出所** | [臺北市政府警察局名稱及地址](https://data.gov.tw/dataset/130095)（政府資料開放授權第 1 版） | `name`、`display_addr`、`poi_addr`，112 筆，**沒有座標** | `scripts/build_safety_points.py`：門牌完全對上 Overture 門牌座標就用；對不上的用名稱比對 Overture 地點（11/7 實測 112 筆全部有座標：門牌 99、名稱 13） |
+| **監視器** | [臺北市政府警察局錄影監視系統設置區位](https://data.gov.tw/dataset/130094)（政府資料開放授權第 1 版） | `編號`、`所屬單位`、`安裝地址`、`攝影方向`，約上萬筆，**沒有座標** | 同一支腳本；依地址去重；用 Overture 門牌座標對照（Nominatim 查不到臺灣門牌，不用）；印出覆蓋率（V5，11/7 實測 84.8%） |
 
 - OSM 數字是 2026-11-07 用 Overpass 查的，範圍 lat 24.96–25.21、lon 121.45–121.67，也包含部分新北市（資料時間 2026-11-07T05:53Z）。
 - **派出所、監視器的地址轉座標只在建置時做**，結果放進 `api/data/safety_points.json`。執行時不呼叫外部服務，使用者位置不送第三方（ADR-0004、ADR-0005）。
-- Nominatim 規則：每秒最多 1 次；User-Agent 用專案名稱，不放個人信箱；結果快取在 `scripts/.cache/geocode.json`（不進 repo），中斷可以續跑。監視器地址很多，**要盡早在背景開跑**。
-- 監視器地址有「民生西路231號」「寧夏路55號燈桿」這類寫法：去掉「燈桿」等字尾、補「臺北市」後再查；只有路名層級的結果不收。
+- 座標來源是 Overture Maps（`addresses`、`places`，CDLA-Permissive-2.0，需標示出處）；第一次執行下載臺北市資料，快取在 `scripts/.cache/`（不進 repo），之後約數秒跑完。
+- 監視器地址有「民生西路231號」「寧夏路55號燈桿」「A路與B路口」這類寫法，腳本依精度分四層：門牌完全對上、同路最近的同奇偶數門牌、只有巷口（取該巷中心）、路口（取兩條路最近的門牌點）。對不上的丟掉，不猜。
 
 ### 資料的限制
 
