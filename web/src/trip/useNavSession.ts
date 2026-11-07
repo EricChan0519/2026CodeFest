@@ -4,10 +4,10 @@
  * 畫面只要：begin(目的地) → 看 view → 結束時 stop()。
  */
 import { computed, onBeforeUnmount, ref, shallowRef } from 'vue'
-import type { LatLon } from '@/lib/contract'
+import type { Audience, LatLon, RouteMode } from '@/lib/contract'
 import type { Locator } from '@/lib/locator'
-import { fetchWalkRoute } from '@/lib/walkRoute'
-import type { WalkRoute } from '@/lib/walkRoute'
+import { fetchRoutePlan, PLAN_REUSE_M } from '@/lib/modeRoute'
+import type { ModeRoute } from '@/lib/modeRoute'
 import { createAnnouncer } from '@/nav/announcer'
 import type { Cue } from '@/nav/announcer'
 import { createDestinationLock, DEFAULT_DESTINATION } from '@/nav/destination'
@@ -42,12 +42,25 @@ export interface NavSessionOptions {
   onArrived: () => void
   /** 要念出來或震動的提示 */
   onCue?: (cue: Cue) => void
+  /** 使用者選的路線模式與對象（走路速度）；沒給就是快速、一般速度 */
+  routing?: { mode: () => RouteMode; audience: () => Audience; simulate?: () => 'night' | null }
+}
+
+/** 這一段走路要用的路：路線模式（使用者在「怎麼去」選最快的路時是 fast），和已經規劃好的那條 */
+export interface LegRouting {
+  mode?: RouteMode
+  /** 「怎麼去」畫面算好、使用者看過的路；目前位置離 plannedFrom 不遠就直接用 */
+  preplanned?: ModeRoute | null
+  /** 算 preplanned 時的起點（使用者當時的位置，不是路線吸附到路上的第一個點） */
+  plannedFrom?: LatLon | null
 }
 
 export function useNavSession(opts: NavSessionOptions) {
   const view = shallowRef<NavView | null>(null)
   const running = ref(false)
-  const routeInfo = shallowRef<WalkRoute | null>(null)
+  const routeInfo = shallowRef<ModeRoute | null>(null)
+  /** 這一段實際用的路線模式 */
+  const legMode = ref<RouteMode>('fast')
   const routeError = ref('')
   const permissionNote = ref('')
   const wakeNote = ref('')
@@ -81,6 +94,8 @@ export function useNavSession(opts: NavSessionOptions) {
   let destLock: DestinationLock = createDestinationLock(DEFAULT_DESTINATION)
   let arrivedHandled = false
   let lastSimStart: LatLon | undefined
+  let lastLeg: LegRouting = {}
+  let preplanned: { route: ModeRoute; from: LatLon } | null = null
   const wake = new WakeLockHolder()
   const announcer = createAnnouncer()
 
@@ -97,9 +112,13 @@ export function useNavSession(opts: NavSessionOptions) {
   /**
    * 開始走一段。一定要在使用者點擊的事件裡呼叫（同步執行到 requestPermission），iOS 才會給羅盤權限。
    * simStart：模擬 GPS 的起點（下車站）；沒給就先試真實位置。
+   * leg：這一段的路線模式與規劃好的路（見 LegRouting）。
    */
-  async function begin(dest: Destination, simStart?: LatLon) {
+  async function begin(dest: Destination, simStart?: LatLon, leg: LegRouting = {}) {
     stopAll()
+    lastLeg = leg
+    legMode.value = leg.mode ?? opts.routing?.mode() ?? 'fast'
+    preplanned = leg.preplanned && leg.plannedFrom ? { route: leg.preplanned, from: leg.plannedFrom } : null
     announcer.reset()
     view.value = null
     routeInfo.value = null
@@ -199,10 +218,14 @@ export function useNavSession(opts: NavSessionOptions) {
 
   /** 同一個目的地重新開始（找不到路、切換模擬 GPS 時） */
   function restart() {
-    if (active.value) void begin(active.value, lastSimStart)
+    // 重來時重新算路，不沿用規劃好的那條
+    if (active.value) void begin(active.value, lastSimStart, { mode: lastLeg.mode })
   }
 
-  /** 向 Valhalla 要從目前位置到目的地的步行路線（避開階梯、小巷）；重新規劃也走這裡 */
+  /**
+   * 向後端要從目前位置到目的地的步行路線（依路線模式挑，不超過最快路線 1.2 倍時間）；重新規劃也走這裡。
+   * 第一次（不是重新規劃）而且起點離「怎麼去」規劃的起點不遠，就直接用使用者看過的那條。
+   */
   async function fetchRealRoute(m: NavMachine, from: LatLon, candidate: string | null) {
     const to = destLock.pick(from)
     destinationPoint.value = to
@@ -211,12 +234,31 @@ export function useNavSession(opts: NavSessionOptions) {
       giveRoute(m, null)
       return
     }
+    const planned = candidate === null ? preplanned : null
+    preplanned = null
+    if (planned && distanceM(from, planned.from) <= PLAN_REUSE_M) {
+      const reuse = planned.route
+      routeInfo.value = reuse
+      routeError.value = ''
+      note(`沿用規劃好的路（${reuse.id}）${reuse.distanceM} 公尺，約 ${Math.round(reuse.durationS / 60)} 分鐘`)
+      giveRoute(m, reuse)
+      return
+    }
     try {
-      const route = await fetchWalkRoute(from, to, { id: candidate ?? 'walk-valhalla' })
+      const routing = opts.routing
+      // 走到一半重新規劃要快：quick 不另外找繞行路線
+      const plan = await fetchRoutePlan(from, to, legMode.value, routing?.audience() ?? 'visitor', {
+        simulate: routing?.simulate?.() ?? null,
+        quick: candidate !== null,
+      })
       if (machine !== m) return
+      const route = plan.routes[0]!
       routeInfo.value = route
       routeError.value = ''
-      note(`路線 ${route.distanceM} 公尺，約 ${Math.round(route.durationS / 60)} 分鐘，階梯 ${route.stairsCount} 段`)
+      note(
+        `路線（${legMode.value}→${route.id}${plan.fallback ? '，後端失敗改用公開伺服器' : ''}）${route.distanceM} 公尺，` +
+          `約 ${Math.round(route.durationS / 60)} 分鐘，階梯 ${route.stairsCount} 段${route.reasons.length ? `，${route.reasons.join('、')}` : ''}`,
+      )
       giveRoute(m, route)
     } catch (err) {
       if (machine !== m) return
@@ -368,6 +410,7 @@ export function useNavSession(opts: NavSessionOptions) {
     running,
     active,
     routeInfo,
+    legMode,
     routeError,
     permissionNote,
     wakeNote,

@@ -30,13 +30,28 @@ class FakeEngine:
     async def ping(self) -> bool:
         return self.mode != "down"
 
+    async def edges(self, route: EngineRoute):
+        """假引擎不知道路的種類；測試要的話自己換掉這個方法。"""
+        return None
+
     async def route(self, origin: LatLon, dest: LatLon, costing: PedestrianCosting,
-                    alternates: int = 0) -> list[EngineRoute]:
-        self.calls.append({"origin": origin, "dest": dest, "costing": costing, "alternates": alternates})
+                    alternates: int = 0, via: list[LatLon] | None = None) -> list[EngineRoute]:
+        call = {"origin": origin, "dest": dest, "costing": costing, "alternates": alternates}
+        if via:
+            call["via"] = via
+        self.calls.append(call)
         if self.mode == "no_route":
             raise RouteNotFound()
         if self.mode == "down":
             raise RoutingUnavailable()
+        if via:
+            # 經過 via 的折線：起點 → via… → 終點，每段 19 公尺一點
+            points = [origin]
+            for stop in [*via, dest]:
+                points += _segment(points[-1], stop)
+            distance = _length(points)
+            return [EngineRoute(distance, distance / (costing.walking_speed_kmh / 3.6), points,
+                                [Maneuver("depart", 0, distance, "範例路"), Maneuver("arrive", len(points) - 1, 0, None)])]
         if self.max_alternates is not None:
             alternates = min(alternates, self.max_alternates)
         if haversine_m(origin, dest) < 1:

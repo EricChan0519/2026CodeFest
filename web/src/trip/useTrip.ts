@@ -5,8 +5,9 @@
  */
 import { computed, onBeforeUnmount, ref, shallowRef } from 'vue'
 import type { ArrivalTrip } from '@/arrival/arrival'
-import type { LatLon, Station, StationRoute } from '@/lib/contract'
+import type { LatLon, RouteMode, Station, StationRoute } from '@/lib/contract'
 import type { Locator } from '@/lib/locator'
+import type { ModeRoute } from '@/lib/modeRoute'
 import type { BusPlan } from '@/lib/transferBus'
 import type { TransitPlan } from '@/lib/transitPlan'
 import type { Cue } from '@/nav/announcer'
@@ -14,10 +15,12 @@ import { destinationFromPlace, destinationFromStation } from '@/nav/destination'
 import { boarded, currentRide, gotOff, legArrived, rideStatus, rideStatusByTime, startJourney, walkTarget } from '@/nav/journey'
 import type { Journey, Ride, RideStatus } from '@/nav/journey'
 import { useNavSession } from './useNavSession'
+import type { LegRouting, NavSessionOptions } from './useNavSession'
 
 /** 使用者最後選的走法 */
 export type TripChoice =
-  | { kind: 'walk'; name: string; point: LatLon }
+  /** route：「怎麼去」規劃好的路；mode：選了「最快的路」時是 fast，其他依使用者的路線模式 */
+  | { kind: 'walk'; name: string; point: LatLon; route?: ModeRoute | null; from?: LatLon | null; mode?: RouteMode }
   | { kind: 'bus'; plan: BusPlan; name: string; point: LatLon }
   /** 公車＋捷運規劃（lib/transitPlan.ts）選的一個方案 */
   | { kind: 'transit'; plan: TransitPlan; name: string; point: LatLon }
@@ -27,7 +30,7 @@ export type TripChoice =
 /** 畫面要蓋哪一張卡：到站（等車）、坐車中、只到站牌就結束 */
 export type TripCard = 'at_stop' | 'ride' | 'stop_only' | null
 
-export function useTrip(opts: { locator: Locator; onCue?: (c: Cue) => void }) {
+export function useTrip(opts: { locator: Locator; onCue?: (c: Cue) => void; routing?: NavSessionOptions['routing'] }) {
   const journey = shallowRef<Journey | null>(null)
   const stopOnly = shallowRef<{ station: Station; route: StationRoute } | null>(null)
   const stopOnlyArrived = ref(false)
@@ -38,8 +41,10 @@ export function useTrip(opts: { locator: Locator; onCue?: (c: Cue) => void }) {
   /** 坐捷運：每秒用「上車後經過的秒數」推算到第幾站（地下收不到 GPS） */
   let rideTimer: ReturnType<typeof setInterval> | null = null
   let rideStartMs = 0
+  /** 這一趟每段走路用的路線模式（undefined＝依使用者設定） */
+  let tripMode: RouteMode | undefined
 
-  const nav = useNavSession({ locator: opts.locator, onArrived, onCue: opts.onCue })
+  const nav = useNavSession({ locator: opts.locator, onArrived, onCue: opts.onCue, routing: opts.routing })
 
   function rideTrip(r: Ride, changeLine = false): ArrivalTrip {
     return {
@@ -84,6 +89,7 @@ export function useTrip(opts: { locator: Locator; onCue?: (c: Cue) => void }) {
     finalArrived.value = false
     stopOnlyArrived.value = false
     stopOnly.value = null
+    tripMode = choice.kind === 'walk' ? choice.mode : undefined
     if (choice.kind === 'stop') {
       journey.value = null
       stopOnly.value = { station: choice.station, route: choice.route }
@@ -93,7 +99,9 @@ export function useTrip(opts: { locator: Locator; onCue?: (c: Cue) => void }) {
     const rides = choice.kind === 'bus' || choice.kind === 'transit' ? choice.plan.rides : []
     journey.value = startJourney(rides, { name: choice.name, point: choice.point })
     const target = walkTarget(journey.value) ?? destinationFromPlace({ name: choice.name, point: choice.point })
-    void nav.begin(target)
+    const leg: LegRouting =
+      choice.kind === 'walk' ? { mode: tripMode, preplanned: choice.route, plannedFrom: choice.from } : { mode: tripMode }
+    void nav.begin(target, undefined, leg)
   }
 
   /** 這段走到了：行程往下一步 */
@@ -158,7 +166,7 @@ export function useTrip(opts: { locator: Locator; onCue?: (c: Cue) => void }) {
     journey.value = gotOff(j)
     const target = walkTarget(journey.value)
     // 捷運從出站口開始走；站內換線沒有 target（直接進到站卡）
-    if (target) void nav.begin(target, r.alightPoint ?? [r.alight.lat, r.alight.lon])
+    if (target) void nav.begin(target, r.alightPoint ?? [r.alight.lat, r.alight.lon], { mode: tripMode })
   }
 
   function stopRideWatch() {

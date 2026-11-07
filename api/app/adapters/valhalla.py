@@ -2,6 +2,7 @@
 
 Never log or raise anything that contains coordinates (ADR-0005).
 """
+import math
 import os
 import time
 from dataclasses import asdict
@@ -9,6 +10,7 @@ from dataclasses import asdict
 import httpx
 
 from app.engine import (
+    EdgeInfo,
     EngineRoute,
     LatLon,
     Maneuver,
@@ -30,9 +32,15 @@ _MANEUVER_KINDS: dict[int, ManeuverKind] = {
     12: "uturn", 13: "uturn",
     14: "left", 15: "left",
     16: "slight_left",
+    # same as web/src/lib/walkRoute.ts mapManeuverType: ramps/exits and "stay" count as turns
+    18: "right", 20: "right", 23: "slight_right",
+    19: "left", 21: "left", 24: "slight_left",
     40: "stairs",
 }
 
+
+_EDGE_ATTRIBUTES = ["edge.use", "edge.road_class", "edge.length",
+                    "edge.begin_shape_index", "edge.end_shape_index", "shape"]
 
 _METADATA_IDENTITY_URL = (
     "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity"
@@ -76,6 +84,7 @@ def _costing_options(costing: PedestrianCosting) -> dict:
 def _to_route(trip: dict) -> EngineRoute:
     leg = trip["legs"][0]
     return EngineRoute(
+        shape=leg["shape"],
         distance_m=trip["summary"]["length"] * 1000,
         duration_s=trip["summary"]["time"],
         geometry=decode_polyline6(leg["shape"]),
@@ -89,6 +98,32 @@ def _to_route(trip: dict) -> EngineRoute:
             for m in leg["maneuvers"]
         ],
     )
+
+
+#: trace_attributes 的點離路線上對應的點超過這麼遠，就當成對不上
+_INDEX_MAP_MAX_M = 30.0
+
+
+def _index_map(trace: list[LatLon], route: list[LatLon]) -> list[int] | None:
+    """trace_attributes 的 shape 索引 → 路線 geometry 的索引。
+
+    edge_walk 有時會多插一個點（例如 63 點的路線回 64 點），索引就差一。依序找最近的路線點（只往前不往回），
+    每個點都要在 _INDEX_MAP_MAX_M 內，否則回 None。點數相同時就是原本的索引。"""
+    if not trace or not route:
+        return None
+    if len(trace) == len(route):
+        return list(range(len(route)))
+    scale = math.cos(math.radians(route[0][0]))
+    def metres(a: LatLon, b: LatLon) -> float:
+        return math.hypot((a[0] - b[0]) * 111_195, (a[1] - b[1]) * 111_195 * scale)
+    out, j = [], 0
+    for point in trace:
+        while j + 1 < len(route) and metres(point, route[j + 1]) <= metres(point, route[j]):
+            j += 1
+        if metres(point, route[j]) > _INDEX_MAP_MAX_M:
+            return None
+        out.append(j)
+    return out
 
 
 class ValhallaEngine:
@@ -120,14 +155,17 @@ class ValhallaEngine:
         _token_cache[self._base_url] = (response.text, time.monotonic() + _TOKEN_TTL_S)
         return response.text
 
-    async def route(self, origin: LatLon, dest: LatLon, costing: PedestrianCosting, alternates: int = 0) -> list[EngineRoute]:
+    async def route(self, origin: LatLon, dest: LatLon, costing: PedestrianCosting, alternates: int = 0,
+                    via: list[LatLon] | None = None) -> list[EngineRoute]:
+        # "through": pass the point without stopping or splitting the route into legs
+        middle = [{"lat": lat, "lon": lon, "type": "through"} for lat, lon in via or []]
         body = {
-            "locations": [{"lat": origin[0], "lon": origin[1]}, {"lat": dest[0], "lon": dest[1]}],
+            "locations": [{"lat": origin[0], "lon": origin[1]}, *middle, {"lat": dest[0], "lon": dest[1]}],
             "costing": "pedestrian",
             "costing_options": _costing_options(costing),
             "units": "kilometers",
         }
-        if alternates:
+        if alternates and not middle:  # Valhalla only gives alternates for two locations
             body["alternates"] = alternates
 
         # Failures raise from None: exception chains could carry the request body into logs.
@@ -149,6 +187,33 @@ class ValhallaEngine:
             return [_to_route(trip) for trip in trips]
         except (KeyError, IndexError, TypeError, ValueError):
             raise RoutingUnavailable("unexpected routing response") from None
+
+    async def edges(self, route: EngineRoute) -> list[EdgeInfo] | None:
+        """trace_attributes on the route's own shape. Returns None when the indexes do not line up."""
+        if not route.shape:
+            return None
+        body = {
+            "encoded_polyline": route.shape,
+            "shape_match": "edge_walk",
+            "costing": "pedestrian",
+            "filters": {"attributes": _EDGE_ATTRIBUTES, "action": "include"},
+        }
+        try:
+            async with await self._client() as client:
+                response = await client.post("/trace_attributes", json=body)
+            if response.status_code != 200:
+                return None
+            data = response.json()
+            index = _index_map(decode_polyline6(data["shape"]), route.geometry)
+            if index is None:
+                return None
+            edges = [EdgeInfo(begin=index[int(e["begin_shape_index"])], end=index[int(e["end_shape_index"])],
+                              use=e.get("use"), road_class=e.get("road_class"),
+                              length_m=float(e.get("length") or 0) * 1000)
+                     for e in data["edges"]]
+        except (httpx.HTTPError, ValueError, KeyError, TypeError, IndexError):
+            return None
+        return edges
 
     async def ping(self) -> bool:
         try:
