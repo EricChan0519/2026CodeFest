@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from app.engine import get_engine
 from app.errors import install_error_handlers
 from app.route_rules import TPE
+from app import routes_service
 from app.routes_service import plan_routes
 from app.schemas import NearbyRequest, RoutesRequest
 from app.stations import StationIndex
@@ -52,6 +53,10 @@ def get_routing_engine():
     return get_engine()
 
 
+def get_measure():
+    return routes_service.default_measure
+
+
 def get_now():
     return datetime.now(TPE)
 
@@ -83,5 +88,5 @@ def stations_search(q: str = Query(max_length=50), index: StationIndex = Depends
 
 
 @app.post("/api/routes")
-async def routes(req: RoutesRequest, engine=Depends(get_routing_engine), now: datetime = Depends(get_now)):
-    return await plan_routes(req, engine, now)
+async def routes(req: RoutesRequest, engine=Depends(get_routing_engine), now: datetime = Depends(get_now), measure=Depends(get_measure)):
+    return await plan_routes(req, engine, now, measure=measure)

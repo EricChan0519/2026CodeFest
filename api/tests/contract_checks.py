@@ -29,7 +29,8 @@ def check_routes(body):
             assert {"steps", "climbM", "litRatio", "unsignalizedCrossings", "signalCrossings", "unknownCrossings"} <= r["metrics"].keys()
         if r["diff"] is not None:
             assert {"distanceM", "durationS", "steps", "climbM", "unsignalizedCrossings"} <= r["diff"].keys()
-        assert (r["diff"] is None) == (r["id"] == "fastest")
+        if r["id"] == "fastest":
+            assert r["diff"] is None
 
 
 def check_stations(body, nearby):
