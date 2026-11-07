@@ -45,8 +45,7 @@ import { searchPlaces } from '@/lib/geocode'
 import type { Place } from '@/lib/geocode'
 import { formatDistance, loadPoiIndex, searchPois } from '@/lib/poiSearch'
 import type { PoiHit } from '@/lib/poiSearch'
-import { planDirectBus } from '@/lib/directBus'
-import type { DirectBusOption } from '@/lib/directBus'
+import { planBus, type BusPlan } from '@/lib/transferBus'
 import { loadStopIndex, searchStops } from '@/lib/stopSearch'
 import { fetchWalkRoute } from '@/lib/walkRoute'
 import type { WalkRoute } from '@/lib/walkRoute'
@@ -159,10 +158,10 @@ const poiVisible = computed(() => (poiResults.value ?? []).slice(0, poiShown.val
  * 選一班車 → 導航到上車站，到站時 /arrived 會顯示「在 ○○ 下車」。
  * 沒選車就維持步行直接到 A。整個計算在裝置上做，不呼叫外部服務。
  */
-const busOptions = ref<DirectBusOption[] | null>(null)
+const busOptions = ref<BusPlan[] | null>(null)
 const busLoading = ref(false)
 const busNote = ref('')
-const pickedBus = shallowRef<DirectBusOption | null>(null)
+const pickedBus = shallowRef<BusPlan | null>(null)
 const busTargetName = ref('')
 const busTargetPoint = shallowRef<LatLon | null>(null)
 let busSeq = 0
@@ -211,8 +210,8 @@ async function planBusTo(target: LatLon, name: string) {
       busNote.value = '站牌資料沒有路線停靠順序（舊快照），無法列出搭公車的方法。'
       return
     }
-    busOptions.value = planDirectBus(idx.stations, idx.patterns, user, target)
-    if (busOptions.value.length === 0) busNote.value = '附近沒有直達的公車比直接走過去更省路，建議走過去。'
+    busOptions.value = planBus(idx.stations, idx.patterns, user, target)
+    if (busOptions.value.length === 0) busNote.value = '附近沒有比直接走過去更省路的公車（直達或轉一次車），建議走過去。'
   } catch (e) {
     if (seq === busSeq) busNote.value = `公車資料載入失敗（${(e as Error).message}），可以直接走過去。`
   } finally {
@@ -232,18 +231,28 @@ function clearBusPlan() {
   busLoading.value = false
 }
 
-function pickBus(o: DirectBusOption) {
+function pickBus(o: BusPlan) {
   pickedBus.value = o
-  destination.value = destinationFromBusOption(o)
+  destination.value = destinationFromBusOption(o.rides[0])
 }
 
-function isBusPicked(o: DirectBusOption): boolean {
+function isBusPicked(o: BusPlan): boolean {
   return pickedBus.value === o
 }
 
-function busLabel(o: DirectBusOption): string {
-  return `${o.route.routeName.zh}${o.route.headsign.zh ? ` ${o.route.headsign.zh}` : ''}`
+function rideLabel(r: BusPlan['rides'][number]): string {
+  return `${r.route.routeName.zh}${r.route.headsign.zh ? ` ${r.route.headsign.zh}` : ''}`
 }
+
+function busLabel(o: BusPlan): string {
+  return o.rides.map(rideLabel).join(' → 轉 ')
+}
+
+function busKey(o: BusPlan): string {
+  return o.rides.map((r) => `${r.route.routeName.zh}-${r.route.direction}`).join('>')
+}
+
+const busIsTransfer = computed(() => (busOptions.value ?? []).some((o) => o.rides.length > 1))
 
 function pickPoi(p: PoiHit) {
   destination.value = destinationFromPlace({ name: p.name, point: p.point })
@@ -497,7 +506,7 @@ function startTrip() {
   stopOnlyArrived.value = false
   const d = destination.value
   if (pickedBus.value && busTargetPoint.value) {
-    journey.value = startJourney([pickedBus.value], { name: busTargetName.value, point: busTargetPoint.value })
+    journey.value = startJourney(pickedBus.value.rides, { name: busTargetName.value, point: busTargetPoint.value })
   } else if (d.station) {
     journey.value = null
   } else {
@@ -979,7 +988,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
         <div class="flex items-start justify-between gap-3">
           <h2 class="text-xl font-bold">
             去「{{ busTargetName }}」可以搭
-            <span class="block text-sm font-normal text-white/70">只列直達車，不含轉乘</span>
+            <span class="block text-sm font-normal text-white/70">{{ busIsTransfer ? '沒有直達車，以下要轉一次車' : '先列直達車；沒有直達才列轉一次車' }}</span>
           </h2>
           <button type="button" class="shrink-0 rounded-lg bg-white/20 px-3 py-2 text-base" @click="reselectDestination">重新選擇</button>
         </div>
@@ -987,7 +996,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
         <p v-if="busNote" class="text-amber-200">{{ busNote }}</p>
         <button
           v-for="o in busOptions ?? []"
-          :key="`${o.route.routeName.zh}-${o.route.direction}`"
+          :key="busKey(o)"
           type="button"
           class="block w-full rounded-lg bg-white/10 p-3 text-left"
           :class="{ 'ring-2 ring-white': isBusPicked(o) }"
@@ -996,8 +1005,13 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
         >
           <div class="text-lg font-bold">{{ busLabel(o) }}</div>
           <div class="text-sm text-white/80">
-            走 {{ formatDistance(o.walkToBoardM) }}到「{{ o.board.name.zh }}」上車 → 坐 {{ o.stopCount }} 站 →
-            在「{{ o.alight.name.zh }}」下車，再走 {{ formatDistance(o.walkFromAlightM) }}
+            走 {{ formatDistance(o.walkToBoardM) }}到「{{ o.rides[0].board.name.zh }}」上車
+            <template v-for="(r, i) in o.rides" :key="i">
+              <template v-if="i > 0">
+                → 走 {{ formatDistance(o.transferWalkM) }}到「{{ r.board.name.zh }}」轉 {{ r.route.routeName.zh }}
+              </template>
+              → 坐 {{ r.stops.length - 1 }} 站 → 在「{{ r.alight.name.zh }}」下車</template
+            >，再走 {{ formatDistance(o.walkFromAlightM) }}
           </div>
         </button>
         <button
