@@ -48,6 +48,7 @@ DETOUR_MAX_EXTRA_M = 300
 DETOUR_MAX_RATIO = 1.5
 BRIGHTER_MIN_DELTA = 0.1
 FLATTER_MIN_M = 2
+GENTLER_SLOPE_MIN_PCT = 2
 EXTRA_DISTANCE_MIN_M = 20
 
 
@@ -113,6 +114,7 @@ def diff_of(cand_route, cand_m, fast_route, fast_m):
             "durationS": round(cand_route.duration_s-fast_route.duration_s),
             "steps": difference(fast_m.steps, cand_m.steps),
             "climbM": difference(fast_m.climb_m, cand_m.climb_m, 1),
+            "maxGradePct": difference(fast_m.max_grade_pct, cand_m.max_grade_pct, 1),
             "unsignalizedCrossings": difference(fast_m.unsignalized_crossings, cand_m.unsignalized_crossings)}
 
 
@@ -123,6 +125,8 @@ def reasons_for(candidate_id, cand_m, fast_m, diff):
         reasons.append("fewer_steps")
     if "hills" in parts and cand_m.climb_m is not None and fast_m.climb_m is not None and fast_m.climb_m - cand_m.climb_m >= FLATTER_MIN_M:
         reasons.append("flatter")
+    if "hills" in parts and diff.get("maxGradePct") is not None and diff["maxGradePct"] >= GENTLER_SLOPE_MIN_PCT:
+        reasons.append("gentler_slope")
     if "bright" in parts and cand_m.lit_ratio is not None and fast_m.lit_ratio is not None and cand_m.lit_ratio - fast_m.lit_ratio >= BRIGHTER_MIN_DELTA - 1e-12:
         reasons.append("brighter")
     if "unsignalized" in parts and cand_m.unsignalized_crossings is not None and fast_m.unsignalized_crossings is not None and cand_m.unsignalized_crossings < fast_m.unsignalized_crossings:

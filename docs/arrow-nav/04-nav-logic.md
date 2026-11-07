@@ -83,6 +83,8 @@ stateDiagram-v2
 
 **重算一律呼叫 `POST /api/routes`**，帶目前路線的 `id` 當 `candidate`。失敗就進 `back_to_route`，箭頭指最近的路線點。**正式流程不可以用 `straightRoute()` 或任何「直線連到終點」的路線**；`nav/synth.ts` 只給測試和實驗頁用。
 
+**目的地一趟只定一次。** 重算時目的地沿用出發時那個站位，不可以用目前位置重新選「最近的站位」。公車站兩個方向的站位常在馬路兩側，重選會跳到對面，新路線要人過馬路，箭頭會往旁邊指（11/7 實測，見 `nav/destination.ts` 的 `createDestinationLock`）。
+
 ## 箭頭依路徑轉彎
 
 箭頭指的是**路線上的下一段**，不是終點。路線是「先左轉再右轉」時：
@@ -102,7 +104,21 @@ stateDiagram-v2
 3. 這樣可以避免 GPS 已經過了轉角、投影還沒過時，目標點落在使用者背後，箭頭突然叫人向後轉。
 4. **轉彎點**是 `maneuvers` 裡 `depart`、`straight`、`arrive` 以外的 `atIndex`。
 
-> **17:10 已知問題：** 實測看起來箭頭一直指著終點。推測是 `NavLab.vue` 真實模式第一次用合成路線，走偏重算時又用 `straightRoute()` 直線連到終點。**修之前要先重現、確認原因**，並補上下方「測試」的轉彎案例。
+> **17:10 已知問題（已修）：** 實測看起來箭頭一直指著終點。已用測試重現：tracker 在有轉彎的路線上本來就指第一段（箭頭 0°，終點方位 38.7°）；但 `NavLab.vue` 走偏重算時用 `straightRoute()` 直線連到終點，之後箭頭就等於終點方位（60.7° 對 58.7°）。另外銳角轉彎時 GPS 已過轉角、投影還在轉角前，會叫人「請向後轉」。修法：刪掉 `straightRoute()`，實驗頁合成路線重算一律走 `back_to_route`；tracker 加上 `turnPassM` 通過判斷。
+
+### 先過馬路再轉彎
+
+Valhalla 的轉彎提示只看路，不知道哪一段是斑馬線。OSM 的斑馬線常畫成一小段折線：士東路 286 巷口的斑馬線先沿路邊往東 14 m、再往北過士東路，
+Valhalla 就在南側路邊說「右轉」，人還沒過馬路就聽到右轉（2026-11-07 回報）。
+
+修法（`lib/walkRoute.ts` 的 `applyCrossings`）：拿到路線後再問一次 Valhalla `trace_attributes`，知道每一段是斑馬線（`pedestrian_crossing`）還是哪一級道路。
+
+1. 連續的斑馬線（至少 `CROSSING_MIN_M` 10 m；巷口 7 m 的短斑馬線不算）變成一個 `cross`：`fromIndex`＝開始過，`atIndex`＝對面。斑馬線上的轉彎都併進去。
+2. 過完馬路 `CROSS_THEN_M` 12 m 內的轉彎併成 `then`：說「過完馬路再右轉」。
+3. 沒畫斑馬線、但路線轉進 tertiary 以上的大馬路、走不到 `JOG_MAX_M` 60 m 就往反方向轉出去（右轉再左轉）：在第一個路口先過馬路（和 Google 一樣），說「過完馬路再右轉」。
+4. tracker：`cross` 用比較小的 `crossPassM`（5–10 m）判斷「已經到對面」，站在這一側路邊不算過了；`nextTurn.startM` 是離開始過馬路的地方多遠，提示用它算 30 m。
+5. 箭頭的目標點不超過 `cross` 的對面，所以過馬路前箭頭指向對面，不會沿著馬路指。
+6. `trace_attributes` 失敗或逾時（5 秒）就用原本的路線，只是少了過馬路提示。
 
 ## 每次更新的計算
 
@@ -136,6 +152,15 @@ current += delta
 
 `current` 可以超過 360，不要歸零。
 
+### 朝向雜訊與重新定位
+
+實測發現箭頭會突然亂抖，換頁回來後指針卡住不準。處理分三層（程式在 `nav/headingFilter.ts`、`nav/courseCheck.ts`、`nav/machine.ts`、`sensors/web.ts`）：
+
+1. **濾波（headingFilter）**：平滑時間常數依「跟目前差多少」調整，穩定時用 `headingSlowTauMs`（壓抖動），正在轉用 `headingTauMs`（不拖尾）；單筆偏離超過 `headingSpikeDeg` 先當突波，連續 `headingSpikeConfirm` 筆一致才採用；輸出有 `headingDeadbandDeg` 死區；隔超過 `headingGapResetMs` 的第一筆直接採用。`alpha/beta/gamma` 轉朝向時，beta 在 50°–70° 之間用兩種算法混合，不再於 60° 硬切換。
+2. **感測器自癒**：機器的 `tick()` 偵測「`headingStaleS` 秒沒有朝向事件」或「`headingFrozenS` 秒原始值完全沒變」，觸發 `onResync`，外部呼叫 `SensorSource.resync()`（拆掉重掛 `deviceorientation` 監聽與定位 watch）。有 `resyncCooldownS` 冷卻。頁面回到前景（`visibilitychange`、`pageshow`）或每秒計時器被凍結超過 3 秒（WebView 進背景不一定有事件）時，也會做一次。
+3. **定期確認（courseCheck）**：用 GPS 走出去的方向對照這段時間的羅盤朝向。條件：精度好於 `courseMaxAccuracyM`、走超過 `max(courseMinMoveM, 1.5 × 精度)`、速度像走路、期間朝向沒大幅轉動。連續 `courseSamples` 次偏差一致且超過 `courseMismatchDeg`，`headingCheck` 變 `suspect`：自動重新接上感測器一次（`courseResyncCooldownS` 冷卻）並顯示「方向可能不準，請畫 8 字」；偏差都在 `courseOkDeg` 內變 `ok`。**假設使用者拿著手機朝前走**；模擬模式（位置是假的）關閉此檢查。
+4. **手動**：導航畫面的「重新定位」按鈕，忘掉舊朝向、重接感測器、重新取得螢幕常亮。
+
 ### 方向文字
 
 | 箭頭角度（左右對稱） | 指令 |
@@ -155,7 +180,18 @@ current += delta
 |---|---|---|
 | `lookaheadM` | 20 | 路線上的前視距離 |
 | `turnPassM` | `max(8, 0.5 × accuracyM)` | 離轉彎點多近就算通過 |
-| `headingAlpha` | 0.2 | 朝向平滑係數 |
+| `headingTauMs` | 80 | 朝向平滑時間常數；係數 = 1 − e^(−dt/τ)，不受事件頻率影響（60 Hz 時約 0.2） |
+| `headingSlowTauMs` | 350 | 朝向穩定時的時間常數（壓抖動） |
+| `headingSlowBandDeg` | 25 | 差距小於此角度時，時間常數從快過渡到慢 |
+| `headingSpikeDeg` / `headingSpikeConfirm` / `headingSpikeWindowMs` | 60 / 2 / 600 | 突波門檻、需連續確認幾筆、確認時間窗 |
+| `headingGapResetMs` | 1500 | 隔這麼久沒資料，下一筆直接採用 |
+| `headingDeadbandDeg` | 1.5 | 輸出死區 |
+| `headingStaleS` / `headingFrozenS` / `resyncCooldownS` | 2 / 6 / 5 | 沒朝向事件、數值卡住多久自動重接感測器；重接最短間隔 |
+| `courseMaxAccuracyM` / `courseMinMoveM` | 20 / 10 | 走向檢查的採樣條件（精度、移動距離） |
+| `courseMinSpeedMps` / `courseMaxSpeedMps` | 0.8 / 3.5 | 走向檢查的速度範圍 |
+| `courseSamples` / `courseMismatchDeg` / `courseOkDeg` / `courseSpreadDeg` | 3 / 45 / 25 / 30 | 走向檢查的判斷門檻 |
+| `courseResyncCooldownS` | 60 | 走向檢查觸發重新定位的最短間隔 |
+| `arrowTauMs` | 50 | 箭頭每一幀追目標角度的時間常數（取代 CSS transition） |
 | `declinationDeg` | −4.7 | 磁偏角（待實測） |
 | `arriveRadiusM` | `max(15, accuracyM)` | 抵達範圍 |
 | `arriveHits` | 2 | 連續幾次才算抵達 |
@@ -174,12 +210,16 @@ current += delta
 |---|---|---|
 | 開始走 | 請注意來車和紅綠燈 | |
 | 接近轉彎 | 前面路口向左轉 | `turn` |
+| 接近要過的馬路 | 過完馬路再右轉／前面過馬路，注意來車 | `turn` |
 | 需要向後轉 | 請向後轉 | `warn` |
 | 走偏 | 走偏了，正在重新找路 | `warn` |
-| 抵達（公車站） | 到了，在這裡等 307 | `arrive` |
-| 抵達（地點） | 到了，這裡是 {name} | `arrive` |
+| 抵達（公車站） | （導航不出聲；由 `/arrived` 畫面念「到了。等 307 號，往板橋方向」） | `arrive` |
+| 抵達（一般地點） | （導航不出聲；實驗頁只顯示「到了」） | `arrive` |
 
 規則：
+
+- **抵達只震動、不出聲**：播報器的 `arrived` cue 是 `speak: false`。`/arrived` 畫面一打開就會念一次，導航再念會兩句疊在一起。
+- 導航要記住使用者選的那班車：`Destination` 帶站點 API 的 `station` 和使用者選的 `stationRoute`（`destinationFromStation()`）。到站時 `router.push(arrivalFromStation(station, stationRoute, lang, audience))`，網址只有站名、路線名、方向，不帶座標和 UID。
 
 - 句子來自語言檔，不用 LLM，也不用 Valhalla 的文字指令（它沒有 `zh-TW`）。
 - 重要提示用 `interrupt: true` 打斷目前的語音。
@@ -195,7 +235,7 @@ current += delta
 |---|---|
 | 朝向 359° 和 1° 平滑 | 結果接近 0°，不是 180° |
 | 箭頭從 350° 轉到 10° | 順時針轉 20° |
-| 路線轉彎前 5 公尺 | 目標點是轉彎點，不會切過轉角 |
+| 路線轉彎前 10 公尺（`turnPassM` 外） | 目標點是轉彎點，不會切過轉角 |
 | L 形路線（先左轉再右轉），起點朝第一段 | 箭頭約 0°，指第一段，**不是**指向終點的方位 |
 | 同一條路線，走到第一個轉角 `turnPassM` 內 | 目標點換到第二段；`nextTurn` 換成第二個轉彎 |
 | GPS 已過轉角 10 公尺，但投影還在轉角前 | 轉彎算已通過，箭頭不會變成「請向後轉」 |

@@ -15,14 +15,17 @@ def test_validation_error_hides_input(client):
 def test_version_reads_environment(monkeypatch):
     import subprocess
     import sys
+    from pathlib import Path
     monkeypatch.setenv("APP_VERSION", "test-version")
-    output = subprocess.check_output([sys.executable, "-c", "from app.main import VERSION; print(VERSION)"], text=True)
+    # The child process does not get pytest's pythonpath, so run it from api/ no matter where pytest started.
+    api_dir = Path(__file__).resolve().parents[1]
+    output = subprocess.check_output([sys.executable, "-c", "from app.main import VERSION; print(VERSION)"], text=True, cwd=api_dir)
     assert output.strip() == "test-version"
 
 
 def test_deep(client, fake_engine, station_index):
     response = client.get("/api/health?deep=1")
-    assert response.status_code == 200 and response.json()["checks"] == {"routing": True, "stopIndex": True}
+    assert response.status_code == 200 and response.json()["checks"] == {"routing": True, "stopIndex": True, "elevation": False}
     fake_engine.mode = "down"
     response = client.get("/api/health?deep=1")
     assert response.status_code == 503 and response.json()["checks"]["routing"] is False

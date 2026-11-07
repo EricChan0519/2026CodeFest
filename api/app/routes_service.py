@@ -7,6 +7,7 @@ from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 
+from app import elevation, route_modes
 from app.engine import RouteNotFound, RoutingEngine, RoutingUnavailable
 from app.errors import ApiError
 from app.geo import in_area
@@ -17,11 +18,16 @@ try:  # B 交付 app/metrics.py 後自動改用；Metrics 與 measure 要來自�
 except ImportError:
     from app.metrics_stub import Metrics, measure as default_measure
 from app.schemas import RoutesRequest
+from app.metrics import source_updated_at
 
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 LAMP_SOURCE_NAME = "臺北市路燈位置分布圖"
+CAMERA_SOURCE_NAME = "臺北市政府警察局錄影監視系統設置區位"
+POLICE_SOURCE_NAME = "臺北市政府警察局名稱及地址"
+ADDRESS_SOURCE_NAME = "Overture Maps（門牌座標）"
+STORE_SOURCE_NAME = "Overture Maps Places（便利商店、店面）"
 
 
 @lru_cache
@@ -35,30 +41,57 @@ def lamp_grid_updated_at() -> str | None:
     return value if isinstance(value, str) else None
 
 
+def safety_sources() -> list[dict]:
+    """有監視器與派出所快照時才列；座標來自 Overture 的門牌資料，要標示出處。"""
+    updated = source_updated_at()
+    if "safety" not in updated:
+        return []
+    return [{"name": name, "updatedAt": updated["safety"]}
+            for name in (CAMERA_SOURCE_NAME, POLICE_SOURCE_NAME, ADDRESS_SOURCE_NAME)]
+
+
 def route_sources() -> list[dict]:
-    """OpenStreetMap 日期由部署時的 OSM_UPDATED_AT 提供；有路燈快照時才列路燈資料。"""
+    """OpenStreetMap 日期由部署時的 OSM_UPDATED_AT 提供；有路燈、監視器與派出所快照時才列。"""
     sources = [{"name": "OpenStreetMap", "updatedAt": os.environ.get("OSM_UPDATED_AT") or None}]
     lamp = lamp_grid_updated_at()
     if lamp:
         sources.append({"name": LAMP_SOURCE_NAME, "updatedAt": lamp})
-    return sources
+    if elevation.available():
+        sources.append({"name": "內政部20公尺網格數值地形模型", "updatedAt": elevation.updated_at()})
+    stores = source_updated_at().get("stores", False)
+    if stores is not False:
+        sources.append({"name": STORE_SOURCE_NAME, "updatedAt": stores})
+    return sources + safety_sources()
 
 
-def route_to_dict(route, id, recommended, reasons, metrics, diff):
+def edges_to_list(edges):
+    """[[begin, end, use, roadClass], ...]：前端用來判斷過馬路（lib/walkRoute.ts 的 applyCrossings）。"""
+    if edges is None:
+        return None
+    return [[e.begin, e.end, e.use, e.road_class] for e in edges]
+
+
+def route_to_dict(route, id, recommended, reasons, metrics, diff, edges=None):
     return {"id": id, "recommended": recommended, "reasons": reasons,
             "distanceM": round(route.distance_m), "durationS": round(route.duration_s),
             "geometry": [[round(lat, 6), round(lon, 6)] for lat, lon in route.geometry],
             "maneuvers": [{"kind": m.kind, "atIndex": m.at_index,
                            "distanceToNextM": round(m.distance_to_next_m), "street": m.street}
                           for m in route.maneuvers],
-            "metrics": metrics, "diff": diff}
+            "metrics": metrics, "diff": diff, "edges": edges_to_list(edges)}
 
 
 def metrics_to_dict(m):
     return {"steps": m.steps, "climbM": round(m.climb_m, 1) if m.climb_m is not None else None,
+            "maxGradePct": round(m.max_grade_pct, 1) if m.max_grade_pct is not None else None,
             "litRatio": round(m.lit_ratio, 2) if m.lit_ratio is not None else None,
             "unsignalizedCrossings": m.unsignalized_crossings,
-            "signalCrossings": m.signal_crossings, "unknownCrossings": m.unknown_crossings}
+            "signalCrossings": m.signal_crossings, "unknownCrossings": m.unknown_crossings,
+            "cameras": m.cameras, "policeNearby": m.police_nearby,
+            "stores": m.stores,
+            "shopRatio": round(m.shop_ratio, 2) if m.shop_ratio is not None else None,
+            "quietRatio": round(m.quiet_ratio, 2) if m.quiet_ratio is not None else None,
+            "mainRoadRatio": round(m.main_road_ratio, 2) if m.main_road_ratio is not None else None}
 
 
 async def plan_routes(req: RoutesRequest, engine: RoutingEngine, now: datetime, measure=None) -> dict:
@@ -99,6 +132,9 @@ async def plan_routes(req: RoutesRequest, engine: RoutingEngine, now: datetime, 
     def serialize(route, candidate, recommended, reasons, metrics, diff=None):
         return route_to_dict(route, candidate, recommended, reasons, metrics_to_dict(metrics), diff)
 
+    if req.mode:
+        return await plan_mode(req, engine, origin, dest, period, simulated, measure)
+
     if req.candidate:
         result = (await asyncio.gather(calculate(req.candidate), return_exceptions=True))[0]
         route, metrics = choose(req.candidate, checked(result))
@@ -135,3 +171,30 @@ async def plan_routes(req: RoutesRequest, engine: RoutingEngine, now: datetime, 
     return {"context": {"audience": req.audience, "period": period, "simulated": simulated},
             "routes": output, "notes": notes,
             "sources": route_sources()}
+
+
+async def plan_mode(req: RoutesRequest, engine: RoutingEngine, origin, dest, period, simulated, measure) -> dict:
+    """使用者選的路線模式。routes[0] 是推薦的路；和最快路線不同時，routes[1] 是最快路線給使用者比較。"""
+    try:
+        result = await route_modes.plan(engine, origin, dest, req.mode, req.audience, period == "night", measure,
+                                        quick=req.quick)
+    except RouteNotFound:
+        raise ApiError("ROUTE_NOT_FOUND", 404) from None
+    except Exception as exc:
+        logger.error("路線引擎錯誤類型: %s", type(exc).__name__)
+        raise ApiError("ROUTING_UNAVAILABLE", 503) from None
+    fast = result.fastest
+    notes = []
+    if result.chosen is fast:
+        output = [route_to_dict(fast.route, "fastest", True, ["fastest"], metrics_to_dict(fast.metrics), None, fast.edges)]
+        if req.mode != "fast":
+            notes.append("no_better_route")
+    else:
+        best = result.chosen
+        output = [route_to_dict(best.route, req.mode, True, result.reasons, metrics_to_dict(best.metrics), result.diff, best.edges),
+                  route_to_dict(fast.route, "fastest", False, ["fastest"], metrics_to_dict(fast.metrics), None, fast.edges)]
+    if simulated:
+        notes.append("simulated_night")
+    return {"context": {"audience": req.audience, "period": period, "simulated": simulated,
+                        "mode": req.mode, "maxTimeRatio": route_modes.MAX_TIME_RATIO},
+            "routes": output, "notes": notes, "sources": route_sources()}
