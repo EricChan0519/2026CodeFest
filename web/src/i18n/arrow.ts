@@ -31,6 +31,9 @@ export interface ArrowStrings {
   compass: Record<CompassKey, string>
   howTitle: string
   walkThere: string
+  /** 「怎麼去」的選項名稱：走路、公車 */
+  howWalk: string
+  howBus: string
   /** {min} */
   aboutMin: string
   busLoading: string
@@ -113,6 +116,8 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     compass: { N: '北', NE: '東北', E: '東', SE: '東南', S: '南', SW: '西南', W: '西', NW: '西北' },
     howTitle: '怎麼去？',
     walkThere: '走路過去',
+    howWalk: '走路',
+    howBus: '公車',
     aboutMin: '約 {min} 分鐘',
     busLoading: '正在找可以搭的公車…',
     busNotWorth: '搭公車不會比較快，走過去就好',
@@ -187,6 +192,8 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     compass: { N: 'north', NE: 'northeast', E: 'east', SE: 'southeast', S: 'south', SW: 'southwest', W: 'west', NW: 'northwest' },
     howTitle: 'How to get there?',
     walkThere: 'Walk there',
+    howWalk: 'Walk',
+    howBus: 'Bus',
     aboutMin: 'About {min} min',
     busLoading: 'Looking for buses…',
     busNotWorth: 'A bus is not faster. Walking is best',
@@ -261,6 +268,8 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     compass: { N: 'เหนือ', NE: 'ตะวันออกเฉียงเหนือ', E: 'ตะวันออก', SE: 'ตะวันออกเฉียงใต้', S: 'ใต้', SW: 'ตะวันตกเฉียงใต้', W: 'ตะวันตก', NW: 'ตะวันตกเฉียงเหนือ' },
     howTitle: 'ไปอย่างไร?',
     walkThere: 'เดินไป',
+    howWalk: 'เดิน',
+    howBus: 'รถเมล์',
     aboutMin: 'ประมาณ {min} นาที',
     busLoading: 'กำลังหารถเมล์…',
     busNotWorth: 'นั่งรถเมล์ไม่เร็วกว่า เดินไปดีกว่า',
@@ -335,6 +344,8 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     compass: { N: 'bắc', NE: 'đông bắc', E: 'đông', SE: 'đông nam', S: 'nam', SW: 'tây nam', W: 'tây', NW: 'tây bắc' },
     howTitle: 'Đi bằng cách nào?',
     walkThere: 'Đi bộ',
+    howWalk: 'Đi bộ',
+    howBus: 'Xe buýt',
     aboutMin: 'Khoảng {min} phút',
     busLoading: 'Đang tìm xe buýt…',
     busNotWorth: 'Đi xe buýt không nhanh hơn. Nên đi bộ',
@@ -409,6 +420,8 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     compass: { N: 'utara', NE: 'timur laut', E: 'timur', SE: 'tenggara', S: 'selatan', SW: 'barat daya', W: 'barat', NW: 'barat laut' },
     howTitle: 'Naik apa ke sana?',
     walkThere: 'Jalan kaki',
+    howWalk: 'Jalan kaki',
+    howBus: 'Bus',
     aboutMin: 'Sekitar {min} menit',
     busLoading: 'Mencari bus…',
     busNotWorth: 'Naik bus tidak lebih cepat. Jalan kaki saja',
@@ -483,6 +496,8 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     compass: { N: 'ខាងជើង', NE: 'ឦសាន', E: 'ខាងកើត', SE: 'អាគ្នេយ៍', S: 'ខាងត្បូង', SW: 'និរតី', W: 'ខាងលិច', NW: 'ពាយព្យ' },
     howTitle: 'តើទៅដោយរបៀបណា?',
     walkThere: 'ដើរទៅ',
+    howWalk: 'ដើរ',
+    howBus: 'ឡានក្រុង',
     aboutMin: 'ប្រហែល {min} នាទី',
     busLoading: 'កំពុងរកឡានក្រុង…',
     busNotWorth: 'ជិះឡានក្រុងមិនលឿនជាងទេ ដើរទៅល្អជាង',
@@ -557,6 +572,8 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     compass: { N: '北', NE: '北東', E: '東', SE: '南東', S: '南', SW: '南西', W: '西', NW: '北西' },
     howTitle: 'どうやって行きますか？',
     walkThere: '歩いて行く',
+    howWalk: '徒歩',
+    howBus: 'バス',
     aboutMin: '約 {min} 分',
     busLoading: 'バスを探しています…',
     busNotWorth: 'バスは速くなりません。歩くのがおすすめです',
@@ -631,6 +648,8 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     compass: { N: '북', NE: '북동', E: '동', SE: '남동', S: '남', SW: '남서', W: '서', NW: '북서' },
     howTitle: '어떻게 갈까요?',
     walkThere: '걸어서 가기',
+    howWalk: '도보',
+    howBus: '버스',
     aboutMin: '약 {min}분',
     busLoading: '탈 수 있는 버스를 찾는 중…',
     busNotWorth: '버스가 더 빠르지 않아요. 걸어가는 게 좋아요',

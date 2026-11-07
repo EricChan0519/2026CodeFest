@@ -41,6 +41,8 @@ export function useDestinationSearch(locator: Locator) {
   const stops = shallowRef<Station[]>([])
   /** 搜尋過了（區分「還沒搜尋」和「沒有結果」） */
   const searched = ref(false)
+  /** 目前結果是用哪個字串搜尋的（搜尋欄可能已經改了字） */
+  const searchedQuery = ref('')
   const errors = ref<SearchErrorCode[]>([])
   /** 結果是依使用者位置排的（否則是臺北車站） */
   const nearUser = ref(false)
@@ -69,6 +71,7 @@ export function useDestinationSearch(locator: Locator) {
     places.value = mergePlaces(l.q, [landmarks, l.osm.filter((p) => osmMatches(l.q, p)).map(fromOsm)], at)
     nearUser.value = isUser
     near.value = at
+    searchedQuery.value = l.q
     return landOk
   }
 
@@ -122,6 +125,7 @@ export function useDestinationSearch(locator: Locator) {
     last = null
     searching.value = false
     searched.value = false
+    searchedQuery.value = ''
     errors.value = []
     places.value = []
     pois.value = []
@@ -174,6 +178,7 @@ export function useDestinationSearch(locator: Locator) {
   return {
     searching,
     searched,
+    searchedQuery,
     errors,
     places,
     pois,
