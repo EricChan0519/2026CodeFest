@@ -5,6 +5,8 @@ export const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', name: 'home', component: HomeView },
+    // P7 抵達：路線資訊由 arrivalLocation() 帶入，網址不放座標
+    { path: '/arrived', name: 'arrived', component: () => import('./views/ArrivedView.vue') },
     // NAV 實驗頁：手機上測羅盤、定位與導航（不在主流程內）
     { path: '/lab/sensors', name: 'lab-sensors', component: () => import('./views/lab/SensorLab.vue') },
     { path: '/lab/nav', name: 'lab-nav', component: () => import('./views/lab/NavLab.vue') },
