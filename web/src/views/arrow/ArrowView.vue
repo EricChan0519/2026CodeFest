@@ -38,6 +38,8 @@ import { bestCandidates, busCandidates, comparable, listOptions, metroCandidates
 import type { Comparable, HowStatus } from '@/lib/howOptions'
 import type { BusPlan } from '@/lib/transferBus'
 import type { TransitPlan } from '@/lib/transitPlan'
+import { planSteps } from '@/lib/planSteps'
+import type { Ride } from '@/nav/journey'
 import type { Cue } from '@/nav/announcer'
 import { easeRotation } from '@/nav/arrow'
 import { NAV_CONFIG } from '@/nav/config'
@@ -147,7 +149,6 @@ const simulate = params.has('night') ? ('night' as const) : null
 const S = computed(() => ARROW_STRINGS[lang.value])
 const R = computed(() => ROUTE_MODE_STRINGS[lang.value])
 const A = computed(() => ARRIVAL_STRINGS[lang.value])
-const langLabel = computed(() => LANG_ITEMS.find((l) => l.id === lang.value)?.label ?? '')
 
 // ── 位置、搜尋、行程 ───────────────────────────────
 const locator = createLocator()
@@ -597,11 +598,19 @@ async function pickResult(i: number) {
 // ── 怎麼去／要搭哪一班 ───────────────────────────────
 type HowKind = 'best' | 'walk' | 'bus' | 'metro'
 type PlanKind = 'walk' | 'bus' | 'metro' | 'mixed'
+interface PlanStepRow {
+  kind: 'walk' | 'bus' | 'metro'
+  text: string
+  /** 捷運路線的代表色 */
+  color?: string
+}
 /** 白色方框裡的一條路線 */
 interface PlanItem {
   key: string
   title: string
   detail: string
+  /** 一步一步條列：走到哪、搭什麼坐幾站到哪 */
+  steps?: PlanStepRow[]
   right: string
   kind: PlanKind
   /** null：現在搭不到（末班車已過），反灰不能選 */
@@ -644,17 +653,39 @@ const aboutMin = (sec: number) => fill(S.value.aboutMin, { min: Math.max(1, Math
 function rideNames(names: string[]): string {
   return names.length > 1 ? `${names[0]} → ${fill(S.value.transferAt, { route: names.slice(1).join(' → ') })}` : names[0]!
 }
+/** 車站名稱：捷運加「站」和出口（台電大樓站 2） */
+function stationName(r: Ride, end: 'board' | 'alight'): string {
+  const st = end === 'board' ? r.board : r.alight
+  if (r.mode !== 'metro') return nameOf(st.name)
+  const name = fill(S.value.metroStation, { stop: nameOf(st.name) })
+  const exit = end === 'board' ? r.boardExit : r.alightExit
+  return exit ? `${name} ${exit}` : name
+}
+/** 路線方框的步驟條列 */
+function stepRows(rides: Ride[], from: LatLon, t: { name: string; point: LatLon }): PlanStepRow[] {
+  const s = S.value
+  return planSteps(rides, from, t.point).map<PlanStepRow>((st) => {
+    if (st.kind === 'walk') {
+      return { kind: 'walk', text: fill(s.stepWalk, { dist: listDistance(st.m), place: st.to === 'dest' ? t.name : stationName(st.ride, 'board') }) }
+    }
+    const r = st.ride
+    const dir = r.route.headsign.zh ? `（${nameOf(r.route.headsign)}）` : ''
+    let text = fill(s.stepRide, { route: nameOf(r.route.routeName), dir, n: st.n, stop: stationName(r, 'alight') })
+    if (r.mode === 'metro' && r.alightExit) text += ` · ${fill(ARRIVAL_STRINGS[lang.value].exitVia, { exit: r.alightExit })}`
+    return { kind: r.mode, text, color: r.lineColor }
+  })
+}
 function transitItem(p: TransitPlan, t: { name: string; point: LatLon }): PlanItem {
   const first = p.rides[0]!
   const last = p.rides[p.rides.length - 1]!
   const modes = new Set(p.rides.map((r) => r.mode))
   const ok = p.service === 'ok'
+  const from = search.transitFrom.value
   return {
     key: p.rides.map((r) => `${r.mode}:${r.route.routeName.zh}:${r.board.stationUid}`).join('>'),
     title: rideNames(p.rides.map((r) => nameOf(r.route.routeName))),
-    detail:
-      fill(S.value.transitDetail, { stop: nameOf(first.board.name), alight: nameOf(last.alight.name) }) +
-      (first.route.headsign.zh ? ` · ${nameOf(first.route.headsign)}` : ''),
+    detail: from ? '' : fill(S.value.transitDetail, { stop: nameOf(first.board.name), alight: nameOf(last.alight.name) }),
+    steps: from ? stepRows(p.rides, from, t) : undefined,
     right: aboutMin(p.durationS),
     kind: modes.size > 1 ? 'mixed' : first.mode,
     choice: ok ? { kind: 'transit', plan: p, name: t.name, point: t.point } : null,
@@ -666,10 +697,12 @@ function transitItem(p: TransitPlan, t: { name: string; point: LatLon }): PlanIt
 function busItem(p: BusPlan, t: { name: string; point: LatLon }): PlanItem {
   const sec = Math.round(estimateBusMin(p) * 60)
   const last = p.rides[p.rides.length - 1]!
+  const from = search.transitFrom.value
   return {
     key: p.rides.map((r) => `${r.route.routeName.zh}-${r.route.direction}`).join('>'),
     title: rideNames(p.rides.map((r) => nameOf(r.route.routeName))),
-    detail: fill(S.value.busDetail, { walk: listDistance(p.walkToBoardM), n: p.stopCount, stop: nameOf(last.alight.name) }),
+    detail: from ? '' : fill(S.value.busDetail, { walk: listDistance(p.walkToBoardM), n: p.stopCount, stop: nameOf(last.alight.name) }),
+    steps: from ? stepRows(p.rides, from, t) : undefined,
     right: aboutMin(sec),
     kind: 'bus',
     choice: { kind: 'bus', plan: p, name: t.name, point: t.point },
@@ -1376,7 +1409,7 @@ onBeforeUnmount(() => {
               <h2 id="h-search" class="step-h">{{ S.searchTitle }}</h2>
               <button type="button" class="pill" :aria-label="S.change" @click="changeSettings">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.6 2.6 2.6 15.4 0 18M12 3c-2.6 2.6-2.6 15.4 0 18" /></svg>
-                <span>{{ langLabel }} · {{ S.ages[age] }} · {{ R.modes[mode] }}</span>
+                <span lang="zh-TW">語言/Language</span>
               </button>
             </div>
             <form class="search" role="search" @submit.prevent="submitSearch">
@@ -1560,21 +1593,27 @@ onBeforeUnmount(() => {
                 :aria-disabled="!it.choice || undefined"
                 @click="pickPlan(it)"
               >
-                <span class="plan-ico" :class="`p-${it.kind}`" aria-hidden="true">
-                  <svg v-if="it.kind === 'metro'" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="14" rx="4" /><path d="M6 11h12M9.5 7h5M8 21l2-4M16 21l-2-4" /><circle cx="9" cy="14" r=".8" /><circle cx="15" cy="14" r=".8" /></svg>
-                  <svg v-else-if="it.kind === 'bus'" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="13" rx="2.5" /><path d="M6 11h12M9 16v3M15 16v3M9 7h6" /></svg>
-                  <svg v-else-if="it.kind === 'mixed'" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.2" /><circle cx="18" cy="6" r="2.2" /><path d="M8.2 18H15a3.5 3.5 0 0 0 0-7H9a3.5 3.5 0 0 1 0-7h6.8" /></svg>
-                  <svg v-else viewBox="0 0 24 24"><circle cx="13" cy="4.5" r="1.8" /><path d="M10 21l2-6 3 3v3M9 12l1.5-4.5L14 9l2 3M12 15l-1.5-7.5" /></svg>
-                </span>
-                <span class="plan-text">
+                <span class="plan-top">
+                  <span class="plan-ico" :class="`p-${it.kind}`" aria-hidden="true">
+                    <svg v-if="it.kind === 'metro'" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="14" rx="4" /><path d="M6 11h12M9.5 7h5M8 21l2-4M16 21l-2-4" /><circle cx="9" cy="14" r=".8" /><circle cx="15" cy="14" r=".8" /></svg>
+                    <svg v-else-if="it.kind === 'bus'" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="13" rx="2.5" /><path d="M6 11h12M9 16v3M15 16v3M9 7h6" /></svg>
+                    <svg v-else-if="it.kind === 'mixed'" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.2" /><circle cx="18" cy="6" r="2.2" /><path d="M8.2 18H15a3.5 3.5 0 0 0 0-7H9a3.5 3.5 0 0 1 0-7h6.8" /></svg>
+                    <svg v-else viewBox="0 0 24 24"><circle cx="13" cy="4.5" r="1.8" /><path d="M10 21l2-6 3 3v3M9 12l1.5-4.5L14 9l2 3M12 15l-1.5-7.5" /></svg>
+                  </span>
                   <span class="plan-title">{{ it.title }}</span>
-                  <span v-if="it.detail" class="plan-detail">{{ it.detail }}</span>
-                  <span v-if="it.note" class="plan-note">{{ it.note }}</span>
+                  <span class="plan-right">
+                    <span v-if="it.recommended" class="plan-rec">{{ S.recommended }}</span>
+                    <span v-if="it.right">{{ it.right }}</span>
+                  </span>
                 </span>
-                <span class="plan-right">
-                  <span v-if="it.recommended" class="plan-rec">{{ S.recommended }}</span>
-                  <span v-if="it.right">{{ it.right }}</span>
+                <span v-if="it.detail" class="plan-detail">{{ it.detail }}</span>
+                <span v-if="it.steps?.length" class="plan-steps" role="list">
+                  <span v-for="(st, k) in it.steps" :key="k" class="plan-step" :class="`s-${st.kind}`" role="listitem">
+                    <span class="step-dot" :style="st.color ? { background: st.color } : undefined" aria-hidden="true" />
+                    <span class="step-text">{{ st.text }}</span>
+                  </span>
                 </span>
+                <span v-if="it.note" class="plan-note">{{ it.note }}</span>
               </button>
             </li>
           </ul>
@@ -2161,8 +2200,9 @@ onBeforeUnmount(() => {
 .plan-item {
   width: 100%;
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
   padding: 12px 14px;
   border: 1.5px solid #dfe8ea;
   border-radius: 16px;
@@ -2187,6 +2227,7 @@ onBeforeUnmount(() => {
 .plan-item.off .plan-ico,
 .plan-item.off .plan-title,
 .plan-item.off .plan-detail,
+.plan-item.off .plan-steps,
 .plan-item.off .plan-right {
   opacity: 0.5;
 }
@@ -2218,14 +2259,14 @@ onBeforeUnmount(() => {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.plan-text {
-  flex: 1;
-  min-width: 0;
+.plan-top {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  align-items: center;
+  gap: 12px;
 }
 .plan-title {
+  flex: 1;
+  min-width: 0;
   font-size: calc(17px * var(--fs));
   font-weight: 800;
   line-height: 1.3;
@@ -2250,6 +2291,53 @@ onBeforeUnmount(() => {
   font-weight: 700;
   color: #3b5158;
   white-space: nowrap;
+}
+/* 步驟條列：左邊一條線串起每一步，走路是灰色虛線、公車藍綠、捷運用路線色 */
+.plan-steps {
+  display: flex;
+  flex-direction: column;
+  padding-left: 4px;
+}
+.plan-step {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 3px 0 7px;
+}
+.plan-step:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 15px;
+  bottom: -3px;
+  border-left: 2px solid #c9d8db;
+}
+.plan-step.s-walk:not(:last-child)::before {
+  border-left-style: dotted;
+}
+.step-dot {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: #1f7480;
+}
+.plan-step.s-walk .step-dot {
+  background: #fff;
+  border: 2px solid #8fa3a8;
+}
+.step-text {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(15px * var(--fs));
+  line-height: 1.4;
+  color: #2c4148;
+}
+.plan-step:not(.s-walk) .step-text {
+  font-weight: 700;
+  color: #10242b;
 }
 .plan-rec {
   padding: 2px 8px;

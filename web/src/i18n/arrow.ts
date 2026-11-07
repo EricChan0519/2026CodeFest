@@ -42,6 +42,12 @@ export interface ArrowStrings {
   /** 路線方框：依路線模式最合適的那條 */
   recommended: string
   close: string
+  /** 路線方框的步驟：{dist} 距離、{place} 走到哪裡 */
+  stepWalk: string
+  /** {route} 路線、{dir} 往哪裡（可能是空的）、{n} 站數、{stop} 下車站 */
+  stepRide: string
+  /** 捷運站名，{stop} 是站名（台電大樓 → 台電大樓站） */
+  metroStation: string
   /** {min} */
   aboutMin: string
   busLoading: string
@@ -145,6 +151,9 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     howBest: '最佳',
     recommended: '推薦',
     close: '關閉',
+    stepWalk: '走 {dist}到「{place}」',
+    stepRide: '搭 {route}{dir}，坐 {n} 站到「{stop}」',
+    metroStation: '{stop}站',
     aboutMin: '約 {min} 分鐘',
     busLoading: '正在找可以搭的公車…',
     busNotWorth: '搭公車不會比較快，走過去就好',
@@ -235,6 +244,9 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     howBest: 'Best',
     recommended: 'Recommended',
     close: 'Close',
+    stepWalk: 'Walk {dist} to {place}',
+    stepRide: 'Take {route}{dir}, {n} stops to {stop}',
+    metroStation: '{stop} Station',
     aboutMin: 'About {min} min',
     busLoading: 'Looking for buses…',
     busNotWorth: 'A bus is not faster. Walking is best',
@@ -325,6 +337,9 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     howBest: 'ดีที่สุด',
     recommended: 'แนะนำ',
     close: 'ปิด',
+    stepWalk: 'เดิน {dist} ไปที่ {place}',
+    stepRide: 'นั่ง {route}{dir} {n} ป้าย ถึง {stop}',
+    metroStation: 'สถานี{stop}',
     aboutMin: 'ประมาณ {min} นาที',
     busLoading: 'กำลังหารถเมล์…',
     busNotWorth: 'นั่งรถเมล์ไม่เร็วกว่า เดินไปดีกว่า',
@@ -415,6 +430,9 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     howBest: 'Tốt nhất',
     recommended: 'Đề xuất',
     close: 'Đóng',
+    stepWalk: 'Đi bộ {dist} đến {place}',
+    stepRide: 'Đi {route}{dir}, {n} trạm đến {stop}',
+    metroStation: 'Ga {stop}',
     aboutMin: 'Khoảng {min} phút',
     busLoading: 'Đang tìm xe buýt…',
     busNotWorth: 'Đi xe buýt không nhanh hơn. Nên đi bộ',
@@ -505,6 +523,9 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     howBest: 'Terbaik',
     recommended: 'Disarankan',
     close: 'Tutup',
+    stepWalk: 'Jalan {dist} ke {place}',
+    stepRide: 'Naik {route}{dir}, {n} halte ke {stop}',
+    metroStation: 'Stasiun {stop}',
     aboutMin: 'Sekitar {min} menit',
     busLoading: 'Mencari bus…',
     busNotWorth: 'Naik bus tidak lebih cepat. Jalan kaki saja',
@@ -595,6 +616,9 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     howBest: 'ល្អបំផុត',
     recommended: 'ណែនាំ',
     close: 'បិទ',
+    stepWalk: 'ដើរ {dist} ទៅ {place}',
+    stepRide: 'ជិះ {route}{dir} {n} ចំណត ដល់ {stop}',
+    metroStation: 'ស្ថានីយ {stop}',
     aboutMin: 'ប្រហែល {min} នាទី',
     busLoading: 'កំពុងរកឡានក្រុង…',
     busNotWorth: 'ជិះឡានក្រុងមិនលឿនជាងទេ ដើរទៅល្អជាង',
@@ -685,6 +709,9 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     howBest: 'ベスト',
     recommended: 'おすすめ',
     close: '閉じる',
+    stepWalk: '{place}まで{dist}歩く',
+    stepRide: '{route}{dir}に乗り、{n}駅先の{stop}まで',
+    metroStation: '{stop}駅',
     aboutMin: '約 {min} 分',
     busLoading: 'バスを探しています…',
     busNotWorth: 'バスは速くなりません。歩くのがおすすめです',
@@ -775,6 +802,9 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
     howBest: '최적',
     recommended: '추천',
     close: '닫기',
+    stepWalk: '{place}까지 {dist} 걷기',
+    stepRide: '{route}{dir} 타고 {n}정거장, {stop}까지',
+    metroStation: '{stop}역',
     aboutMin: '약 {min}분',
     busLoading: '탈 수 있는 버스를 찾는 중…',
     busNotWorth: '버스가 더 빠르지 않아요. 걸어가는 게 좋아요',
