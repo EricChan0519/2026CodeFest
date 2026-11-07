@@ -268,6 +268,18 @@ def build_metro_index(*, stations, lines, station_of_line, station_of_route, s2s
                 first_s.append(min(firsts) if firsts else None)
                 last_s.append(max(lasts) if lasts else None)
             p["firstS"], p["lastS"] = first_s, last_s
+        # 區間車、支線的終點 TDX 常沒有自己的首末班：借同一條線、同方向（下一站也在後面）的方向
+        for p in patterns:
+            for i, (sid, nxt) in enumerate(zip(p["stops"], p["stops"][1:])):
+                if p["lastS"][i] is not None:
+                    continue
+                for q in patterns:
+                    if q is p or q["lineId"] != p["lineId"] or sid not in q["stops"] or nxt not in q["stops"]:
+                        continue
+                    j = q["stops"].index(sid)
+                    if j < q["stops"].index(nxt) and q["lastS"][j] is not None:
+                        p["firstS"][i], p["lastS"][i] = q["firstS"][j], q["lastS"][j]
+                        break
     else:
         defaults.add("serviceHours")
 

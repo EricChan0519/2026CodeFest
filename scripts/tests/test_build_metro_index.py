@@ -210,3 +210,20 @@ def test_without_first_last_data_times_are_omitted():
     data = build()
     assert all("lastS" not in p for p in data["patterns"])
     assert "serviceHours" in data["defaults"]
+
+
+def test_short_turn_patterns_borrow_times_from_the_full_line():
+    # 區間車（西門→台北車站）TDX 沒有自己的首末班，借同方向全線（往善導寺）的
+    sor = [
+        {"RouteID": "BL-1", "LineID": "BL", "Direction": 0, "Stations": [
+            {"Sequence": 1, "StationID": "BL11"}, {"Sequence": 2, "StationID": "BL12"}, {"Sequence": 3, "StationID": "BL13"}]},
+        {"RouteID": "BL-2", "LineID": "BL", "Direction": 0, "Stations": [
+            {"Sequence": 1, "StationID": "BL11"}, {"Sequence": 2, "StationID": "BL12"}]},
+    ]
+    fl = [
+        {"LineID": "BL", "StationID": "BL11", "DestinationStaionID": "BL13", "FirstTrainTime": "06:02", "LastTrainTime": "23:50"},
+        {"LineID": "BL", "StationID": "BL12", "DestinationStaionID": "BL13", "FirstTrainTime": "06:04", "LastTrainTime": "23:52"},
+    ]
+    short = [p for p in by_line(build(station_of_route=sor, first_last=fl), "BL") if p["stops"] == ["BL11", "BL12"]][0]
+    assert short["firstS"] == [6 * 3600 + 120, None]
+    assert short["lastS"] == [23 * 3600 + 50 * 60, None]

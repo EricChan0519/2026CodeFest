@@ -110,3 +110,13 @@ def test_patterns_get_service_windows_when_schedule_is_given():
     result = builder._build(load("stop_of_route"), load("stop"), load("route"), "x", schedule)[0]
     with_service = [p for p in result["patterns"] if "service" in p]
     assert with_service and with_service[0]["service"]["weekday"] == [6 * 3600, 22 * 3600]
+
+
+def test_missing_return_direction_borrows_the_other_direction():
+    # TDX 很多路線只給去程班表：回程借去程的首末班（估計）
+    w = {("37", 0): {"weekday": [5 * 3600, 22 * 3600], "weekend": None},
+         ("9", 1): {"weekday": None, "weekend": None}}
+    assert builder.window_for(w, "37", 1) == {"weekday": [5 * 3600, 22 * 3600], "weekend": None}
+    assert builder.window_for(w, "37", 0) == {"weekday": [5 * 3600, 22 * 3600], "weekend": None}
+    assert builder.window_for(w, "9", 1) is None
+    assert builder.window_for(w, "9", 0) is None

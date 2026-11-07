@@ -72,6 +72,15 @@ def service_windows(schedule) -> dict:
     return acc
 
 
+def window_for(windows, name, direction):
+    """這個路線方向的首末班；TDX 很多路線只給去程班表，回程沒有時借另一個方向的（估計）。都沒有回傳 None。"""
+    for d in (direction, 1 - direction if direction in (0, 1) else None):
+        w = windows.get((name, d))
+        if w and (w["weekday"] or w["weekend"]):
+            return w
+    return None
+
+
 def _build(stop_of_route, stops, routes, updated_at, schedule=None):
     stop_lookup = {s.get("StopUID"): s for s in stops}
     route_lookup = {r.get("RouteUID"): r for r in routes}
@@ -130,8 +139,8 @@ def _build(stop_of_route, stops, routes, updated_at, schedule=None):
     if schedule:
         windows = service_windows(schedule)
         for p in patterns:
-            w = windows.get((p["routeName"]["zh"], p["direction"]))
-            if w and (w["weekday"] or w["weekend"]):
+            w = window_for(windows, p["routeName"]["zh"], p["direction"])
+            if w:
                 p["service"] = w
     return {"updatedAt": updated_at, "stations": stations, "patterns": patterns}, excluded, missing
 
