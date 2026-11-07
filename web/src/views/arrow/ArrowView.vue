@@ -240,9 +240,9 @@ function pointPose(s: StepName, i: number, r = pointAngle(cur.r)): Pose {
     const half = Math.min(b.height, l.height) / 2
     cy = Math.min(Math.max(cy, l.top + half), l.bottom - half)
   }
-  const box = pointBox()
-  const cx = b.left - stepDx(s) - POINT_GAP - (box * K_POINT) / 2
-  return { x: cx - size / 2, y: cy - size / 2, s: box / size, r, k: K_POINT }
+  const pb = pointBox()
+  const cx = b.left - stepDx(s) - POINT_GAP - (pb * K_POINT) / 2
+  return { x: cx - size / 2, y: cy - size / 2, s: pb / size, r, k: K_POINT }
 }
 
 /** 步驟由左滑入，箭頭同時滑到第一列外側（搜尋步驟是搜尋欄） */
