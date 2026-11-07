@@ -1,0 +1,196 @@
+<!doctype html>
+<!--
+  城市通 雙向溝通測試頁（賽前準備用，與題目無關）
+  用途：
+    1. 部署到 Firebase Hosting → 填進 App 的 destinationUrl → 在手機上逐一測 9 個內建 Handler
+    2.「前往網址」：在同一個 WebView 跳到 preview channel / tunnel 網址，bridge 照樣可用，不用重 build App
+    3.「API 測試」：確認後端 / Hosting rewrite / CORS 通不通
+  部署：
+    mkdir bridge-test-site && cp index.html bridge-test-site/
+    cd bridge-test-site && firebase init hosting（public 填 .，SPA 選 No）&& firebase deploy --only hosting
+  協定見 docs/03-two-way-communication.md
+-->
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>雙向溝通測試</title>
+<style>
+  :root {
+    --primary-500: #5AB4C5; --primary-50: #EDF8FA; --primary-700: #356C77;
+    --secondary-500: #F5BA4B; --gray-50: #F1F3F4; --gray-200: #CAD1D5;
+    --gray-500: #738995; --gray-900: #171B1D; --warn: #E5464B;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; background: #fff; color: var(--gray-900);
+    font: 14px/1.5 "PingFang TC", Roboto, system-ui, sans-serif;
+  }
+  .status { padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; font-weight: 600; }
+  .status.ok { background: var(--primary-50); color: var(--primary-700); }
+  .status.no { background: #FDECEC; color: var(--warn); }
+  h2 { font-size: 16px; margin: 20px 0 8px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  button {
+    min-height: 48px; padding: 8px; border: 0; border-radius: 8px;
+    background: var(--primary-500); color: #fff; font: inherit; font-weight: 600;
+  }
+  button.secondary { background: var(--secondary-500); color: var(--gray-900); }
+  button:active { opacity: .8; }
+  input, textarea {
+    width: 100%; min-height: 48px; padding: 10px; font: inherit;
+    border: 1px solid var(--gray-200); border-radius: 8px;
+  }
+  .row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .row input { flex: 1; }
+  .row button { flex: 0 0 auto; padding: 8px 16px; }
+  #log {
+    white-space: pre-wrap; word-break: break-all; background: var(--gray-50);
+    border-radius: 8px; padding: 12px; min-height: 120px; font: 12px/1.5 ui-monospace, monospace;
+  }
+  .meta { color: var(--gray-500); font-size: 12px; }
+</style>
+</head>
+<body>
+  <div id="status" class="status"></div>
+  <div class="meta" id="meta"></div>
+
+  <h2>內建 Handler</h2>
+  <div class="grid">
+    <button data-req="userinfo">userinfo</button>
+    <button data-req="location">location</button>
+    <button data-req="deviceinfo">deviceinfo</button>
+    <button data-req="qr_code_scan" data-timeout="120000">qr_code_scan</button>
+    <button id="btn-notify">notify</button>
+    <button id="btn-open-link">open_link</button>
+    <button id="btn-launch-map">launch_map</button>
+    <button id="btn-phone">phone_call</button>
+    <button id="btn-1999" class="secondary">1999agree</button>
+  </div>
+
+  <h2>自訂 Handler</h2>
+  <div class="row"><input id="custom-name" placeholder="name，例如 greeting" value="greeting"></div>
+  <div class="row">
+    <input id="custom-data" placeholder='data（JSON），例如 "市民" 或 {"a":1}' value='"市民"'>
+    <button id="btn-custom">送出</button>
+  </div>
+
+  <h2>前往網址（bridge 會跟著帶過去）</h2>
+  <div class="row">
+    <input id="goto-url" type="url" placeholder="https://townpass-hackathon-2026--xxx.web.app">
+    <button id="btn-goto">前往</button>
+  </div>
+
+  <h2>API 測試</h2>
+  <div class="row">
+    <input id="api-url" placeholder="/api/health 或 https://api-xxx.asia-east1.run.app/health" value="/api/health">
+    <button id="btn-api">GET</button>
+  </div>
+
+  <h2>紀錄 <button id="btn-clear" class="secondary" style="min-height:32px;padding:4px 12px;float:right">清除</button></h2>
+  <div id="log"></div>
+
+<script>
+  const fo = window.flutterObject;
+  const $ = (id) => document.getElementById(id);
+  const logEl = $('log');
+
+  function log(title, obj) {
+    const time = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+    const body = obj === undefined ? '' : '\n' + (typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2));
+    logEl.textContent = `[${time}] ${title}${body}\n\n` + logEl.textContent;
+  }
+
+  // 個資只顯示部分，避免投影或截圖時外流
+  function mask(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return data;
+    const copy = { ...data };
+    for (const k of ['idNo', 'phoneNo', 'email']) {
+      if (typeof copy[k] === 'string') copy[k] = copy[k].slice(0, 3) + '***';
+    }
+    return copy;
+  }
+
+  const status = $('status');
+  if (fo) {
+    status.className = 'status ok';
+    status.textContent = '✅ 在城市通 App 內（flutterObject 存在）';
+  } else {
+    status.className = 'status no';
+    status.textContent = '❌ 一般瀏覽器：沒有 flutterObject，按鈕只會記錄、不會有回覆';
+  }
+  $('meta').textContent = `origin: ${location.origin}　UA: ${navigator.userAgent}`;
+
+  // 所有回覆都走同一個 message 事件 → 全部記下來
+  fo?.addEventListener('message', (e) => {
+    try {
+      const { name, data } = JSON.parse(e.data);
+      log(`⬅ ${name}`, name === 'userinfo' ? mask(data) : data);
+    } catch {
+      log('⬅ 無法解析的回覆', e.data);
+    }
+  });
+
+  function send(name, data = null) {
+    log(`➡ ${name}`, data);
+    // data 直接放物件，不要再 JSON.stringify（App 只 decode 外層一次）
+    fo?.postMessage(JSON.stringify({ name, data }));
+  }
+
+  // 等同名回覆；逾時代表 Handler 不回覆或不存在
+  function request(name, data = null, timeoutMs = 15000) {
+    if (!fo) { send(name, data); return; }
+    const timer = setTimeout(() => log(`⏱ ${name} ${timeoutMs / 1000}s 內沒有回覆`), timeoutMs);
+    const onMsg = (e) => {
+      try {
+        if (JSON.parse(e.data).name !== name) return;
+      } catch { return; }
+      clearTimeout(timer);
+      fo.removeEventListener('message', onMsg);
+    };
+    fo.addEventListener('message', onMsg);
+    send(name, data);
+  }
+
+  document.querySelectorAll('[data-req]').forEach((btn) => {
+    btn.addEventListener('click', () => request(btn.dataset.req, null, Number(btn.dataset.timeout) || 15000));
+  });
+
+  $('btn-notify').onclick = () => send('notify', { title: '測試通知', content: '雙向溝通正常 ' + new Date().toLocaleTimeString() });
+  $('btn-open-link').onclick = () => send('open_link', 'https://www.gov.taipei/');
+  // launch_map、phone_call 一定要傳非空字串（App 端 null 會拋例外）
+  $('btn-launch-map').onclick = () => request('launch_map', 'https://www.openstreetmap.org/?mlat=25.0375&mlon=121.5637#map=17/25.0375/121.5637');
+  $('btn-phone').onclick = () => request('phone_call', '1999');
+  $('btn-1999').onclick = () => send('1999agree', true);
+
+  $('btn-custom').onclick = () => {
+    const name = $('custom-name').value.trim();
+    let data = $('custom-data').value.trim();
+    try { data = data === '' ? null : JSON.parse(data); } catch { /* 不是 JSON 就當字串 */ }
+    if (name) request(name, data);
+  };
+
+  $('btn-goto').onclick = () => {
+    const url = $('goto-url').value.trim();
+    if (!/^https:\/\//.test(url)) { log('⚠ 只能前往 https 網址（Android 擋 http）'); return; }
+    try { localStorage.setItem('bridge-test-goto', url); } catch {}
+    location.href = url;
+  };
+  try { $('goto-url').value = localStorage.getItem('bridge-test-goto') || ''; } catch {}
+
+  $('btn-api').onclick = async () => {
+    const url = $('api-url').value.trim();
+    log(`➡ GET ${url}`);
+    try {
+      const res = await fetch(url);
+      const text = await res.text();
+      log(`⬅ HTTP ${res.status}`, text.slice(0, 500));
+    } catch (err) {
+      log('⬅ 失敗（多半是 CORS、網址錯或後端沒開）', String(err));
+    }
+  };
+
+  $('btn-clear').onclick = () => { logEl.textContent = ''; };
+</script>
+</body>
+</html>
