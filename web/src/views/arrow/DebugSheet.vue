@@ -4,14 +4,49 @@
  * 和實驗頁（/lab/nav）同一套工具：除錯地圖（點地圖瞬移）、模擬 GPS 搖桿、速度、重算失敗、手動朝向、重新定位、軌跡。
  * 地圖與搖桿只在打開時載入（Leaflet 不進主畫面的 bundle）。
  */
-import { computed, defineAsyncComponent } from 'vue'
+import { computed, defineAsyncComponent, ref } from 'vue'
 import type { Trip } from '@/trip/useTrip'
+import type { DestinationSearch } from '@/trip/useDestinationSearch'
 
 const Joystick = defineAsyncComponent(() => import('../lab/Joystick.vue'))
 const NavDebugMap = defineAsyncComponent(() => import('../lab/NavDebugMap.vue'))
 
-const props = defineProps<{ trip: Trip; canDemo: boolean }>()
-const emit = defineEmits<{ close: []; demo: [] }>()
+const props = defineProps<{ trip: Trip; search: DestinationSearch; canDemo: boolean }>()
+const emit = defineEmits<{ close: []; demo: []; timeChange: [] }>()
+
+const latitude = ref(String(props.search.debugOrigin.value?.[0] ?? 25.116056))
+const longitude = ref(String(props.search.debugOrigin.value?.[1] ?? 121.535444))
+const gpsError = ref('')
+function setOrigin() {
+  const lat = Number(latitude.value)
+  const lon = Number(longitude.value)
+  if (!latitude.value.trim() || !longitude.value.trim() || !Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+    gpsError.value = '請輸入有效的緯度與經度'
+    return
+  }
+  gpsError.value = ''
+  props.search.debugOrigin.value = [lat, lon]
+  emit('timeChange')
+}
+function clearOrigin() {
+  props.search.debugOrigin.value = null
+  gpsError.value = ''
+  emit('timeChange')
+}
+
+function setTransitTime(value: string) {
+  const date = value ? new Date(value) : null
+  if (date && Number.isNaN(date.getTime())) return
+  props.search.debugTransitTime.value = date
+  emit('timeChange')
+}
+
+const transitTimeValue = computed(() => {
+  const date = props.search.debugTransitTime.value
+  if (!date) return ''
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+  return local.toISOString().slice(0, 16)
+})
 
 const nav = props.trip.nav
 const view = computed(() => nav.view.value)
@@ -68,6 +103,20 @@ const streets = computed(() => nav.routeInfo.value?.maneuvers.filter((x) => x.st
     <p v-if="nav.simNote.value" class="dbg-note">{{ nav.simNote.value }}</p>
 
     <div class="dbg-ctrl">
+      <p class="dbg-label">交通路線測試位置</p>
+      <label for="debug-lat">緯度</label>
+      <input id="debug-lat" v-model="latitude" class="dbg-time" type="text" inputmode="decimal" />
+      <label for="debug-lon">經度</label>
+      <input id="debug-lon" v-model="longitude" class="dbg-time" type="text" inputmode="decimal" />
+      <div class="dbg-chips">
+        <button type="button" class="chip" @click="setOrigin">使用測試位置</button>
+        <button type="button" class="chip" @click="clearOrigin">使用實際位置</button>
+      </div>
+      <p class="dbg-note" role="status">{{ gpsError || (search.debugOrigin.value ? `測試位置啟用中：${search.debugOrigin.value.join(', ')}` : '目前使用實際位置。預設座標為臺北市立大學天母體育館。') }} 此設定用於公車與捷運路線規劃。</p>
+      <label class="dbg-label" for="transit-time">公車／捷運規劃時間</label>
+      <input id="transit-time" class="dbg-time" type="datetime-local" :value="transitTimeValue" @change="setTransitTime(($event.target as HTMLInputElement).value)" />
+      <button type="button" class="chip" @click="setTransitTime('')">使用實際時間</button>
+      <p class="dbg-note">{{ transitTimeValue ? '模擬時間已啟用，路線將依所選日期與時間計算。' : '目前使用實際時間。' }} 資料為路線規劃資料，並非即時班次。</p>
       <p class="dbg-label">模擬</p>
       <div class="dbg-chips">
         <button type="button" class="chip" :aria-pressed="nav.simGps.value" @click="toggleSim">模擬 GPS</button>
@@ -252,6 +301,15 @@ const streets = computed(() => nav.routeInfo.value?.maneuvers.filter((x) => x.st
   width: 100%;
   margin: 6px 0;
   accent-color: #93d4df;
+}
+.dbg-time {
+  display: block;
+  color: #f1f3f4;
+  background: #30383d;
+  color-scheme: dark;
+  border-radius: 8px;
+  padding: 8px;
+  margin: 6px 0;
 }
 .dbg-note {
   margin-top: 4px;

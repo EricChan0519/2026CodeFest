@@ -39,6 +39,10 @@ export interface ArrivalStrings {
   tabBus: string
   tabRemind: string
   tabLost: string
+  /** 捷運站內換線時到站卡的大標 */
+  changeLine: string
+  /** 捷運出站口，{exit} 是出口名稱（M3、2） */
+  exitVia: string
 }
 
 export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
@@ -67,6 +71,8 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     tabBus: '是這班車嗎',
     tabRemind: '提醒我下車',
     tabLost: '我迷路了',
+    changeLine: '在這裡換線',
+    exitVia: '從 {exit} 出口出站',
   },
   en: {
     arrived: "You're here.",
@@ -93,6 +99,8 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     tabBus: 'Is this my bus?',
     tabRemind: 'Remind me to get off',
     tabLost: 'I am lost',
+    changeLine: 'Change lines here',
+    exitVia: 'Exit via {exit}',
   },
   th: {
     arrived: 'ถึงแล้ว',
@@ -119,6 +127,8 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     tabBus: 'ใช่คันนี้ไหม',
     tabRemind: 'บอกให้ลงรถ',
     tabLost: 'ฉันหลงทาง',
+    changeLine: 'เปลี่ยนสายที่นี่',
+    exitVia: 'ออกทางออก {exit}',
   },
   vi: {
     arrived: 'Đã đến nơi.',
@@ -145,6 +155,8 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     tabBus: 'Có phải xe này?',
     tabRemind: 'Nhắc tôi xuống xe',
     tabLost: 'Tôi bị lạc',
+    changeLine: 'Đổi tuyến tại đây',
+    exitVia: 'Ra cửa {exit}',
   },
   id: {
     arrived: 'Sudah sampai.',
@@ -171,6 +183,8 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     tabBus: 'Apakah ini busnya?',
     tabRemind: 'Ingatkan saya turun',
     tabLost: 'Saya tersesat',
+    changeLine: 'Ganti jalur di sini',
+    exitVia: 'Keluar lewat pintu {exit}',
   },
   km: {
     arrived: 'មកដល់ហើយ',
@@ -197,6 +211,8 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     tabBus: 'តើឡាននេះត្រូវទេ?',
     tabRemind: 'ប្រាប់ខ្ញុំចុះ',
     tabLost: 'ខ្ញុំវង្វេងផ្លូវ',
+    changeLine: 'ប្តូរខ្សែនៅទីនេះ',
+    exitVia: 'ចេញតាមច្រកចេញ {exit}',
   },
   ja: {
     arrived: '着きました。',
@@ -223,6 +239,8 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     tabBus: 'このバスですか',
     tabRemind: '降りる所を教えて',
     tabLost: '道に迷いました',
+    changeLine: 'ここで乗り換え',
+    exitVia: '{exit} 出口から出る',
   },
   ko: {
     arrived: '도착했어요.',
@@ -249,5 +267,7 @@ export const ARRIVAL_STRINGS: Record<Lang, ArrivalStrings> = {
     tabBus: '이 버스가 맞나요',
     tabRemind: '내릴 때 알려 주세요',
     tabLost: '길을 잃었어요',
+    changeLine: '여기서 환승',
+    exitVia: '{exit} 출구로 나가기',
   },
 }

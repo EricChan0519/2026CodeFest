@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LatLon, Station } from '@/lib/contract'
-import { boarded, currentRide, gotOff, legArrived, rideStatus, startJourney, walkTarget, type Ride } from '../journey'
+import { boarded, currentRide, gotOff, legArrived, rideStatus, rideStatusByTime, startJourney, walkTarget, type Ride } from '../journey'
 
 // 沿經線排的站位，緯度每 0.001 度約 111 公尺
 const st = (uid: string, lat: number): Station => ({
@@ -13,6 +13,7 @@ const st = (uid: string, lat: number): Station => ({
 })
 const route = (zh: string) => ({ routeName: { zh, en: zh }, direction: 0, headsign: { zh: '往板橋', en: null }, stopUid: 'x' })
 const ride = (zh: string, stops: Station[]): Ride => ({
+  mode: 'bus',
   board: stops[0],
   alight: stops[stops.length - 1],
   route: route(zh),
@@ -76,5 +77,55 @@ describe('rideStatus', () => {
 
   it('never goes backwards when GPS jumps toward an earlier stop', () => {
     expect(rideStatus(S, [25.0, 121.5], 2).index).toBe(2)
+  })
+})
+
+describe('metro journey', () => {
+  const M = [st('metro:BL11', 25.0), st('metro:BL12', 25.01)]
+  const N = [st('metro:R10', 25.01), st('metro:R11', 25.02)]
+  const metroRide = (zh: string, stops: Station[], extra: Partial<Ride> = {}): Ride => ({
+    ...ride(zh, stops),
+    mode: 'metro',
+    stopTimesS: stops.map((_, i) => i * 120),
+    ...extra,
+  })
+
+  it('walks to the station exit instead of the station centre', () => {
+    const j = startJourney([metroRide('板南線', M, { boardPoint: [25.0004, 121.4992], boardExit: '6' })], final)
+    expect(walkTarget(j)?.points).toEqual([[25.0004, 121.4992]])
+    expect(walkTarget(j)?.station?.stationUid).toBe('metro:BL11')
+  })
+
+  it('changes metro lines inside the station without a walking leg', () => {
+    let j = startJourney([metroRide('板南線', M), metroRide('淡水信義線', N)], final)
+    j = gotOff(boarded(legArrived(j)))
+    expect(j.phase).toBe('at_stop')
+    expect(j.rideIndex).toBe(1)
+    expect(walkTarget(j)).toBeNull()
+  })
+
+  it('still walks between a metro ride and a bus ride', () => {
+    let j = startJourney([metroRide('板南線', M), ride('307', S)], final)
+    j = gotOff(boarded(legArrived(j)))
+    expect(j.phase).toBe('walk_to_stop')
+  })
+})
+
+describe('rideStatusByTime', () => {
+  const times = [0, 120, 230, 350]
+
+  it('counts stations from the time since boarding', () => {
+    expect(rideStatusByTime(times, 0)).toEqual({ index: 0, remaining: 3, cue: 'none' })
+    expect(rideStatusByTime(times, 125)).toEqual({ index: 1, remaining: 2, cue: 'none' })
+  })
+
+  it('warns after leaving the second-to-last station and asks to get off on arrival', () => {
+    expect(rideStatusByTime(times, 240)).toEqual({ index: 2, remaining: 1, cue: 'next_stop' })
+    expect(rideStatusByTime(times, 350)).toEqual({ index: 3, remaining: 0, cue: 'get_off' })
+    expect(rideStatusByTime(times, 9999)).toEqual({ index: 3, remaining: 0, cue: 'get_off' })
+  })
+
+  it('never goes backwards', () => {
+    expect(rideStatusByTime(times, 10, 2).index).toBe(2)
   })
 })

@@ -16,6 +16,14 @@ export interface ArrivalTrip {
   headsign: Name
   /** 下車站（直達車規劃算出來的）；沒有就不顯示 */
   alight?: Name
+  /** 公車或捷運；沒有就是公車 */
+  mode?: 'bus' | 'metro'
+  /** 捷運路線代表色 #RRGGBB */
+  lineColor?: string
+  /** 捷運站內換線：到站卡大標改成「在這裡換線」 */
+  changeLine?: boolean
+  /** 捷運下車後從哪個出口出站（M3、2） */
+  exit?: string
 }
 
 export const SPEECH_LANGS: Record<Lang, string> = {
@@ -50,7 +58,7 @@ const localName = (name: Name, lang: Lang) => (lang === 'zh-TW' ? name.zh || nam
 
 export function buildArrival(trip: ArrivalTrip, lang: Lang, audience: Audience) {
   const s = ARRIVAL_STRINGS[lang]
-  const headline = audience === 'child' ? s.arrivedChild : s.arrived
+  const headline = trip.changeLine ? s.changeLine : audience === 'child' ? s.arrivedChild : s.arrived
   const routeBig = localName(trip.route, lang)
   const to = stripTo(localName(trip.headsign, lang))
 
@@ -73,6 +81,7 @@ export function buildArrival(trip: ArrivalTrip, lang: Lang, audience: Audience) 
     direction: to ? fill(s.direction, { to }) : null,
     station: displayName(trip.station, lang),
     getOff,
+    lineColor: trip.lineColor ?? null,
     spoken,
     speechLang: SPEECH_LANGS[lang],
     rate: (audience === 'elder' ? 'slow' : 'normal') as 'slow' | 'normal',
@@ -94,7 +103,7 @@ export function askCard(trip: ArrivalTrip, lang: Lang) {
 
   const zhStrings = ARRIVAL_STRINGS['zh-TW']
   const toZh = stripTo(trip.headsign.zh || trip.headsign.en)
-  const busZh = isNumber(routeZh) ? `${routeZh} 號公車` : `${routeZh} 公車`
+  const busZh = trip.mode === 'metro' ? `捷運${routeZh}` : isNumber(routeZh) ? `${routeZh} 號公車` : `${routeZh} 公車`
   const stationZh = trip.station.zh || trip.station.en
 
   let own: string | null = null

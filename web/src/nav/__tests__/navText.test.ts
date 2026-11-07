@@ -58,8 +58,8 @@ describe('busPlanText', () => {
   const route = (zh: string) => ({ routeName: { zh, en: zh }, direction: 0, headsign: { zh: '往板橋', en: 'To Banqiao' }, stopUid: zh })
   const plan: BusPlan = {
     rides: [
-      { board: st('特教學校', 'Special School'), route: route('606'), alight: st('小北街', 'Xiaobei St.'), stops: [st('a', 'a'), st('b', 'b'), st('c', 'c')] },
-      { board: st('小北街', 'Xiaobei St.'), route: route('310'), alight: st('板橋車站', 'Banqiao Sta.'), stops: [st('d', 'd'), st('e', 'e')] },
+      { mode: 'bus', board: st('特教學校', 'Special School'), route: route('606'), alight: st('小北街', 'Xiaobei St.'), stops: [st('a', 'a'), st('b', 'b'), st('c', 'c')] },
+      { mode: 'bus', board: st('小北街', 'Xiaobei St.'), route: route('310'), alight: st('板橋車站', 'Banqiao Sta.'), stops: [st('d', 'd'), st('e', 'e')] },
     ],
     walkToBoardM: 12,
     transferWalkM: 0,
