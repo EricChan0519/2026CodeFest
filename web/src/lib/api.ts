@@ -83,9 +83,14 @@ const endpoints = {
     // 搜尋前要等它：後端沒回應就 3 秒放棄，改用原字串搜尋
     return post<TranslateQueryResponse>('/api/translate/query', { q }, 3000)
   },
-  translateNames: async (lang: ForeignLang, names: string[]): Promise<TranslateNamesResponse> => {
-    if (isMockApi()) return { lang, names: names.map((zh) => ({ zh, text: null, reading: null })) }
-    return post<TranslateNamesResponse>('/api/translate/names', { lang, names }, 8000)
+  translateNames: async (
+    lang: ForeignLang,
+    names: string[],
+    addresses: string[] = [],
+    categories: string[] = [],
+  ): Promise<TranslateNamesResponse> => {
+    if (isMockApi()) return { lang, names: names.map((zh) => ({ zh, text: null, exact: false })), addresses: [], categories: [] }
+    return post<TranslateNamesResponse>('/api/translate/names', { lang, names, addresses, categories }, 8000)
   },
   around: async (req: AroundRequest): Promise<AroundResponse> => {
     if (isMockApi()) {

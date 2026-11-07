@@ -32,7 +32,9 @@ class TranslateQueryRequest(BaseModel):
 
 class TranslateNamesRequest(BaseModel):
     lang: Literal["en", "id", "vi", "th", "km", "ko", "ja"]
-    names: list[str] = Field(min_length=1, max_length=100)
+    names: list[str] = Field(default_factory=list, max_length=100)
+    addresses: list[str] = Field(default_factory=list, max_length=100)
+    categories: list[str] = Field(default_factory=list, max_length=100)
 
 
 class LatLonIn(BaseModel):

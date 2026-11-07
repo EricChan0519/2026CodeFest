@@ -36,9 +36,14 @@ LANGS = ("en", "id", "vi", "th", "km", "ko", "ja")
 # 專有名稱最多幾個字才翻譯（臺北的地名多半 2、3 個字：芝山、天母、西門町；再長多半混了沒收錄的普通詞，
 # 例如「臺大綜合體育館」的「綜合」、「臺北榮民總醫院」的「榮民總」，硬拼成拼音會變成看不懂的字）
 MAX_PROPER_CHARS = 3
+# 翻不出來時，名稱在這個字數以內才給讀音
+MAX_READING_CHARS = 6
 # 讀音比對：至少對到幾個字，避免一個音節配到一大堆地名
 MIN_MATCH_CHARS = 2
 MAX_CANDIDATES = 3
+# 讀音對到的候選先多留幾個，最後依「整串組起來的中文」在實際地名裡出現幾次挑
+# （정치 → 精緻 在店名裡很常見，但「政治大學」才是真的地名）
+MAX_READING_CANDIDATES = 8
 # 種類詞放在專有名稱前面的語言（Bảo tàng Đài Loan、Museum Taiwan、พิพิธภัณฑ์…）
 HEAD_FIRST = {"vi", "id", "th", "km"}
 
@@ -313,7 +318,7 @@ def match_by_reading(reading: str, system: str) -> list[tuple[str, int]]:
                     if b - a >= MIN_MATCH_CHARS:
                         counts[name[a:b]] += 1
             pos = text.find(reading, pos + 1)
-    return counts.most_common(MAX_CANDIDATES)
+    return counts.most_common(MAX_READING_CANDIDATES)
 
 
 # ---------------------------------------------------------------- 外語 → 中文
@@ -371,9 +376,11 @@ def _scan(q: str, lang: str) -> list[tuple[str, Term | None]]:
         for key, term in forms:
             n = len(key.split(" ")) if word_level else len(key)
             if joiner.join(units[i:i + n]) == key:
-                # 一個字的種類詞（산＝山、사＝寺、역＝站）只接在兩個字以上的專有名稱後面，
-                # 否則「즈산」會被切成「즈」＋「山」
-                if not word_level and n == 1 and term.kind == "head" and len(residual) < 2:
+                # 一個字的種類詞（산＝山、사＝寺、역＝站）只接在認得的詞（타이베이역）或兩個字以上的
+                # 專有名稱後面，否則「즈산」會被切成「즈」＋「山」
+                after_term = not residual and bool(out) and out[-1][1] is not None
+                at_end = i + n == len(units)
+                if not word_level and n == 1 and term.kind == "head" and (not at_end or (len(residual) < 2 and not after_term)):
                     continue
                 hit = (key, term, n)
                 break
@@ -421,10 +428,89 @@ def _resolve(text: str, lang: str) -> Segment:
             counts[zh] = max(counts[zh], n)
     if not counts:
         return Segment(text, "unknown", [], "none")
-    ranked = counts.most_common()
-    top = ranked[0][1]
-    zh = [z for z, n in ranked if n >= top * MIN_ALT_SHARE][:MAX_CANDIDATES]
+    zh = [z for z, _ in counts.most_common(MAX_READING_CANDIDATES)]
     return Segment(text, "proper", zh, "reading")
+
+
+MAX_COMBINATIONS = 24
+
+
+@lru_cache(maxsize=2048)
+def _name_count(text: str) -> int:
+    """有幾個已知地名包含這串中文（拿來在幾種組法裡挑最像真的地名的）"""
+    return sum(text in name for name in load_gazetteer())
+
+
+def _assemble(ordered: list[Segment]) -> list[str]:
+    """依中文順序組出搜尋字串；每段有好幾個候選時全部組合，實際地名裡最常出現的排前面"""
+    combos = [""]
+    for seg in ordered:
+        combos = [c + z for c in combos for z in seg.zh][:MAX_COMBINATIONS]
+    combos = [c for i, c in enumerate(combos) if c and c not in combos[:i]]
+    if len(combos) <= 1 and not any(seg.via == "reading" for seg in ordered):
+        return combos
+    counts = {c: _name_count(c) for c in combos}
+    ranked = sorted(combos, key=lambda c: -counts[c])  # sorted 是穩定的：一樣多時維持原本（常見的讀音在前）的順序
+    top = counts[ranked[0]]
+    if top == 0:
+        # 用讀音湊出來、卻沒有任何地名用到的組合（Chengchi → 城池大學）是亂猜的，不要
+        if any(seg.via == "reading" for seg in ordered):
+            return []
+        return ranked[:MAX_CANDIDATES]
+    return [c for c in ranked if counts[c] >= top * MIN_ALT_SHARE][:MAX_CANDIDATES]
+
+
+_EN_ABBREV = {"u": "university", "univ": "university", "sta": "station", "rd": "road", "st": "street",
+              "nat'l": "national", "natl": "national", "jr": "junior", "sr": "senior", "elem": "elementary",
+              "hosp": "hospital", "dist": "district", "sec": "section", "ln": "lane", "aly": "alley", "admin": "administration"}
+_PAREN = re.compile(r"\s*[(（].*?[)）]\s*")
+
+
+def _en_key(s: str) -> str:
+    words = re.findall(r"[0-9a-z']+", fold(s))
+    return " ".join(_EN_ABBREV.get(w, w).replace("'", "") for w in words)
+
+
+@lru_cache(maxsize=1)
+def english_names() -> tuple[dict[str, str], tuple[tuple[str, str], ...]]:
+    """TDX 公車站的官方英文站名（政大 = National Chengchi University、淡水 = Tamsui）：
+    回傳 (中文 → 英文, [(英文比對字串, 中文)])。括號裡的方位（忠孝、承德）拿掉。"""
+    path = Path(os.environ.get("STOP_INDEX_PATH") or DATA_DIR / "stop_index.json")
+    zh2en: dict[str, str] = {}
+    pairs: dict[str, Counter] = {}
+    try:
+        for st in json.loads(path.read_text(encoding="utf-8"))["stations"]:
+            zh, en = st["name"]["zh"], st["name"].get("en")
+            if not zh or not en:
+                continue
+            zh, en = _PAREN.sub("", zh).replace("台", "臺"), _PAREN.sub("", en).strip()
+            if not zh or not en:
+                continue
+            zh2en.setdefault(zh, en)
+            pairs.setdefault(_en_key(en), Counter())[zh] += 1
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    flat = tuple((k, c.most_common(1)[0][0]) for k, c in pairs.items() if k)
+    return zh2en, flat
+
+
+def match_english_name(q: str) -> list[str]:
+    """英文搜尋字串對官方英文站名（字要整個對上，順序一樣）：「Chengchi University」→ 政大"""
+    qk = _en_key(q)
+    if len(qk) < 4:
+        return []
+    exact, partial = [], []
+    for key, zh in english_names()[1]:
+        if key == qk:
+            exact.append(zh)
+        elif f" {qk} " in f" {key} ":
+            partial.append((len(key), zh))
+    partial.sort()
+    out: list[str] = []
+    for zh in exact + [z for _, z in partial]:
+        if zh not in out:
+            out.append(zh)
+    return out[:MAX_CANDIDATES]
 
 
 def _guess_latin(segments: list[Segment]) -> str:
@@ -455,11 +541,18 @@ def translate_query(q: str) -> dict:
         zh = to_traditional(q)
         return {"lang": "zh", "queries": [zh] if zh != q else [], "partial": False, "segments": []}
     segments: list[Segment] = []
+    word_level = lang in ("latin", "vi")
+    forms = _glossary_forms(lang, word_level)
     for text, term in _scan(q, lang):
         if term is None:
             segments.append(_resolve(text, lang))
         else:
-            segments.append(Segment(text, term.kind, [term.zh], "glossary"))
+            # 同一個寫法對到的所有中文（역 → 站、車站；야시장 → 夜市、觀光夜市），短的在前，之後依實際地名挑
+            options = []
+            for key, other in forms:
+                if key == text and other.kind == term.kind and other.zh not in options:
+                    options.append(other.zh)
+            segments.append(Segment(text, term.kind, options or [term.zh], "glossary"))
 
     prefixes = [s for s in segments if s.kind == "prefix"]
     propers = [s for s in segments if s.kind == "proper"]
@@ -469,14 +562,17 @@ def translate_query(q: str) -> dict:
     if lang == "latin":
         display = _guess_latin(segments)
 
-    queries: list[str] = []
-    if propers or prefixes or heads:
-        alternatives = propers[0].zh if propers else [""]
-        rest = "".join(p.zh[0] for p in propers[1:])
-        for alt in alternatives:
-            text = "".join(p.zh[0] for p in prefixes) + alt + rest + "".join(h.zh[0] for h in heads)
-            if text and text not in queries:
-                queries.append(text)
+    queries = _assemble(prefixes + propers + heads)
+    if not queries and propers:
+        unknown = unknown + [p for p in propers if p.via == "reading"]
+    if lang in ("latin", "vi"):
+        # 官方英文站名（非拼音的舊拼法也對得上：Chengchi、Tamsui）；完全一樣的排最前面
+        official = match_english_name(q)
+        if official and (not queries or unknown or _en_key(q) in {k for k, _ in english_names()[1]}):
+            queries = official + [x for x in queries if x not in official]
+            unknown = []
+        elif official:
+            queries = queries + [x for x in official if x not in queries]
     return {
         "lang": display,
         "queries": queries[:MAX_CANDIDATES],
@@ -500,7 +596,11 @@ def _segment_zh(name: str) -> list[tuple[str, Term | None]]:
         hit = None
         for t in terms:
             if name.startswith(t.zh, i):
-                if len(t.zh) == 1 and t.kind == "head" and len(residual) < 2:
+                # 一個字的種類詞（山、寺、店、站）只算在名稱最後，而且前面要有東西；
+                # 「龍山寺」的「山」、「芝山岩」的「山」是名稱的一部分
+                after_term = not residual and bool(out) and out[-1][1] is not None
+                at_end = i + 1 == len(name)
+                if len(t.zh) == 1 and t.kind == "head" and (not at_end or (len(residual) < 2 and not after_term)):
                     continue
                 hit = t
                 break
@@ -613,6 +713,7 @@ def localize_name(name: str, lang: str) -> dict:
                 seq = parts["prefix"] + parts["proper"] + parts["head"]
             text = _join(seq, lang) or None
     reading = None
-    if text is None and lang != "ja" and len(zh) <= 12:
+    # 讀音只給短的名稱：長的店名逐字音譯（이펑탕웨이펑타이베이처잔뎬）使用者看不懂，反而像亂碼
+    if text is None and lang != "ja" and len(zh) <= MAX_READING_CHARS:
         reading = romanize(zh, lang, spaced=lang not in ("ko",))
     return {"zh": name, "text": text, "reading": reading}

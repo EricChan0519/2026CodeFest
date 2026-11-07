@@ -7,6 +7,7 @@
  */
 import { api } from '@/lib/api'
 import type { ForeignLang, LocalizedName, Station } from '@/lib/contract'
+import type { PoiBrand } from '@/lib/poiSearch'
 
 export const FOREIGN_LANGS: ForeignLang[] = ['en', 'id', 'vi', 'th', 'km', 'ko', 'ja']
 
@@ -52,43 +53,86 @@ export async function translateForSearch(q: string): Promise<QueryTranslation> {
   }
 }
 
-/** 一個中文地名在使用者語言的寫法：主要那行（翻譯或讀音）＋是不是讀音 */
+/** 一個中文地名在使用者語言的寫法；approx：有一部分是用讀音寫的（認得的詞翻譯，其他照唸） */
 export interface NameLabel {
   text: string
-  isReading: boolean
+  approx: boolean
 }
 
-const cache = new Map<string, LocalizedName>()
+/** 搜尋結果在使用者語言的寫法：名稱、地址、類別（中文 → 外語） */
+export interface ResultLabels {
+  names: Map<string, NameLabel>
+  addresses: Map<string, string>
+  categories: Map<string, string>
+}
 
-/** 中文地名 → 使用者的語言；同一個名稱只問一次。失敗就回空的（畫面只顯示中文） */
-export async function localizeNames(lang: ForeignLang, names: string[]): Promise<Map<string, NameLabel>> {
-  const unique = [...new Set(names.filter(Boolean))]
-  const missing = unique.filter((n) => !cache.has(`${lang}|${n}`))
-  for (let i = 0; i < missing.length; i += 100) {
+export const emptyLabels = (): ResultLabels => ({ names: new Map(), addresses: new Map(), categories: new Map() })
+
+const nameCache = new Map<string, LocalizedName>()
+const textCache = new Map<string, string | null>()
+
+/** 名稱、地址、類別 → 使用者的語言；同一個只問一次。失敗就回空的（畫面只顯示中文） */
+export async function localizeResults(
+  lang: ForeignLang,
+  input: { names: string[]; addresses?: string[]; categories?: string[] },
+): Promise<ResultLabels> {
+  const uniq = (xs: string[] = []) => [...new Set(xs.filter(Boolean))]
+  const names = uniq(input.names)
+  const addresses = uniq(input.addresses)
+  const categories = uniq(input.categories)
+  const missNames = names.filter((n) => !nameCache.has(`${lang}|${n}`))
+  const missAddr = addresses.filter((a) => !textCache.has(`${lang}|a|${a}`))
+  const missCat = categories.filter((c) => !textCache.has(`${lang}|c|${c}`))
+  for (let i = 0; i < Math.max(missNames.length, missAddr.length, missCat.length); i += 100) {
     try {
-      const res = await api.translateNames(lang, missing.slice(i, i + 100))
-      for (const item of res.names) cache.set(`${lang}|${item.zh}`, item)
+      const res = await api.translateNames(lang, missNames.slice(i, i + 100), missAddr.slice(i, i + 100), missCat.slice(i, i + 100))
+      for (const item of res.names) nameCache.set(`${lang}|${item.zh}`, item)
+      for (const item of res.addresses ?? []) textCache.set(`${lang}|a|${item.zh}`, item.text)
+      for (const item of res.categories ?? []) textCache.set(`${lang}|c|${item.zh}`, item.text)
     } catch {
       break
     }
   }
-  const out = new Map<string, NameLabel>()
-  for (const n of unique) {
-    const item = cache.get(`${lang}|${n}`)
-    if (item?.text) out.set(n, { text: item.text, isReading: false })
-    else if (item?.reading) out.set(n, { text: item.reading, isReading: true })
+  const out = emptyLabels()
+  for (const n of names) {
+    const item = nameCache.get(`${lang}|${n}`)
+    if (item?.text) out.names.set(n, { text: item.text, approx: !item.exact })
+  }
+  for (const a of addresses) {
+    const text = textCache.get(`${lang}|a|${a}`)
+    if (text) out.addresses.set(a, text)
+  }
+  for (const c of categories) {
+    const text = textCache.get(`${lang}|c|${c}`)
+    if (text) out.categories.set(c, text)
   }
   return out
 }
 
 /**
  * 站牌的外語名稱：英文、印尼文直接用 TDX 的官方英文站名；其他語言用翻譯結果，
- * 翻不出來再退回官方英文站名（總比只有中文好）。
+ * 只有讀音（approx）又有官方英文站名時，英文站名也一起附上。
  */
 export function stopLabel(st: Station, lang: ForeignLang, labels: Map<string, NameLabel>): NameLabel | null {
-  const official = st.name.en ? { text: st.name.en, isReading: false } : null
+  const official = st.name.en ? { text: st.name.en, approx: false } : null
   if (lang === 'en' || lang === 'id') return official ?? labels.get(st.name.zh) ?? null
   const mine = labels.get(st.name.zh)
-  if (mine && !mine.isReading) return mine
-  return official ?? mine ?? null
+  if (mine && !mine.approx) return mine
+  if (mine && official) return { text: `${mine.text} · ${official.text}`, approx: true }
+  return mine ?? official
+}
+
+const HAN_ONLY = /^[㐀-鿿豈-﫿]+$/
+
+/**
+ * 連鎖店名稱拿去翻譯前，把中文品牌名換成品牌的英文名（台北車站二樓星巴克 → 台北車站二樓 Starbucks），
+ * 不然品牌會被照中文音唸成「싱바커」，外國人認不出來。
+ */
+export function poiNameForTranslation(name: string, brand: PoiBrand): string {
+  if (!brand.en) return name
+  const zhNames = [brand.zh, ...brand.aliases].filter((a) => a && HAN_ONLY.test(a)).sort((a, b) => b.length - a.length)
+  for (const zh of zhNames) {
+    if (name.includes(zh)) return name.replace(zh, ` ${brand.en} `).replace(/\s+/g, ' ').trim()
+  }
+  return name
 }

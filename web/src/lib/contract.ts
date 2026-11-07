@@ -84,16 +84,24 @@ export interface TranslateQueryResponse {
   segments: { text: string; kind: 'prefix' | 'proper' | 'head' | 'unknown'; zh: string[]; via: string }[]
 }
 
-/** POST /api/translate/names：中文地名 → 使用者的語言；拆不出來的不翻（text 為 null），只給讀音 */
+/** POST /api/translate/names：搜尋結果的名稱、地址、類別 → 使用者的語言（每一筆都有） */
 export interface LocalizedName {
   zh: string
   text: string | null
-  reading: string | null
+  /** false：有一部分是用讀音寫的（認得的詞翻譯，其他照唸） */
+  exact: boolean
+}
+
+export interface LocalizedText {
+  zh: string
+  text: string | null
 }
 
 export interface TranslateNamesResponse {
   lang: ForeignLang
   names: LocalizedName[]
+  addresses: LocalizedText[]
+  categories: LocalizedText[]
 }
 
 export interface AroundRequest {

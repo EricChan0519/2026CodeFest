@@ -24,7 +24,7 @@ from app import elevation, routes_service
 from app.routes_service import plan_routes
 from app.places import PlaceIndex
 from app.schemas import AroundRequest, NearbyRequest, PlaceSearchRequest, RoutesRequest, TranslateNamesRequest, TranslateQueryRequest
-from app import translate
+from app import localize, translate
 from app.stations import StationIndex
 
 app = FastAPI(title="Arrow Nav API")
@@ -112,8 +112,15 @@ def translate_query(req: TranslateQueryRequest):
 
 @app.post("/api/translate/names")
 def translate_names(req: TranslateNamesRequest):
-    """中文地名 → 使用者的語言。拆不出來的不翻（text 為 null），只給讀音 reading"""
-    return {"lang": req.lang, "names": [translate.localize_name(n[:60], req.lang) for n in req.names]}
+    """搜尋結果的名稱、地址、類別 → 使用者的語言（每一筆都有）。
+    名稱 exact=false 表示有一部分是用讀音寫的（認得的詞翻譯，其他照唸）。"""
+    lang = req.lang
+    return {
+        "lang": lang,
+        "names": [localize.localize_name(n[:60], lang) for n in req.names],
+        "addresses": [{"zh": a, "text": localize.localize_address(a[:120], lang)} for a in req.addresses],
+        "categories": [{"zh": c, "text": localize.localize_category(c[:20], lang)} for c in req.categories],
+    }
 
 
 @app.post("/api/around")

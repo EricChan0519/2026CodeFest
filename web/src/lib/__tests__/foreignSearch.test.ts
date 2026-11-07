@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Station } from '../contract'
-import { isForeignQuery, localizeNames, pageLang, stopLabel } from '../foreignSearch'
+import { isForeignQuery, localizeResults, pageLang, poiNameForTranslation, stopLabel } from '../foreignSearch'
 import { api } from '../api'
 
 const st = (zh: string, en: string | null): Station => ({ stationUid: zh, name: { zh, en }, bearing: null, lat: 25, lon: 121.5, routes: [] })
@@ -30,36 +30,53 @@ describe('pageLang', () => {
 
 describe('stopLabel', () => {
   const labels = new Map([
-    ['捷運芝山站', { text: 'MRT 즈산역', isReading: false }],
-    ['芝山岩', { text: '즈산옌', isReading: true }],
+    ['捷運芝山站', { text: 'MRT 즈산역', approx: false }],
+    ['芝山岩', { text: '즈산옌', approx: true }],
   ])
   it('English and Indonesian use the official TDX English name', () => {
-    expect(stopLabel(st('捷運芝山站', 'MRT Zhishan Sta.'), 'en', labels)).toEqual({ text: 'MRT Zhishan Sta.', isReading: false })
+    expect(stopLabel(st('捷運芝山站', 'MRT Zhishan Sta.'), 'en', labels)).toEqual({ text: 'MRT Zhishan Sta.', approx: false })
   })
-  it('other languages use the translation, then the official English name, then the reading', () => {
+  it('other languages use the translation; a spelled-out name also gets the official English name', () => {
     expect(stopLabel(st('捷運芝山站', 'MRT Zhishan Sta.'), 'ko', labels)!.text).toBe('MRT 즈산역')
-    expect(stopLabel(st('芝山岩', 'Zhishanyan'), 'ko', labels)!.text).toBe('Zhishanyan')
-    expect(stopLabel(st('芝山岩', null), 'ko', labels)).toEqual({ text: '즈산옌', isReading: true })
+    expect(stopLabel(st('芝山岩', 'Zhishanyan'), 'ko', labels)!.text).toBe('즈산옌 · Zhishanyan')
+    expect(stopLabel(st('芝山岩', null), 'ko', labels)).toEqual({ text: '즈산옌', approx: true })
   })
 })
 
-describe('localizeNames', () => {
-  it('asks once per name and keeps translations and readings apart', async () => {
+describe('localizeResults', () => {
+  it('asks once per item and returns names, addresses and categories', async () => {
     const spy = vi.spyOn(api, 'translateNames').mockResolvedValue({
-      lang: 'id',
+      lang: 'ko',
       names: [
-        { zh: '國立臺灣博物館', text: 'Museum Nasional Taiwan', reading: null },
-        { zh: '臺北榮民總醫院', text: null, reading: 'Tai Bei Rong Min Zong Yi Yuan' },
+        { zh: '國立臺灣博物館', text: '국립대만박물관', exact: true },
+        { zh: '台北車站雄獅站前門市', text: '타이베이역 슝스 역 앞 매장', exact: false },
       ],
+      addresses: [{ zh: '忠孝西路一段3號', text: '중샤오시루 1단 3호' }],
+      categories: [{ zh: '餐廳', text: '식당' }],
     })
-    const m = await localizeNames('id', ['國立臺灣博物館', '臺北榮民總醫院', '國立臺灣博物館'])
-    expect(m.get('國立臺灣博物館')).toEqual({ text: 'Museum Nasional Taiwan', isReading: false })
-    expect(m.get('臺北榮民總醫院')).toEqual({ text: 'Tai Bei Rong Min Zong Yi Yuan', isReading: true })
-    await localizeNames('id', ['國立臺灣博物館'])
+    const r = await localizeResults('ko', {
+      names: ['國立臺灣博物館', '台北車站雄獅站前門市', '國立臺灣博物館'],
+      addresses: ['忠孝西路一段3號'],
+      categories: ['餐廳'],
+    })
+    expect(r.names.get('國立臺灣博物館')).toEqual({ text: '국립대만박물관', approx: false })
+    expect(r.names.get('台北車站雄獅站前門市')).toEqual({ text: '타이베이역 슝스 역 앞 매장', approx: true })
+    expect(r.addresses.get('忠孝西路一段3號')).toBe('중샤오시루 1단 3호')
+    expect(r.categories.get('餐廳')).toBe('식당')
+    await localizeResults('ko', { names: ['國立臺灣博物館'], addresses: ['忠孝西路一段3號'], categories: ['餐廳'] })
     expect(spy).toHaveBeenCalledTimes(1)
   })
-  it('a failed request just leaves names in Chinese', async () => {
+  it('a failed request just leaves things in Chinese', async () => {
     vi.spyOn(api, 'translateNames').mockRejectedValue(new Error('down'))
-    expect((await localizeNames('th', ['天母'])).size).toBe(0)
+    expect((await localizeResults('th', { names: ['天母'] })).names.size).toBe(0)
+  })
+})
+
+describe('poiNameForTranslation', () => {
+  const brand = { key: 'starbucks', zh: '星巴克', en: 'Starbucks', kind: 'cafe' as const, aliases: ['統一星巴克'] }
+  it('puts the English brand name in place of the Chinese one', () => {
+    expect(poiNameForTranslation('台北車站二樓星巴克', brand)).toBe('台北車站二樓 Starbucks')
+    expect(poiNameForTranslation('統一星巴克 天母店', brand)).toBe('Starbucks 天母店')
+    expect(poiNameForTranslation('天母店', brand)).toBe('天母店')
   })
 })

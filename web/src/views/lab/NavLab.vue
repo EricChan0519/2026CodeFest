@@ -52,14 +52,14 @@ import type { Destination, DestinationLock } from '@/nav/destination'
 import { searchPlaces } from '@/lib/geocode'
 import type { Place } from '@/lib/geocode'
 import { createLocator } from '@/lib/locator'
-import { fromOsm, mergePlaces, searchLandmarks } from '@/lib/placeSearch'
+import { fromOsm, mergePlaces, osmMatches, searchLandmarks } from '@/lib/placeSearch'
 import type { PlaceHit } from '@/lib/placeSearch'
 import { loadPoiIndex, searchPois } from '@/lib/poiSearch'
 import type { PoiHit, PoiIndex } from '@/lib/poiSearch'
 import { planBus, type BusPlan } from '@/lib/transferBus'
 import { loadStopIndex, searchStops } from '@/lib/stopSearch'
-import { isForeignQuery, localizeNames, stopLabel, translateForSearch } from '@/lib/foreignSearch'
-import type { NameLabel, QueryTranslation } from '@/lib/foreignSearch'
+import { emptyLabels, isForeignQuery, localizeResults, poiNameForTranslation, stopLabel, translateForSearch } from '@/lib/foreignSearch'
+import type { NameLabel, QueryTranslation, ResultLabels } from '@/lib/foreignSearch'
 import type { ForeignLang } from '@/lib/contract'
 import type { StopIndex } from '@/lib/stopSearch'
 import { fetchWalkRoute } from '@/lib/walkRoute'
@@ -109,26 +109,42 @@ const translation = ref<QueryTranslation | null>(null)
 const queryLang = ref<ForeignLang | null>(null)
 /** 結果名稱要翻成的語言：選語言畫面選的語言；選中文時用搜尋字串的語言；都沒有是 null（只顯示中文） */
 const displayLang = computed<ForeignLang | null>(() => (L.value === 'zh-TW' ? queryLang.value : (L.value as ForeignLang)))
-/** 中文地名 → 使用者語言的寫法（翻譯或讀音） */
-const labels = shallowRef<Map<string, NameLabel>>(new Map())
+/** 搜尋結果的名稱、地址、類別在使用者語言的寫法 */
+const labels = shallowRef<ResultLabels>(emptyLabels())
 
 interface NameLines {
   main: string
+  /** 中文原名（招牌、站牌上看到的）；中文介面是 null */
   sub: string | null
-  reading: boolean
+  /** 名稱有一部分是用讀音寫的 */
+  approx: boolean
 }
 
-/** 結果名稱的兩行：上面是使用者的語言（有翻譯的話），下面是中文原名（招牌上看到的）；只有讀音時中文在上 */
+/** 結果名稱的兩行：上面是使用者的語言，下面是中文原名 */
 function linesOf(zh: string, l: NameLabel | null | undefined): NameLines {
-  if (!l) return { main: zh, sub: null, reading: false }
-  return l.isReading ? { main: zh, sub: l.text, reading: true } : { main: l.text, sub: zh, reading: false }
+  if (!l) return { main: zh, sub: null, approx: false }
+  return { main: l.text, sub: zh, approx: l.approx }
 }
 function nameLines(zh: string): NameLines {
-  return linesOf(zh, displayLang.value ? labels.value.get(zh) : null)
+  return linesOf(zh, displayLang.value ? labels.value.names.get(zh) : null)
+}
+/** 連鎖店：品牌換成英文名後再翻（見 poiNameForTranslation），第二行留原本的中文店名 */
+function poiLines(p: PoiHit): NameLines {
+  const l = displayLang.value ? labels.value.names.get(poiNameForTranslation(p.name, p.brand)) : null
+  return l ? { main: l.text, sub: p.name, approx: l.approx } : { main: p.name, sub: null, approx: false }
 }
 function stopLines(st: Station): NameLines {
   const lang = displayLang.value
-  return linesOf(st.name.zh, lang ? stopLabel(st, lang, labels.value) : null)
+  return linesOf(st.name.zh, lang ? stopLabel(st, lang, labels.value.names) : null)
+}
+/** 類別＋地址：使用者的語言（有翻的話），下面再附中文地址給路人、司機看 */
+function detailLines(category: string | null, address: string | null, fallback: string): { main: string; sub: string | null } {
+  if (!displayLang.value) return { main: fallback, sub: null }
+  const cat = category ? labels.value.categories.get(category) ?? category : null
+  const addr = address ? labels.value.addresses.get(address) ?? null : null
+  const main = [cat, addr].filter(Boolean).join(' · ')
+  if (!main) return { main: fallback, sub: null }
+  return { main, sub: address && addr && addr !== address ? address : null }
 }
 
 /** 結果依距離排序用的參考點是不是使用者位置；拿不到位置就用臺北車站 */
@@ -188,7 +204,7 @@ async function rankResults(seq: number, near: LatLon, isUser: boolean): Promise<
         .sort((a, b) => (a.distanceM ?? 0) - (b.distanceM ?? 0))
         .slice(0, POI_LIMIT)
     : []
-  placeResults.value = mergePlaces(last.q, [landmarks, last.osm.map(fromOsm)], near)
+  placeResults.value = mergePlaces(last.q, [landmarks, last.osm.filter((p) => osmMatches(last.q, p)).map(fromOsm)], near)
   nearUser.value = isUser
   poiShown.value = POI_PAGE
   placeShown.value = PLACE_PAGE
@@ -206,20 +222,25 @@ function uniqueBy<T>(items: T[], key: (t: T) => string): T[] {
   })
 }
 
-/** 把結果的中文名稱翻成使用者的語言；後端失敗就只顯示中文 */
+/** 把結果的名稱、地址、類別翻成使用者的語言；後端失敗就只顯示中文 */
 async function refreshLabels(seq: number) {
   const lang = displayLang.value
   if (!lang) {
-    labels.value = new Map()
+    labels.value = emptyLabels()
     return
   }
-  const names = [
-    ...(placeResults.value ?? []).map((p) => p.name),
-    ...(poiResults.value ?? []).map((p) => p.name),
-    ...(stopResults.value ?? []).map((s) => s.name.zh),
-  ]
-  const map = await localizeNames(lang, names)
-  if (seq === searchSeq) labels.value = map
+  const places = placeResults.value ?? []
+  const pois = poiResults.value ?? []
+  const result = await localizeResults(lang, {
+    names: [
+      ...places.map((p) => p.name),
+      ...pois.map((p) => poiNameForTranslation(p.name, p.brand)),
+      ...(stopResults.value ?? []).map((s) => s.name.zh),
+    ],
+    addresses: [...places.map((p) => p.address ?? ''), ...pois.map((p) => p.address)],
+    categories: places.map((p) => p.category ?? ''),
+  })
+  if (seq === searchSeq) labels.value = result
 }
 
 /** 點「也可能是…」：用那個中文重新搜尋 */
@@ -1166,8 +1187,9 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
               <span class="text-lg font-bold">{{ nameLines(p.name).main }}</span>
               <span class="shrink-0 text-sm text-white/80">{{ p.distanceM === null ? '' : placeDistance(p.distanceM, L) }}</span>
             </div>
-            <div v-if="nameLines(p.name).sub" class="text-base text-white/90" :class="{ italic: nameLines(p.name).reading }">{{ nameLines(p.name).sub }}</div>
-            <div v-if="p.detail" class="text-sm text-white/70">{{ p.detail }}</div>
+            <div v-if="nameLines(p.name).sub" class="text-base text-white/90" lang="zh-Hant">{{ nameLines(p.name).sub }}</div>
+            <div v-if="p.detail || p.category" class="text-sm text-white/70">{{ detailLines(p.category, p.address, p.detail).main }}</div>
+            <div v-if="detailLines(p.category, p.address, p.detail).sub" class="text-xs text-white/50" lang="zh-Hant">{{ detailLines(p.category, p.address, p.detail).sub }}</div>
           </button>
           <button
             v-if="placeShown < placeResults.length"
@@ -1195,11 +1217,14 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
             @click="pickPoi(p)"
           >
             <div class="flex items-baseline justify-between gap-2">
-              <span class="text-lg font-bold">{{ nameLines(p.name).main }}</span>
+              <span class="text-lg font-bold">{{ poiLines(p).main }}</span>
               <span class="shrink-0 text-sm text-white/80">{{ p.distanceM === null ? '' : placeDistance(p.distanceM, L) }}</span>
             </div>
-            <div v-if="nameLines(p.name).sub" class="text-base text-white/90" :class="{ italic: nameLines(p.name).reading }">{{ nameLines(p.name).sub }}</div>
-            <div class="text-sm text-white/70">{{ displayLang && p.brand.en ? p.brand.en : p.brand.zh }}<template v-if="p.address">・{{ p.address }}</template></div>
+            <div v-if="poiLines(p).sub" class="text-base text-white/90" lang="zh-Hant">{{ poiLines(p).sub }}</div>
+            <div class="text-sm text-white/70">
+              {{ displayLang && p.brand.en ? p.brand.en : p.brand.zh }}<template v-if="p.address"> · {{ (displayLang && labels.addresses.get(p.address)) || p.address }}</template>
+            </div>
+            <div v-if="displayLang && p.address && labels.addresses.get(p.address) && labels.addresses.get(p.address) !== p.address" class="text-xs text-white/50" lang="zh-Hant">{{ p.address }}</div>
           </button>
           <button
             v-if="poiShown < poiResults.length"
@@ -1222,7 +1247,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
               {{ stopLines(st).main }}
               <span v-if="st.bearing && L === 'zh-TW'" class="text-sm font-normal text-white/70">（站位朝{{ BEARING_TEXT[st.bearing] ?? st.bearing }}）</span>
             </div>
-            <div v-if="stopLines(st).sub" class="text-base text-white/90" :class="{ italic: stopLines(st).reading }">{{ stopLines(st).sub }}</div>
+            <div v-if="stopLines(st).sub" class="text-base text-white/90" lang="zh-Hant">{{ stopLines(st).sub }}</div>
             <div class="mb-2 text-sm text-white/70">{{ t.pickRoute }}</div>
             <div class="flex flex-wrap gap-2">
               <button

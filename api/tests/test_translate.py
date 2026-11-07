@@ -9,7 +9,8 @@ from app import translate as t
 GAZETTEER = [
     "捷運芝山站", "芝山公園", "芝山國小", "芝山岩", "捷運士林站", "士林夜市", "士林官邸",
     "龍山寺", "中正紀念堂", "西門町", "天母運動公園", "天母", "北投溫泉博物館", "饒河街觀光夜市",
-    "東門", "至善路", "國立臺灣博物館",
+    "東門", "至善路", "國立臺灣博物館", "臺北車站", "臺北車站(忠孝)", "臺北車站(承德)",
+    "國立政治大學", "政治大學", "精緻料理", "精緻餐廳", "精緻小館", "精緻美食",
 ]
 
 
@@ -20,10 +21,10 @@ def small_gazetteer(monkeypatch, tmp_path):
     place.write_bytes(gzip.compress(json.dumps({"categories": ["x"], "places": places}, ensure_ascii=False).encode()))
     monkeypatch.setenv("PLACE_INDEX_PATH", str(place))
     monkeypatch.setenv("STOP_INDEX_PATH", str(tmp_path / "none.json"))
-    for f in (t.load_gazetteer, t._reading_table):
+    for f in (t.load_gazetteer, t._reading_table, t._name_count):
         f.cache_clear()
     yield
-    for f in (t.load_gazetteer, t._reading_table):
+    for f in (t.load_gazetteer, t._reading_table, t._name_count):
         f.cache_clear()
 
 
@@ -140,8 +141,9 @@ def test_localize_refuses_names_it_cannot_fully_understand():
     for name in ("臺北榮民總醫院", "臺大綜合體育館", "艋舺龍山寺", "捷運芝山站一"):
         r = t.localize_name(name, "en")
         assert r["text"] is None, name
-        assert r["reading"]
-    assert t.localize_name("臺北榮民總醫院", "en")["reading"] == "Tai Bei Rong Min Zong Yi Yuan"
+        # 7 個字以上的不給讀音（太長的音譯看不懂）
+        assert bool(r["reading"]) == (len(name) <= t.MAX_READING_CHARS), name
+    assert t.localize_name("艋舺龍山寺", "en")["reading"] == "Meng Xia Long Shan Si"
 
 
 def test_mandarin_to_hangul_follows_the_korean_standard():
@@ -157,10 +159,13 @@ def test_api(client):
     r = client.post("/api/translate/query", json={"q": "대만박물관"})
     assert r.status_code == 200
     assert r.json()["queries"] == ["臺灣博物館"]
-    r = client.post("/api/translate/names", json={"lang": "id", "names": ["國立臺灣博物館", "臺北榮民總醫院"]})
-    body = r.json()["names"]
-    assert body[0]["text"] == "Museum Nasional Taiwan"
-    assert body[1]["text"] is None
+    r = client.post("/api/translate/names", json={"lang": "id", "names": ["國立臺灣博物館", "臺北榮民總醫院"], "addresses": ["忠孝西路一段3號"], "categories": ["餐廳"]})
+    body = r.json()
+    assert body["names"][0] == {"zh": "國立臺灣博物館", "text": "Museum Nasional Taiwan", "exact": True}
+    # 每一筆都有使用者語言的內容；拆不完整的一部分用讀音
+    assert body["names"][1]["text"] and body["names"][1]["exact"] is False
+    assert body["addresses"][0]["text"] == "No. 3, Seksi 1, Jalan Zhongxiao Barat"
+    assert body["categories"][0]["text"] == "Restoran"
     assert client.post("/api/translate/names", json={"lang": "xx", "names": ["a"]}).status_code == 422
 
 
@@ -173,3 +178,26 @@ def test_localize_names_with_parentheses():
 def test_grand_mosque():
     assert t.localize_name("臺北清真大寺", "id")["text"] == "Masjid Raya Taipei"
     assert t.localize_name("臺北清真大寺", "en")["text"] == "Taipei Grand Mosque"
+
+
+def test_one_syllable_category_word_after_a_known_place_name():
+    # 2026-11-07 回報：타이베이역 只翻出「臺北」；역 可以是 站 或 車站，挑實際地名裡有的
+    assert q("타이베이역")[0] == "臺北車站"
+    assert q("Taipei Station")[0] == "臺北車站"
+    assert q("Ga Đài Bắc")[0] == "臺北車站"
+    assert q("สถานีไทเป")[0] == "臺北車站"
+    # MRT 站還是「站」
+    assert q("Zhishan MRT station")[0] == "捷運芝山站"
+
+
+def test_long_names_get_no_reading():
+    # 2026-11-07 回報：「一風堂微風台北車站店」的韓文讀音「이펑탕웨이펑타이베이처잔뎬」看不懂；長的店名只顯示中文
+    r = t.localize_name("一風堂微風台北車站店", "ko")
+    assert r["text"] is None and r["reading"] is None
+    assert t.localize_name("臺北車站", "ko")["text"] == "타이베이역"
+
+
+def test_reading_candidates_are_chosen_by_the_whole_name():
+    # 2026-11-07 回報：정치대학교 → 精緻大學（精緻在店名很常見）；整串「政治大學」才是真的地名
+    t._name_count.cache_clear()
+    assert q("정치대학교") == ["政治大學"]
