@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { LatLon } from '@/lib/contract'
 import { createNavMachine } from '@/nav/machine'
 import { decodePolyline6, mapManeuverType, parseValhalla } from '../walkRoute'
 
@@ -66,5 +67,20 @@ describe('walkRoute adapter', () => {
     m.onHeading(0)
     for (const p of r.geometry) m.onPosition({ lat: p[0], lon: p[1], accuracyM: 8, ts: Date.now() })
     expect(m.getView().state).toBe('arrived')
+  })
+
+  it('ends at the destination itself when Valhalla snapped the end onto a nearby road', () => {
+    // 實測：全家板橋車站店，路線終點吸附到 13 公尺外的路上，站在店門口差一點就判斷不到抵達
+    const end = decodePolyline6(SHAPE).at(-1)!
+    const shop: LatLon = [end[0] + 0.00012, end[1]] // 北方約 13 公尺
+    const r = parseValhalla(RESPONSE, 'walk', shop)
+    expect(r.geometry.at(-1)).toEqual(shop)
+    expect(r.maneuvers.at(-1)).toMatchObject({ kind: 'arrive', atIndex: r.geometry.length - 1 })
+  })
+
+  it('does not draw a straight line to a destination far from the road', () => {
+    const end = decodePolyline6(SHAPE).at(-1)!
+    const far: LatLon = [end[0] + 0.001, end[1]] // 約 110 公尺
+    expect(parseValhalla(RESPONSE, 'walk', far).geometry.at(-1)).toEqual(end)
   })
 })

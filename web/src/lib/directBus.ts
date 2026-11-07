@@ -29,6 +29,8 @@ export interface DirectBusOption {
   walkFromAlightM: number
   /** 坐幾站 */
   stopCount: number
+  /** 上車站到下車站沿途每一站（含頭尾），坐車畫面用來算還有幾站 */
+  stops: Station[]
 }
 
 export interface PlanOptions {
@@ -88,7 +90,8 @@ export function planDirectBus(
     const key = `${p.routeName.zh}|${p.direction}`
     const prev = best.get(key)
     if (prev && prev.walkToBoardM + prev.walkFromAlightM <= walk) continue
-    best.set(key, { board, route, alight, walkToBoardM: bw, walkFromAlightM: alightWalk, stopCount: ai - bi })
+    const stops = p.stops.slice(bi, ai + 1).map((uid) => byUid.get(uid)).filter((s): s is Station => !!s)
+    best.set(key, { board, route, alight, walkToBoardM: bw, walkFromAlightM: alightWalk, stopCount: ai - bi, stops })
   }
 
   // 搭車要走的路不比直接走過去少，就不建議搭車

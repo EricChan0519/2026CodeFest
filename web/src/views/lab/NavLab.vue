@@ -9,8 +9,23 @@
  * 文字是實驗用的中文；正式文案走 i18n（UI 負責）。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { arrivalFromStation, tripFromQuery } from '@/arrival/arrival'
+import { useRoute } from 'vue-router'
+import { tripFromQuery, type ArrivalTrip } from '@/arrival/arrival'
+import ArrivalCard from '@/arrival/ArrivalCard.vue'
+import RideCard from '@/arrival/RideCard.vue'
+import { ARRIVAL_STRINGS } from '@/i18n/arrival'
+import {
+  boarded,
+  currentRide,
+  gotOff,
+  legArrived,
+  rideStatus,
+  startJourney,
+  walkTarget,
+  type Journey,
+  type Ride,
+  type RideStatus,
+} from '@/nav/journey'
 import type { LatLon, Station, StationRoute } from '@/lib/contract'
 import { createAnnouncer } from '@/nav/announcer'
 import { easeRotation } from '@/nav/arrow'
@@ -30,8 +45,7 @@ import { searchPlaces } from '@/lib/geocode'
 import type { Place } from '@/lib/geocode'
 import { formatDistance, loadPoiIndex, searchPois } from '@/lib/poiSearch'
 import type { PoiHit } from '@/lib/poiSearch'
-import { planDirectBus } from '@/lib/directBus'
-import type { DirectBusOption } from '@/lib/directBus'
+import { planBus, type BusPlan } from '@/lib/transferBus'
 import { loadStopIndex, searchStops } from '@/lib/stopSearch'
 import { fetchWalkRoute } from '@/lib/walkRoute'
 import type { WalkRoute } from '@/lib/walkRoute'
@@ -144,10 +158,10 @@ const poiVisible = computed(() => (poiResults.value ?? []).slice(0, poiShown.val
  * 選一班車 → 導航到上車站，到站時 /arrived 會顯示「在 ○○ 下車」。
  * 沒選車就維持步行直接到 A。整個計算在裝置上做，不呼叫外部服務。
  */
-const busOptions = ref<DirectBusOption[] | null>(null)
+const busOptions = ref<BusPlan[] | null>(null)
 const busLoading = ref(false)
 const busNote = ref('')
-const pickedBus = shallowRef<DirectBusOption | null>(null)
+const pickedBus = shallowRef<BusPlan | null>(null)
 const busTargetName = ref('')
 const busTargetPoint = shallowRef<LatLon | null>(null)
 let busSeq = 0
@@ -196,8 +210,8 @@ async function planBusTo(target: LatLon, name: string) {
       busNote.value = '站牌資料沒有路線停靠順序（舊快照），無法列出搭公車的方法。'
       return
     }
-    busOptions.value = planDirectBus(idx.stations, idx.patterns, user, target)
-    if (busOptions.value.length === 0) busNote.value = '附近沒有直達的公車比直接走過去更省路，建議走過去。'
+    busOptions.value = planBus(idx.stations, idx.patterns, user, target)
+    if (busOptions.value.length === 0) busNote.value = '附近沒有比直接走過去更省路的公車（直達或轉一次車），建議走過去。'
   } catch (e) {
     if (seq === busSeq) busNote.value = `公車資料載入失敗（${(e as Error).message}），可以直接走過去。`
   } finally {
@@ -217,18 +231,28 @@ function clearBusPlan() {
   busLoading.value = false
 }
 
-function pickBus(o: DirectBusOption) {
+function pickBus(o: BusPlan) {
   pickedBus.value = o
-  destination.value = destinationFromBusOption(o)
+  destination.value = destinationFromBusOption(o.rides[0])
 }
 
-function isBusPicked(o: DirectBusOption): boolean {
+function isBusPicked(o: BusPlan): boolean {
   return pickedBus.value === o
 }
 
-function busLabel(o: DirectBusOption): string {
-  return `${o.route.routeName.zh}${o.route.headsign.zh ? ` ${o.route.headsign.zh}` : ''}`
+function rideLabel(r: BusPlan['rides'][number]): string {
+  return `${r.route.routeName.zh}${r.route.headsign.zh ? ` ${r.route.headsign.zh}` : ''}`
 }
+
+function busLabel(o: BusPlan): string {
+  return o.rides.map(rideLabel).join(' → 轉 ')
+}
+
+function busKey(o: BusPlan): string {
+  return o.rides.map((r) => `${r.route.routeName.zh}-${r.route.direction}`).join('>')
+}
+
+const busIsTransfer = computed(() => (busOptions.value ?? []).some((o) => o.rides.length > 1))
 
 function pickPoi(p: PoiHit) {
   destination.value = destinationFromPlace({ name: p.name, point: p.point })
@@ -283,6 +307,13 @@ const wakeNote = ref('')
 const showDebug = ref(false)
 /** 模擬 GPS：位置由方向鍵／點地圖決定，朝向仍用真實羅盤（或手動滑桿） */
 const simGps = ref(false)
+/**
+ * 模擬 GPS 的搖桿「往上」是哪個方向：
+ * - map（預設）：地圖的上方＝北。下面的除錯地圖是北朝上，往上推點就往上走，不會覺得反了
+ * - phone：手機面對的方向（真的拿著手機轉身測箭頭時用）
+ */
+const joyFrame = ref<'map' | 'phone'>('map')
+const joyForwardDeg = () => (joyFrame.value === 'map' ? 0 : (view.value?.headingDeg ?? 0))
 /** 搖桿推到底時的速度（公尺／秒）；1.4 約等於步行 */
 const simSpeed = ref(1.4)
 /** 鍵盤方向鍵一次移動幾公尺 */
@@ -437,21 +468,113 @@ function log(line: string) {
   cues.value = [`${new Date().toLocaleTimeString()} ${line}`, ...cues.value].slice(0, 12)
 }
 
-const router = useRouter()
 const currentRoute = useRoute()
 let arrivedHandled = false
+/** 語言與對象用 /lab/nav?lang=en&audience=elder 指定，沒給就是 zh-TW、visitor（正式流程由設定頁提供） */
+const langAudience = computed(() => tripFromQuery(currentRoute.query))
+const doneLabel = computed(() => ARRIVAL_STRINGS[langAudience.value.lang].done)
+const boardedLabel = computed(() => ARRIVAL_STRINGS[langAudience.value.lang].boarded)
 
 /**
- * 到站：跳到 /arrived，由那個畫面念「到了。等 203 號，往天母方向」（只念一次）。
- * 只有站牌目的地（帶 station 和 stationRoute）才會跳；使用者自己輸入的地址只在這個畫面顯示「到了」。
- * 語言與對象用 /lab/nav?lang=en&audience=elder 指定，沒給就是 zh-TW、visitor（正式流程由設定頁提供）。
- * 網址只帶站名、路線名和方向，不帶座標和 UID。
+ * 行程：走到上車站 → 上車 → 坐車 → 下車 →（轉乘）→ 走到目的地，走到目的地才結束。
+ * 到站畫面、坐車畫面直接蓋在這一頁上，不跳頁，行程才不會中斷。
+ * 只選了站牌和那班車（沒有最終目的地）時，走到站牌顯示到站畫面就結束。
  */
-function goArrived() {
-  const { station, stationRoute } = active
-  if (!station || !stationRoute) return
-  const { lang, audience } = tripFromQuery(currentRoute.query)
-  void router.push(arrivalFromStation(station, stationRoute, lang, audience, active.alight))
+const journey = shallowRef<Journey | null>(null)
+const stopOnlyArrived = ref(false)
+const rideNow = ref<RideStatus>({ index: 0, remaining: 0, cue: 'none' })
+let rideWatchId: number | null = null
+
+function rideTrip(r: Ride): ArrivalTrip {
+  return { station: r.board.name, route: r.route.routeName, headsign: r.route.headsign, alight: r.alight.name }
+}
+const atStopTrip = computed(() => {
+  const r = journey.value && currentRide(journey.value)
+  return r ? rideTrip(r) : null
+})
+const finalTrip = computed<ArrivalTrip | null>(() =>
+  journey.value ? { station: { zh: journey.value.final.name, en: null }, route: { zh: '', en: null }, headsign: { zh: null, en: null } } : null,
+)
+const stopOnlyTrip = computed<ArrivalTrip | null>(() =>
+  active.station && active.stationRoute
+    ? { station: active.station.name, route: active.stationRoute.routeName, headsign: active.stationRoute.headsign, alight: active.alight?.name }
+    : null,
+)
+
+/** 「開始走」：選了公車就建一趟完整行程；只選站牌就只走到站牌；一般地點就走到那裡 */
+function startTrip() {
+  stopOnlyArrived.value = false
+  const d = destination.value
+  if (pickedBus.value && busTargetPoint.value) {
+    journey.value = startJourney(pickedBus.value.rides, { name: busTargetName.value, point: busTargetPoint.value })
+  } else if (d.station) {
+    journey.value = null
+  } else {
+    journey.value = startJourney([], { name: d.name, point: d.points[0] })
+  }
+  const target = journey.value && walkTarget(journey.value)
+  if (target) destination.value = target
+  void begin()
+}
+
+/** 這段走到了：行程往下一步，畫面換成到站卡或抵達卡 */
+function onWalkArrived() {
+  stopAll()
+  if (journey.value) journey.value = legArrived(journey.value)
+  else stopOnlyArrived.value = true
+}
+
+function onBoarded() {
+  const j = journey.value
+  if (!j) return
+  journey.value = boarded(j)
+  const r = currentRide(journey.value)!
+  const start: LatLon = [r.board.lat, r.board.lon]
+  rideNow.value = rideStatus(r.stops, start, 0)
+  void wake.on()
+  if (simGps.value || !('geolocation' in navigator)) return
+  rideWatchId = navigator.geolocation.watchPosition(
+    (p) => {
+      const ride = journey.value && currentRide(journey.value)
+      if (ride) rideNow.value = rideStatus(ride.stops, [p.coords.latitude, p.coords.longitude], rideNow.value.index)
+    },
+    () => {},
+    { enableHighAccuracy: true, maximumAge: 5000 },
+  )
+}
+
+/** 模擬：公車開到下一站 */
+function simNextStop() {
+  const r = journey.value && currentRide(journey.value)
+  if (!r) return
+  const next = r.stops[Math.min(rideNow.value.index + 1, r.stops.length - 1)]
+  rideNow.value = rideStatus(r.stops, [next.lat, next.lon], rideNow.value.index)
+}
+
+function stopRideWatch() {
+  if (rideWatchId !== null) navigator.geolocation.clearWatch(rideWatchId)
+  rideWatchId = null
+}
+
+/** 下車了：走去下一個上車站（轉乘）或目的地，模擬 GPS 從下車站出發 */
+function onGotOff() {
+  const j = journey.value
+  const r = j && currentRide(j)
+  if (!j || !r) return
+  stopRideWatch()
+  journey.value = gotOff(j)
+  const target = walkTarget(journey.value)
+  if (!target) return
+  destination.value = target
+  void begin([r.alight.lat, r.alight.lon])
+}
+
+/** 行程結束：回到搜尋畫面 */
+function finishTrip() {
+  stopRideWatch()
+  journey.value = null
+  stopOnlyArrived.value = false
+  end()
 }
 
 function speakOrBuzz(cue: Cue) {
@@ -462,7 +585,7 @@ function speakOrBuzz(cue: Cue) {
   }
 }
 
-async function begin() {
+async function begin(simStart?: LatLon) {
   stopAll()
   cues.value = []
   announcer.reset()
@@ -501,7 +624,10 @@ async function begin() {
   if (perm === 'denied') useManualHeading.value = true
 
   // 模擬 GPS 的起點：先試真實位置，拿不到就用預設點
-  if (manual) {
+  if (manual && simStart) {
+    manual.moveTo(simStart)
+    simNote.value = '模擬 GPS：從下車站出發'
+  } else if (manual) {
     const real = await currentPositionOnce()
     manual.moveTo(real ?? simFallbackStart())
     simNote.value = real ? '模擬 GPS：從你現在的位置出發' : '模擬 GPS：拿不到位置，從目的地南方約 400 公尺出發'
@@ -518,7 +644,7 @@ async function begin() {
     announcer.update(v).forEach(speakOrBuzz) // 抵達那句只震動，不出聲
     if (v.state === 'arrived' && !arrivedHandled) {
       arrivedHandled = true
-      goArrived()
+      onWalkArrived()
     }
   })
   m.onEffect((e) => void fetchRealRoute(m, e.from, e.candidate))
@@ -629,7 +755,7 @@ const courseDiff = computed(() => {
 /** 模擬 GPS（鍵盤）：以目前朝向為前方，一次移動 KEY_STEP_M 公尺 */
 function simMove(forward: number, right: number) {
   if (!manual) return
-  const h = view.value?.headingDeg ?? 0
+  const h = joyForwardDeg()
   manual.step(h, forward * KEY_STEP_M, right * KEY_STEP_M)
 }
 
@@ -644,7 +770,7 @@ function onJoystick(v: JoystickVector) {
 }
 const joyTimer = window.setInterval(() => {
   if (!manual || (joy.forward === 0 && joy.right === 0)) return
-  const h = view.value?.headingDeg ?? 0
+  const h = joyForwardDeg()
   const m = simSpeed.value * 0.1
   manual.step(h, joy.forward * m, joy.right * m, { emit: false })
   const now = Date.now()
@@ -754,7 +880,10 @@ function onManualHeading() {
   if (useManualHeading.value) machine?.onHeading(manualHeading.value)
 }
 
-onBeforeUnmount(stopAll)
+onBeforeUnmount(() => {
+  stopAll()
+  stopRideWatch()
+})
 
 // 箭頭每一幀往目標角度內插，直接寫 DOM（不經 Vue 重繪、不用 CSS transition）。
 // 感測事件 10 Hz 或 60 Hz 都一樣順，延遲約 headingTauMs + arrowTauMs。
@@ -782,6 +911,46 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
     class="flex min-h-dvh flex-col text-white"
     :style="{ background: running && view ? BG[view.state] : '#30383D' }"
   >
+    <!-- 行程中的到站、坐車、抵達畫面：蓋在整頁上，不跳頁 -->
+    <div v-if="journey?.phase === 'at_stop' && atStopTrip" class="fixed inset-0 z-20 overflow-y-auto">
+      <ArrivalCard
+        :trip="atStopTrip"
+        :lang="langAudience.lang"
+        :audience="langAudience.audience"
+        :primary-label="boardedLabel"
+        @primary="onBoarded"
+      />
+    </div>
+    <div v-else-if="journey?.phase === 'ride' && atStopTrip" class="fixed inset-0 z-20 overflow-y-auto">
+      <RideCard
+        :trip="atStopTrip"
+        :lang="langAudience.lang"
+        :audience="langAudience.audience"
+        :status="rideNow"
+        :simulate="simGps"
+        @got-off="onGotOff"
+        @sim-next="simNextStop"
+      />
+    </div>
+    <div v-else-if="journey?.phase === 'arrived' && finalTrip" class="fixed inset-0 z-20 overflow-y-auto">
+      <ArrivalCard
+        :trip="finalTrip"
+        :lang="langAudience.lang"
+        :audience="langAudience.audience"
+        :primary-label="doneLabel"
+        @primary="finishTrip"
+      />
+    </div>
+    <div v-else-if="stopOnlyArrived && stopOnlyTrip" class="fixed inset-0 z-20 overflow-y-auto">
+      <ArrivalCard
+        :trip="stopOnlyTrip"
+        :lang="langAudience.lang"
+        :audience="langAudience.audience"
+        :primary-label="doneLabel"
+        @primary="finishTrip"
+      />
+    </div>
+
     <!-- 設定區：還沒開始時顯示 -->
     <section v-if="!running" class="space-y-4 p-4">
       <h1 class="text-xl font-bold">導航實驗</h1>
@@ -819,7 +988,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
         <div class="flex items-start justify-between gap-3">
           <h2 class="text-xl font-bold">
             去「{{ busTargetName }}」可以搭
-            <span class="block text-sm font-normal text-white/70">只列直達車，不含轉乘</span>
+            <span class="block text-sm font-normal text-white/70">{{ busIsTransfer ? '沒有直達車，以下要轉一次車' : '先列直達車；沒有直達才列轉一次車' }}</span>
           </h2>
           <button type="button" class="shrink-0 rounded-lg bg-white/20 px-3 py-2 text-base" @click="reselectDestination">重新選擇</button>
         </div>
@@ -827,7 +996,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
         <p v-if="busNote" class="text-amber-200">{{ busNote }}</p>
         <button
           v-for="o in busOptions ?? []"
-          :key="`${o.route.routeName.zh}-${o.route.direction}`"
+          :key="busKey(o)"
           type="button"
           class="block w-full rounded-lg bg-white/10 p-3 text-left"
           :class="{ 'ring-2 ring-white': isBusPicked(o) }"
@@ -836,8 +1005,13 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
         >
           <div class="text-lg font-bold">{{ busLabel(o) }}</div>
           <div class="text-sm text-white/80">
-            走 {{ formatDistance(o.walkToBoardM) }}到「{{ o.board.name.zh }}」上車 → 坐 {{ o.stopCount }} 站 →
-            在「{{ o.alight.name.zh }}」下車，再走 {{ formatDistance(o.walkFromAlightM) }}
+            走 {{ formatDistance(o.walkToBoardM) }}到「{{ o.rides[0].board.name.zh }}」上車
+            <template v-for="(r, i) in o.rides" :key="i">
+              <template v-if="i > 0">
+                → 走 {{ formatDistance(o.transferWalkM) }}到「{{ r.board.name.zh }}」轉 {{ r.route.routeName.zh }}
+              </template>
+              → 坐 {{ r.stops.length - 1 }} 站 → 在「{{ r.alight.name.zh }}」下車</template
+            >，再走 {{ formatDistance(o.walkFromAlightM) }}
           </div>
         </button>
         <button
@@ -961,7 +1135,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
       <p class="text-sm text-white/70">
         用真實定位，走到戶外；路線避開階梯、陡坡與小巷，會把你的座標送到公開的路徑服務。
       </p>
-      <button class="h-16 w-full rounded-xl bg-white text-lg font-bold text-[#30383D]" @click="begin">開始走</button>
+      <button class="h-16 w-full rounded-xl bg-white text-lg font-bold text-[#30383D]" @click="startTrip">開始走</button>
       <p v-if="permissionNote" class="text-amber-200">{{ permissionNote }}</p>
       <router-link class="block text-center underline" to="/lab/sensors">← 感測實驗</router-link>
     </section>
@@ -1007,6 +1181,12 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
       <section v-if="simGps" class="space-y-2 px-4 pb-4">
         <div class="text-center text-sm opacity-80">{{ simNote }}</div>
         <Joystick @change="onJoystick" />
+        <label class="flex items-center justify-center gap-2 text-sm">搖桿往上＝
+          <select v-model="joyFrame" class="rounded bg-white/20 px-2 py-1">
+            <option value="map">地圖上方（北）</option>
+            <option value="phone">手機面對的方向</option>
+          </select>
+        </label>
         <label class="flex items-center justify-center gap-2 text-sm">推到底的速度
           <select v-model.number="simSpeed" class="rounded bg-white/20 px-2 py-1">
             <option :value="1.4">步行 1.4 m/s</option>
