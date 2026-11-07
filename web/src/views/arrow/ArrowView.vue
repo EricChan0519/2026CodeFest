@@ -29,12 +29,11 @@ type StepState = 'off' | 'in' | 'out'
 const LOGO_DEG = 45
 /** 在清單、搜尋欄外側時指向右（指著選項） */
 const POINT_DEG = 90
-/** 指著選項時，箭頭方塊的邊長與箭頭比例（箭頭長 ≈ 36 × 0.72 ≈ 26 px） */
-const POINT_BOX = 36
+/** 指著選項時，窄螢幕縮小箭頭，讓清單保有更多空間 */
+const pointBox = () => (window.innerWidth <= 600 ? 26 : 36)
 const K_POINT = 0.72
 /** 箭頭尖端和框之間的空隙 */
 const POINT_GAP = 8
-const POINT_LEN = POINT_BOX * K_POINT
 const EASE_LIST = 'cubic-bezier(0.2, 0.9, 0.1, 1)' // 和 CSS 的 --ease-out 一樣
 const EASE_MOVE = 'cubic-bezier(0.3, 0.7, 0.2, 1)'
 const EASE_UNLOCK = 'cubic-bezier(0.55, 0, 0.25, 1)' // 推過去、在邊界輕輕停住
@@ -92,14 +91,17 @@ const stepsEl = ref<HTMLElement>()
 const navSlot = ref<HTMLElement>()
 const input = ref<HTMLInputElement>()
 const query = ref('')
+const unlocking = ref(false)
 const destName = ref('')
 const debugOpen = ref(false)
 const forced = ref<DemoState | null>(null)
 const speed = ref(6)
-const view = shallowRef<DemoView>({ state: 'navigating', arrowDeg: 0, remainingM: 0, offRouteM: 0, next: null })
+const view = shallowRef<DemoView>({ state: 'navigating', arrowDeg: 0, destinationDeg: null, remainingM: 0, offRouteM: 0, next: null })
+const destinationRotation = ref(0)
 
 const demo = createDemoNav((v) => {
   view.value = v
+  if (v.destinationDeg !== null) destinationRotation.value += shortestDelta(destinationRotation.value, v.destinationDeg)
   if (phase.value === 'nav') track(v.arrowDeg)
 })
 
@@ -185,14 +187,16 @@ const stepDx = (s: StepName) => stepEl(s).getBoundingClientRect().left - stepsEl
 /** 箭頭停在框的左外側、垂直置中、尖端離框 POINT_GAP（用框「滑入完成後」的位置） */
 function pointPose(s: StepName, i: number, r = pointAngle(cur.r)): Pose {
   const b = boxEl(s, i).getBoundingClientRect()
-  const cx = b.left - stepDx(s) - POINT_GAP - POINT_LEN / 2
-  return { x: cx - size / 2, y: b.top + b.height / 2 - size / 2, s: POINT_BOX / size, r, k: K_POINT }
+  const box = pointBox()
+  const cx = b.left - stepDx(s) - POINT_GAP - (box * K_POINT) / 2
+  return { x: cx - size / 2, y: b.top + b.height / 2 - size / 2, s: box / size, r, k: K_POINT }
 }
 
 /** 步驟由左滑入，箭頭同時滑到第一列外側 */
 async function enterStep(s: StepName, from: Pose = cur) {
   const my = ++seq
   busy.value = true
+  if (s === 'search') unlocking.value = false
   picked.value = -1
   sweepAnim?.cancel()
   sweepAnim = undefined
@@ -387,12 +391,15 @@ async function go() {
   const my = ++seq
   busy.value = true
   destName.value = name
+  unlocking.value = true
+  await nextTick()
+  if (my !== seq) return
   setHero(pointPose('search', 0)) // 版面可能剛變過，從量到的位置開始
 
   // 1. 滑動解鎖：箭頭從框外推到框的右邊界，亮色跟著尖端填滿搜尋欄
   const box = boxEl('search', 0)
   const b = box.getBoundingClientRect()
-  const tip0 = cur.x + size / 2 + POINT_LEN / 2
+  const tip0 = cur.x + size / 2 + (pointBox() * K_POINT) / 2
   const tip1 = b.right - 4
   const t = dur(T_UNLOCK)
   const enter = Math.min(0.95, Math.max(0, (b.left - tip0) / (tip1 - tip0)))
@@ -671,7 +678,7 @@ onBeforeUnmount(() => {
                 autocomplete="off"
                 placeholder="地點或公車站"
               />
-              <button type="submit" class="find" :disabled="!query.trim()" aria-label="搜尋">
+              <button v-show="!unlocking" type="submit" class="find" :disabled="!query.trim()" aria-label="搜尋">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <circle cx="10.5" cy="10.5" r="6.5" />
                   <path d="M15.5 15.5L20.5 20.5" />
@@ -686,9 +693,9 @@ onBeforeUnmount(() => {
 
     <!-- 導航：上方轉彎提示、中央箭頭（共用箭頭疊在 nav-slot 上）、下方距離與結束 -->
     <section class="nav" :inert="phase !== 'nav'" aria-label="導航">
-      <div class="glass hint">
+      <div class="hint">
         <span class="hint-ico" :style="{ transform: `rotate(${hint.deg}deg)` }">
-          <ArrowMark :hollow="hollow" :done="view.state === 'arrived'" />
+          <ArrowMark navigation :hollow="hollow" :done="view.state === 'arrived'" />
         </span>
         <div class="hint-text">
           <p class="hint-main">{{ hint.main }}</p>
@@ -697,19 +704,22 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="nav-mid">
-        <div ref="navSlot" class="nav-slot" />
+        <div ref="navSlot" class="nav-slot">
+          <div v-if="phase === 'nav' && view.destinationDeg !== null" class="destination-orbit" :style="{ transform: `rotate(${destinationRotation}deg)` }" aria-hidden="true">
+            <span class="destination-dot" />
+          </div>
+        </div>
+        <div v-if="view.state !== 'arrived'" class="eta">
+          <p>剩 <b>{{ meters(view.remainingM) }}</b></p>
+          <p class="eta-minutes">約 {{ minutes }} 分</p>
+        </div>
       </div>
 
       <div class="foot">
         <template v-if="view.state !== 'arrived'">
-          <p class="glass eta">
-            剩 <b>{{ meters(view.remainingM) }}</b><span class="dot" aria-hidden="true">·</span>約 {{ minutes }} 分
-          </p>
-          <button type="button" class="glass end" aria-label="結束導航" @click="endNav">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
-          </button>
+          <button type="button" class="glass end" @click="endNav">停止導航</button>
         </template>
-        <button v-else type="button" class="finish" @click="endNav">完成</button>
+        <button v-else type="button" class="glass end" @click="endNav">完成</button>
       </div>
     </section>
     <p class="sr-only" aria-live="polite">{{ announce }}</p>
@@ -717,7 +727,7 @@ onBeforeUnmount(() => {
     <!-- 共用箭頭：外層管位置大小，內層箭頭管角度 -->
     <div ref="hero" class="hero" aria-hidden="true">
       <div ref="heroArrow" class="hero-arrow">
-        <ArrowMark :hollow="hollow && phase === 'nav'" :done="done" />
+        <ArrowMark :navigation="phase === 'launch' || phase === 'nav'" :hollow="hollow && phase === 'nav'" :done="done" />
       </div>
     </div>
 
@@ -756,9 +766,9 @@ onBeforeUnmount(() => {
   --glass: rgb(255 255 255 / 0.08);
   --glass-edge: rgb(255 255 255 / 0.14);
   --glass-rim: rgb(255 255 255 / 0.3);
-  --go: #356c77;
+  --go: #008849;
   --warn: #74521b;
-  --arrived: #27500a;
+  --arrived: #008849;
   --ease-out: cubic-bezier(0.2, 0.9, 0.1, 1);
   /* 清單、搜尋欄左邊留給箭頭的空間（箭頭在框外）；右邊少留一點讓整組看起來置中 */
   --point-gutter: 44px;
@@ -1100,7 +1110,7 @@ onBeforeUnmount(() => {
 }
 .hint-main {
   font-size: 32px;
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1.15;
   letter-spacing: 0.01em;
 }
@@ -1113,8 +1123,10 @@ onBeforeUnmount(() => {
 }
 .nav-mid {
   flex: 1;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 .dbg-on .nav-mid {
   padding-bottom: 300px;
@@ -1124,8 +1136,27 @@ onBeforeUnmount(() => {
   width: var(--hero, 240px);
   height: var(--hero, 240px);
 }
+.destination-orbit {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: transform 0.25s linear;
+}
+.destination-dot {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  border: 4px solid rgb(255 255 255 / 0.35);
+  border-radius: 50%;
+  background: #fff;
+  background-clip: padding-box;
+  transform: translate(-50%, -50%);
+}
 .foot {
   display: flex;
+  justify-content: flex-end;
   gap: 12px;
   align-items: stretch;
   min-height: 64px;
@@ -1136,61 +1167,45 @@ onBeforeUnmount(() => {
     transform 0.2s ease;
 }
 .eta {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 0 16px;
-  font-size: 18px;
+  margin-top: 28px;
+  text-align: center;
+  font-size: 26px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
   font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transition: opacity 0.45s ease;
 }
 .eta b {
-  font-size: 22px;
-  font-weight: 800;
+  font-size: 32px;
+  font-weight: 600;
 }
-.dot {
-  margin: 0 6px;
-  opacity: 0.7;
+.eta-minutes {
+  margin-top: 8px;
+  opacity: 0.85;
 }
 .end {
-  flex: none;
-  width: 64px;
+  flex: 1;
   display: grid;
   place-items: center;
-  cursor: pointer;
-  transition: transform 0.15s ease;
-}
-.end svg {
-  width: 26px;
-  height: 26px;
-  fill: none;
-  stroke: #fff;
-  stroke-width: 2.4;
-  stroke-linecap: round;
-}
-/* 主要動作：和首頁出發鈕一樣的實心白 */
-.finish {
-  flex: 1;
-  border-radius: 20px;
-  background: #f1f3f4;
-  color: var(--arrived);
   font-size: 20px;
-  font-weight: 800;
+  font-weight: 600;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.16);
+  border-color: transparent;
   cursor: pointer;
   transition: transform 0.15s ease;
 }
-.end:active,
-.finish:active {
+.end:active {
   transform: scale(0.96);
 }
-.end:focus-visible,
-.finish:focus-visible {
+.end:focus-visible {
   outline: 3px solid var(--arc);
   outline-offset: 3px;
 }
 .is-nav .hint,
-.is-nav .foot {
+.is-nav .foot,
+.is-nav .eta {
   opacity: 1;
   transform: none;
   transition:
@@ -1247,6 +1262,12 @@ onBeforeUnmount(() => {
   outline: 3px solid #93d4df;
   outline-offset: -6px;
   border-radius: 16px;
+}
+
+@media (max-width: 600px) {
+  .av {
+    --point-gutter: 34px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

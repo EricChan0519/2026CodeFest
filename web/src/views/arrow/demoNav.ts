@@ -10,6 +10,8 @@ export interface DemoView {
   state: DemoState
   /** 箭頭相對手機上緣的角度 */
   arrowDeg: number
+  /** 目的地直線方向相對手機上緣；抵達後沒有方向 */
+  destinationDeg: number | null
   remainingM: number
   /** back_to_route：離路線多遠 */
   offRouteM: number
@@ -54,12 +56,23 @@ export function createDemoNav(onView: (v: DemoView) => void) {
     const remainingM = Math.max(0, TOTAL - along)
     const state: DemoState = forced ?? (remainingM <= 0 ? 'arrived' : 'navigating')
 
-    if (state === 'arrived') return { state, arrowDeg: 0, remainingM: 0, offRouteM: 0, next: null }
+    if (state === 'arrived') return { state, arrowDeg: 0, destinationDeg: null, remainingM: 0, offRouteM: 0, next: null }
+    // 以剩餘路段向量求目前位置至終點的直線方向，而不是沿路徑的指示方向。
+    let east = 0
+    let north = 0
+    for (let j = i; j < LEGS.length; j++) {
+      const length = j === i ? toTurn : LEGS[j].len
+      const angle = (LEGS[j].bearing * Math.PI) / 180
+      east += length * Math.sin(angle)
+      north += length * Math.cos(angle)
+    }
+    const destinationDeg = (Math.atan2(east, north) * 180) / Math.PI - heading
     if (state === 'back_to_route')
-      return { state, arrowDeg: 115 - (heading - leg.bearing), remainingM, offRouteM: 24, next: null }
+      return { state, arrowDeg: 115 - (heading - leg.bearing), destinationDeg, remainingM, offRouteM: 24, next: null }
     return {
       state,
       arrowDeg: target - heading,
+      destinationDeg,
       remainingM,
       offRouteM: 0,
       next: nextLeg ? { kind: turnKind(leg.bearing, nextLeg.bearing), distanceM: toTurn, street: nextLeg.street } : null,
