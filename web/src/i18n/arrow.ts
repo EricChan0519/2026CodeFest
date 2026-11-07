@@ -96,7 +96,7 @@ export interface ArrowStrings {
 export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
   'zh-TW': {
     ageTitle: '誰要使用？',
-    ages: { child: '兒童', youth: '青年', elder: '長者' },
+    ages: { youth: '一般', child: '兒童', elder: '長者' },
     searchTitle: '要去哪裡？',
     placeholder: '地點、店名或公車站',
     search: '搜尋',
@@ -170,7 +170,7 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
   },
   en: {
     ageTitle: 'Who is using this?',
-    ages: { child: 'Child', youth: 'Adult', elder: 'Senior' },
+    ages: { youth: 'General', child: 'Child', elder: 'Senior' },
     searchTitle: 'Where to?',
     placeholder: 'Place, shop or bus stop',
     search: 'Search',
@@ -244,7 +244,7 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
   },
   th: {
     ageTitle: 'ใครเป็นผู้ใช้?',
-    ages: { child: 'เด็ก', youth: 'วัยหนุ่มสาว', elder: 'ผู้สูงอายุ' },
+    ages: { youth: 'ทั่วไป', child: 'เด็ก', elder: 'ผู้สูงอายุ' },
     searchTitle: 'จะไปที่ไหน?',
     placeholder: 'สถานที่ ร้านค้า หรือป้ายรถเมล์',
     search: 'ค้นหา',
@@ -318,7 +318,7 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
   },
   vi: {
     ageTitle: 'Ai đang sử dụng?',
-    ages: { child: 'Trẻ em', youth: 'Người trẻ', elder: 'Người cao tuổi' },
+    ages: { youth: 'Thông thường', child: 'Trẻ em', elder: 'Người cao tuổi' },
     searchTitle: 'Bạn muốn đi đâu?',
     placeholder: 'Địa điểm, cửa hàng hoặc trạm xe buýt',
     search: 'Tìm',
@@ -392,7 +392,7 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
   },
   id: {
     ageTitle: 'Siapa yang memakai?',
-    ages: { child: 'Anak', youth: 'Dewasa muda', elder: 'Lansia' },
+    ages: { youth: 'Umum', child: 'Anak', elder: 'Lansia' },
     searchTitle: 'Mau ke mana?',
     placeholder: 'Tempat, toko, atau halte bus',
     search: 'Cari',
@@ -466,7 +466,7 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
   },
   km: {
     ageTitle: 'តើនរណាជាអ្នកប្រើ?',
-    ages: { child: 'កុមារ', youth: 'យុវជន', elder: 'មនុស្សចាស់' },
+    ages: { youth: 'ទូទៅ', child: 'កុមារ', elder: 'មនុស្សចាស់' },
     searchTitle: 'តើទៅណា?',
     placeholder: 'ទីកន្លែង ហាង ឬចំណតឡានក្រុង',
     search: 'ស្វែងរក',
@@ -540,7 +540,7 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
   },
   ja: {
     ageTitle: 'だれが使いますか？',
-    ages: { child: '子ども', youth: '若者', elder: '高齢者' },
+    ages: { youth: '一般', child: '子ども', elder: '高齢者' },
     searchTitle: 'どこへ行きますか？',
     placeholder: '場所、店名、バス停',
     search: '検索',
@@ -614,7 +614,7 @@ export const ARROW_STRINGS: Record<Lang, ArrowStrings> = {
   },
   ko: {
     ageTitle: '누가 사용하나요?',
-    ages: { child: '어린이', youth: '청년', elder: '어르신' },
+    ages: { youth: '일반', child: '어린이', elder: '어르신' },
     searchTitle: '어디로 가세요?',
     placeholder: '장소, 상점 또는 버스 정류장',
     search: '검색',

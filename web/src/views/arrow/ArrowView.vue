@@ -78,8 +78,9 @@ const LANG_ITEMS: { id: Lang; label: string }[] = [
   { id: 'ja', label: '日本語' },
   { id: 'ko', label: '한국어' },
 ]
-const AGE_ITEMS: AgeKey[] = ['child', 'youth', 'elder']
-/** 年紀 → 抵達文字與語速用的對象（青年用一般設定） */
+/** 由上而下：一般、兒童、長者（key 沿用 youth，手機裡存過的選擇才不會失效） */
+const AGE_ITEMS: AgeKey[] = ['youth', 'child', 'elder']
+/** 年紀 → 抵達文字與語速用的對象（一般用一般設定） */
 const AUDIENCE: Record<AgeKey, Audience> = { child: 'child', youth: 'visitor', elder: 'elder' }
 /** 字級倍率（01 產品規格「對象設定」） */
 const FONT_SCALE: Record<AgeKey, number> = { child: 1.1, youth: 1, elder: 1.2 }
