@@ -7,6 +7,7 @@ from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 
+from app import elevation
 from app.engine import RouteNotFound, RoutingEngine, RoutingUnavailable
 from app.errors import ApiError
 from app.geo import in_area
@@ -41,6 +42,8 @@ def route_sources() -> list[dict]:
     lamp = lamp_grid_updated_at()
     if lamp:
         sources.append({"name": LAMP_SOURCE_NAME, "updatedAt": lamp})
+    if elevation.available():
+        sources.append({"name": "內政部20公尺網格數值地形模型", "updatedAt": elevation.updated_at()})
     return sources
 
 
@@ -56,6 +59,7 @@ def route_to_dict(route, id, recommended, reasons, metrics, diff):
 
 def metrics_to_dict(m):
     return {"steps": m.steps, "climbM": round(m.climb_m, 1) if m.climb_m is not None else None,
+            "maxGradePct": round(m.max_grade_pct, 1) if m.max_grade_pct is not None else None,
             "litRatio": round(m.lit_ratio, 2) if m.lit_ratio is not None else None,
             "unsignalizedCrossings": m.unsignalized_crossings,
             "signalCrossings": m.signal_crossings, "unknownCrossings": m.unknown_crossings}

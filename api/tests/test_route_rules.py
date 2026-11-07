@@ -86,7 +86,7 @@ def test_child_selection():
 def test_diff_and_reasons():
     fast, cand = met(3, 10, .2, 4), met(2, 8, .3, 2)
     diff = diff_of(route(120), cand, route(100), fast)
-    assert diff == {"distanceM": 20, "durationS": 40, "steps": 1, "climbM": 2, "unsignalizedCrossings": 2}
+    assert diff == {"distanceM": 20, "durationS": 40, "steps": 1, "climbM": 2, "maxGradePct": None, "unsignalizedCrossings": 2}
     assert reasons_for("fewer_steps_hills_bright", cand, fast, diff) == ["fewer_steps", "flatter", "brighter", "extra_distance"]
     assert reasons_for("bright", met(1, None, .29), fast, diff) == []
     assert reasons_for("bright", cand, fast, diff) == ["brighter", "extra_distance"]

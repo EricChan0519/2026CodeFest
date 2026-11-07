@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from app.engine import get_engine
 from app.errors import install_error_handlers
 from app.route_rules import TPE
-from app import routes_service
+from app import elevation, routes_service
 from app.routes_service import plan_routes
 from app.schemas import NearbyRequest, RoutesRequest
 from app.stations import StationIndex
@@ -70,7 +70,7 @@ async def health(deep: bool = False, index: StationIndex = Depends(get_station_i
         routing = bool(await asyncio.wait_for(engine.ping(), timeout=10))
     except Exception:
         routing = False
-    body["checks"] = {"routing": routing, "stopIndex": index.available}
+    body["checks"] = {"routing": routing, "stopIndex": index.available, "elevation": elevation.available()}
     if not routing or not index.available:
         body["status"] = "degraded"
         return JSONResponse(body, status_code=503)

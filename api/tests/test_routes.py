@@ -17,7 +17,7 @@ def test_route_shape(client, fake_engine):
     assert body["context"] == {"audience":"visitor", "period":"day", "simulated":False}
     assert body["notes"] == [] and len(body["routes"]) == 1
     route = body["routes"][0]
-    assert (route["id"], route["recommended"], route["reasons"], route["metrics"], route["diff"]) == ("fastest", True, ["fastest"], {"steps": None, "climbM": None, "litRatio": None, "unsignalizedCrossings": None, "signalCrossings": None, "unknownCrossings": None}, None)
+    assert (route["id"], route["recommended"], route["reasons"], route["metrics"], route["diff"]) == ("fastest", True, ["fastest"], {"steps": None, "climbM": None, "maxGradePct": None, "litRatio": None, "unsignalizedCrossings": None, "signalCrossings": None, "unknownCrossings": None}, None)
     assert route["geometry"][0] == [25.123456,121.512345]
     assert "shape" not in response.text and "polyline" not in response.text
     assert fake_engine.last["costing"].walking_speed_kmh == 5.1 and fake_engine.last["alternates"] == 0
@@ -123,7 +123,7 @@ def test_elder_night_and_detour(client):
     body = post_checked(client, audience="elder", simulate="night")
     assert [r["id"] for r in body["routes"]] == ["fewer_steps_hills_bright", "fastest"]
     assert body["routes"][0]["reasons"] == ["fewer_steps", "flatter", "brighter", "extra_distance"]
-    assert body["routes"][0]["diff"] == {"distanceM": 30, "durationS": 60, "steps": 1, "climbM": 3, "unsignalizedCrossings": None}
+    assert body["routes"][0]["diff"] == {"distanceM": 30, "durationS": 60, "steps": 1, "climbM": 3, "maxGradePct": None, "unsignalizedCrossings": None}
     long = make_route(450, 25.1238)
     engine.alternatives = [long]
     install(engine, {id(fast): metrics(3), id(long): metrics(1)})

@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.adapters.fake import FakeEngine
-from app import metrics_stub, routes_service
+from app import elevation, metrics_stub, routes_service
 from app.main import app, get_measure, get_now, get_routing_engine, get_station_index
 from app.route_rules import TPE
 from app.stations import StationIndex
@@ -20,11 +20,14 @@ def clear_overrides():
 @pytest.fixture(autouse=True)
 def isolate_snapshots(monkeypatch, tmp_path):
     # 測試不讀 repo 裡 B 產生的 lamp_grid.json，也不受部署環境變數影響
+    monkeypatch.setenv("ELEVATION_GRID_PATH", str(tmp_path / "no_elevation.json"))
+    elevation._load.cache_clear()
     monkeypatch.setenv("LAMP_GRID_PATH", str(tmp_path / "no_lamp_grid.json"))
     monkeypatch.delenv("OSM_UPDATED_AT", raising=False)
     routes_service.lamp_grid_updated_at.cache_clear()
     yield
     routes_service.lamp_grid_updated_at.cache_clear()
+    elevation._load.cache_clear()
 
 
 @pytest.fixture
